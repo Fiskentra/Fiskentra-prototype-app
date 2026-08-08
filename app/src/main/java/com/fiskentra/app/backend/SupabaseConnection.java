@@ -23,7 +23,7 @@ public final class SupabaseConnection {
         executor.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                URL url = new URL(SupabaseConfig.url() + "/rest/v1/");
+                URL url = new URL(SupabaseConfig.url() + "/rest/v1/app_health?select=id&limit=1");
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("GET");
                 connection.setConnectTimeout(7000);
