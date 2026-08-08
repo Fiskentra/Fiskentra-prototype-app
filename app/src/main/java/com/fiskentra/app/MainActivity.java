@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.bluetooth.BluetoothDevice;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -47,7 +48,13 @@ public final class MainActivity extends Activity implements
     private static final int TEXT = Color.rgb(242, 247, 244);
     private static final int MUTED = Color.rgb(156, 174, 163);
     private static final int ACCENT = Color.rgb(0, 174, 213);
+    private static final int SUCCESS = Color.rgb(83, 214, 137);
+    private static final int WARNING = Color.rgb(244, 190, 85);
     private static final int DANGER = Color.rgb(246, 114, 103);
+    private static final String SYNC_PREFS = "fiskentra_point_sync_status";
+    private static final String SYNC_SYNCING = "syncing";
+    private static final String SYNC_SYNCED = "synced";
+    private static final String SYNC_FAILED = "failed";
 
     private FrameLayout content;
     private LinearLayout nav;
@@ -57,6 +64,7 @@ public final class MainActivity extends Activity implements
     private FiskentraBleManager bleManager;
     private SupabaseConnection supabaseConnection;
     private SupabasePointSync pointSync;
+    private SharedPreferences syncPrefs;
     private Location lastLocation;
     private String screen = "home";
     private String bleStatus = "No device connected";
@@ -84,6 +92,7 @@ public final class MainActivity extends Activity implements
         bleManager = new FiskentraBleManager(this, this);
         supabaseConnection = new SupabaseConnection();
         pointSync = new SupabasePointSync(this);
+        syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -283,7 +292,7 @@ public final class MainActivity extends Activity implements
                 cloudConnected ? ACCENT : MUTED, Typeface.BOLD));
         cloudCard.addView(spacer(6));
         cloudCard.addView(text(cloudStatus, 13, TEXT, Typeface.NORMAL));
-        cloudCard.addView(text(cloudSyncStatus, 12, MUTED, Typeface.NORMAL));
+        cloudCard.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.NORMAL));
         body.addView(cloudCard, cardMargins());
 
         body.addView(sectionTitle("QUICK LOG"));
@@ -382,6 +391,8 @@ public final class MainActivity extends Activity implements
         card.addView(spacer(8));
         card.addView(text(formatCoords(point.latitude, point.longitude), 17, TEXT, Typeface.BOLD));
         card.addView(text(formatDate(point.timestamp), 12, MUTED, Typeface.NORMAL));
+        card.addView(spacer(8));
+        card.addView(text(syncLabel(point.id), 12, syncColor(point.id), Typeface.BOLD));
         return card;
     }
 
@@ -400,6 +411,8 @@ public final class MainActivity extends Activity implements
         status.addView(text(connectedDevice.isEmpty() ? "SafeX Lite" : connectedDevice, 24, TEXT, Typeface.BOLD));
         deviceStatusText = text(bleStatus, 13, MUTED, Typeface.NORMAL);
         status.addView(deviceStatusText);
+        status.addView(spacer(8));
+        status.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.BOLD));
         status.addView(spacer(16));
         Button scan = primaryButton("⌁  SCAN FOR BLE DEVICES");
         scan.setOnClickListener(v -> {
@@ -493,13 +506,53 @@ public final class MainActivity extends Activity implements
     }
 
     private void syncPoint(SavedPoint point) {
-        cloudSyncStatus = "Syncing latest point…";
-        if ("home".equals(screen)) render("home");
+        setSyncState(point.id, SYNC_SYNCING, "Syncing to Supabase");
+        cloudSyncStatus = "Latest point: syncing to Supabase…";
+        if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
         pointSync.sync(point, (synced, message) -> runOnUiThread(() -> {
-            cloudSyncStatus = message;
-            if ("home".equals(screen)) render("home");
+            setSyncState(point.id, synced ? SYNC_SYNCED : SYNC_FAILED, message);
+            cloudSyncStatus = synced ? "Latest point: synced to cloud" : "Latest point: saved locally · sync pending";
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
             if (!synced) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         }));
+    }
+
+    private void setSyncState(long pointId, String state, String message) {
+        syncPrefs.edit()
+                .putString(syncKey(pointId, "state"), state)
+                .putString(syncKey(pointId, "message"), message)
+                .apply();
+    }
+
+    private String syncLabel(long pointId) {
+        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
+        if (SYNC_SYNCED.equals(state)) return "●  Synced to cloud";
+        if (SYNC_SYNCING.equals(state)) return "○  Syncing to Supabase…";
+        if (SYNC_FAILED.equals(state)) {
+            String message = syncPrefs.getString(syncKey(pointId, "message"), "cloud sync pending");
+            return "●  Saved locally · " + message;
+        }
+        return "○  Saved locally";
+    }
+
+    private int syncColor(long pointId) {
+        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
+        if (SYNC_SYNCED.equals(state)) return SUCCESS;
+        if (SYNC_SYNCING.equals(state)) return WARNING;
+        if (SYNC_FAILED.equals(state)) return DANGER;
+        return MUTED;
+    }
+
+    private int cloudSyncColor() {
+        String value = cloudSyncStatus.toLowerCase(Locale.ROOT);
+        if (value.contains("synced")) return SUCCESS;
+        if (value.contains("pending") || value.contains("failed")) return DANGER;
+        if (value.contains("syncing")) return WARNING;
+        return MUTED;
+    }
+
+    private String syncKey(long pointId, String field) {
+        return pointId + "_" + field;
     }
 
     private void handleButtonPress(String source, String message) {

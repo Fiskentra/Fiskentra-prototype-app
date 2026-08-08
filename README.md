@@ -9,6 +9,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Save a current outdoor "Moment" with latitude/longitude/time to local device storage.
 - Start/stop an in-app trip track; route points persist locally and render on the field map.
 - Saved points list with delete confirmation.
+- Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, or sync pending.
 - Lightweight offline map canvas showing your current position and locally saved points around it.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
@@ -47,7 +48,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-Saved points can sync to Supabase through the REST Data API after this prototype table is created:
+Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen.
 
 ```sql
 create table if not exists public.saved_points (
