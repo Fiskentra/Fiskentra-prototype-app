@@ -23,6 +23,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
+import com.fiskentra.app.backend.SupabasePointSync;
 import com.fiskentra.app.ble.FiskentraBleManager;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
@@ -55,14 +56,18 @@ public final class MainActivity extends Activity implements
     private FiskentraLocationManager locationManager;
     private FiskentraBleManager bleManager;
     private SupabaseConnection supabaseConnection;
+    private SupabasePointSync pointSync;
     private Location lastLocation;
     private String screen = "home";
     private String bleStatus = "No device connected";
     private String connectedDevice = "";
     private boolean cloudConnected = false;
     private String cloudStatus = "Checking Fiskentra cloud…";
+    private String cloudSyncStatus = "Saved points sync after each new moment";
     private LinearLayout deviceResults;
     private TextView deviceStatusText;
+    private TextView buttonEventText;
+    private String lastButtonEvent = "No button event yet";
     private final List<DeviceRow> discoveredDevices = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -78,6 +83,7 @@ public final class MainActivity extends Activity implements
         locationManager = new FiskentraLocationManager(this, this);
         bleManager = new FiskentraBleManager(this, this);
         supabaseConnection = new SupabaseConnection();
+        pointSync = new SupabasePointSync(this);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -117,6 +123,7 @@ public final class MainActivity extends Activity implements
         super.onDestroy();
         bleManager.close();
         supabaseConnection.close();
+        pointSync.close();
     }
 
     private void requestNeededPermissions() {
@@ -148,6 +155,7 @@ public final class MainActivity extends Activity implements
         content.removeAllViews();
         deviceResults = null;
         deviceStatusText = null;
+        buttonEventText = null;
         switch (screen) {
             case "map": content.addView(mapScreen()); break;
             case "saved": content.addView(savedScreen()); break;
@@ -275,6 +283,7 @@ public final class MainActivity extends Activity implements
                 cloudConnected ? ACCENT : MUTED, Typeface.BOLD));
         cloudCard.addView(spacer(6));
         cloudCard.addView(text(cloudStatus, 13, TEXT, Typeface.NORMAL));
+        cloudCard.addView(text(cloudSyncStatus, 12, MUTED, Typeface.NORMAL));
         body.addView(cloudCard, cardMargins());
 
         body.addView(sectionTitle("QUICK LOG"));
@@ -413,12 +422,21 @@ public final class MainActivity extends Activity implements
 
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
-        testCard.addView(text("Test before hardware decoding", 17, TEXT, Typeface.BOLD));
-        testCard.addView(text("This simulates the physical button action and saves the current GPS position. It verifies the end-to-end Fiskentra flow.", 13, MUTED, Typeface.NORMAL));
+        testCard.addView(text("Test button behavior before hardware arrives", 17, TEXT, Typeface.BOLD));
+        testCard.addView(text("Single press and double press simulate the future SafeX Lite actions and save the current GPS position.", 13, MUTED, Typeface.NORMAL));
         testCard.addView(spacer(14));
-        Button test = smallButton("SIMULATE BUTTON PRESS");
-        test.setOnClickListener(v -> saveCurrentMoment("Button test"));
-        testCard.addView(test, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        LinearLayout testActions = row();
+        Button single = smallButton("SINGLE PRESS");
+        single.setOnClickListener(v -> handleButtonPress("BLE single press", "Simulated single press saved a GPS point"));
+        testActions.addView(single, weighted());
+        testActions.addView(spaceWide());
+        Button doublePress = smallButton("DOUBLE PRESS");
+        doublePress.setOnClickListener(v -> handleButtonPress("BLE double press", "Simulated double press saved a priority GPS point"));
+        testActions.addView(doublePress, weighted());
+        testCard.addView(testActions);
+        testCard.addView(spacer(12));
+        buttonEventText = text(lastButtonEvent, 12, MUTED, Typeface.NORMAL);
+        testCard.addView(buttonEventText);
         body.addView(testCard);
 
         body.addView(sectionTitle("PROTOTYPE STATUS"));
@@ -455,21 +473,42 @@ public final class MainActivity extends Activity implements
         deviceResults.addView(card, lp);
     }
 
-    public void saveCurrentMoment(String source) {
+    public boolean saveCurrentMoment(String source) {
         Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
         if (!locationManager.hasPermission()) {
             requestNeededPermissions();
             Toast.makeText(this, "Allow location first", Toast.LENGTH_SHORT).show();
-            return;
+            return false;
         }
         if (location == null) {
             Toast.makeText(this, "Waiting for GPS fix — try again in a moment", Toast.LENGTH_SHORT).show();
             locationManager.start();
-            return;
+            return false;
         }
-        pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
+        SavedPoint point = pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
         Toast.makeText(this, "Moment saved · " + source, Toast.LENGTH_SHORT).show();
+        syncPoint(point);
         if ("map".equals(screen) || "saved".equals(screen)) render(screen);
+        return true;
+    }
+
+    private void syncPoint(SavedPoint point) {
+        cloudSyncStatus = "Syncing latest point…";
+        if ("home".equals(screen)) render("home");
+        pointSync.sync(point, (synced, message) -> runOnUiThread(() -> {
+            cloudSyncStatus = message;
+            if ("home".equals(screen)) render("home");
+            if (!synced) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        }));
+    }
+
+    private void handleButtonPress(String source, String message) {
+        boolean saved = saveCurrentMoment(source);
+        String status = saved ? message : "Button press received · waiting for GPS";
+        lastButtonEvent = status + " · " + nowTime();
+        bleStatus = status;
+        if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
+        if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
     }
 
     @Override public void onLocation(Location location) {
@@ -508,7 +547,9 @@ public final class MainActivity extends Activity implements
         // would create false points. Surface the raw notification length for field testing.
         runOnUiThread(() -> {
             bleStatus = "Notification received · " + payload.length + " bytes · decoder pending";
+            lastButtonEvent = "Raw BLE payload: " + hex(payload);
             if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
+            if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
         });
     }
 
@@ -597,6 +638,18 @@ public final class MainActivity extends Activity implements
 
     private static String formatDate(long time) {
         return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(time));
+    }
+
+    private static String hex(byte[] payload) {
+        if (payload.length == 0) return "(empty)";
+        StringBuilder out = new StringBuilder();
+        int shown = Math.min(payload.length, 24);
+        for (int i = 0; i < shown; i++) {
+            if (i > 0) out.append(' ');
+            out.append(String.format(Locale.US, "%02X", payload[i] & 0xff));
+        }
+        if (payload.length > shown) out.append(" ...");
+        return out.toString();
     }
 
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }

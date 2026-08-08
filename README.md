@@ -12,13 +12,13 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Lightweight offline map canvas showing your current position and locally saved points around it.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
-- SafeX Lite-oriented device UI and a visible test action for end-to-end button/GPS validation.
+- SafeX Lite-oriented device UI with single-press and double-press test actions for end-to-end button/GPS validation.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
 ## Important SafeX Lite integration note
 
-The exact BlueUP SafeX Lite button-event payload / service UUID depends on its firmware and configuration. The app intentionally does **not** treat every BLE notification as a button press, because that could save false locations from battery/sensor/status notifications. `FiskentraBleManager` exposes raw candidate notifications; once the SafeX Lite profile is known, add a small decoder and route a confirmed press to `MainActivity.saveCurrentMoment("BLE button")`.
+The exact BlueUP SafeX Lite button-event payload / service UUID depends on its firmware and configuration. The app intentionally does **not** treat every BLE notification as a button press, because that could save false locations from battery/sensor/status notifications. `FiskentraBleManager` exposes raw candidate notifications and the Device screen shows their payload bytes; once the SafeX Lite profile is known, add a small decoder and route a confirmed press to `MainActivity.saveCurrentMoment("BLE button")`.
 
 To complete the physical-button integration, provide one of:
 
@@ -47,7 +47,36 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-The database schema/cloud sync is intentionally not enabled until the Fiskentra Supabase project is accessible to the connected development account, so no unauthenticated user-data policies are created by accident.
+Saved points can sync to Supabase through the REST Data API after this prototype table is created:
+
+```sql
+create table if not exists public.saved_points (
+  id text primary key,
+  device_id text not null,
+  local_id bigint not null,
+  latitude double precision not null,
+  longitude double precision not null,
+  recorded_at timestamptz not null,
+  type text not null default 'Moment',
+  note text not null default '',
+  created_at timestamptz not null default now(),
+  unique (device_id, local_id)
+);
+
+alter table public.saved_points enable row level security;
+
+drop policy if exists "Prototype clients can insert saved points" on public.saved_points;
+
+create policy "Prototype clients can insert saved points"
+on public.saved_points
+for insert
+to anon
+with check (true);
+
+grant insert on table public.saved_points to anon;
+```
+
+This prototype policy lets the Android app upload newly saved points with the publishable key, but does not grant public read access to everyone else's GPS data. Use authenticated users and owner-based RLS before enabling account cloud backup.
 
 ## GitHub repository
 

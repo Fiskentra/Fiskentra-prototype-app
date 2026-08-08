@@ -23,6 +23,6 @@ public final class SupabaseConfig {
     }
 
     public static boolean isConfigured() {
-        return !url().isBlank() && !publishableKey().isBlank();
+        return !url().trim().isEmpty() && !publishableKey().trim().isEmpty();
     }
 }
