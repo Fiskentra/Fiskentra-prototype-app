@@ -30,7 +30,7 @@ import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
-import com.fiskentra.app.ui.MapCanvasView;
+import com.fiskentra.app.ui.MapTilerMapView;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -81,6 +81,8 @@ public final class MainActivity extends Activity implements
     private TextView deviceStatusText;
     private TextView buttonEventText;
     private String lastButtonEvent = "No button event yet";
+    private long selectedMapPointId = -1L;
+    private MapTilerMapView activeMapView;
     private final List<DeviceRow> discoveredDevices = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -123,21 +125,39 @@ public final class MainActivity extends Activity implements
         requestNeededPermissions();
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        if (activeMapView != null) activeMapView.start();
+    }
+
     @Override protected void onResume() {
         super.onResume();
+        if (activeMapView != null) activeMapView.resume();
         if (locationManager.hasPermission()) locationManager.start();
     }
 
     @Override protected void onPause() {
         super.onPause();
+        if (activeMapView != null) activeMapView.pause();
         locationManager.stop();
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        if (activeMapView != null) activeMapView.stop();
     }
 
     @Override protected void onDestroy() {
         super.onDestroy();
+        if (activeMapView != null) activeMapView.destroy();
         bleManager.close();
         supabaseConnection.close();
         pointSync.close();
+    }
+
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        if (activeMapView != null) activeMapView.onLowMemory();
     }
 
     private void requestNeededPermissions() {
@@ -170,6 +190,7 @@ public final class MainActivity extends Activity implements
         deviceResults = null;
         deviceStatusText = null;
         buttonEventText = null;
+        activeMapView = null;
         switch (screen) {
             case "map": content.addView(mapScreen()); break;
             case "saved": content.addView(savedScreen()); break;
@@ -331,17 +352,39 @@ public final class MainActivity extends Activity implements
     private View mapScreen() {
         LinearLayout body = vertical();
         body.setPadding(dp(20), dp(20), dp(20), dp(20));
-        body.addView(pageTitle("Explore", "YOUR FIELD MAP"));
-        MapCanvasView map = new MapCanvasView(this);
+        SavedPoint selected = selectedMapPoint();
+        body.addView(pageTitle("Explore", selected == null ? "YOUR FIELD MAP" : "SELECTED SAVED POINT"));
+        MapTilerMapView map = new MapTilerMapView(this);
+        activeMapView = map;
         map.setBackground(roundRect(SURFACE, 20));
-        map.setData(lastLocation, pointStore.all(), trackStore.points());
+        map.setData(lastLocation, pointStore.all(), trackStore.points(), selected);
         LinearLayout.LayoutParams mapLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         mapLp.setMargins(0, dp(18), 0, dp(14));
         body.addView(map, mapLp);
 
+        if (selected != null) {
+            LinearLayout selectedCard = card();
+            LinearLayout selectedHeader = row();
+            selectedHeader.setGravity(Gravity.CENTER_VERTICAL);
+            selectedHeader.addView(text(selected.type.toUpperCase(Locale.ROOT), 11, ACCENT, Typeface.BOLD),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView clear = text("CLEAR", 10, MUTED, Typeface.BOLD);
+            clear.setPadding(dp(8), dp(4), 0, dp(4));
+            clear.setOnClickListener(v -> {
+                selectedMapPointId = -1L;
+                render("map");
+            });
+            selectedHeader.addView(clear);
+            selectedCard.addView(selectedHeader);
+            selectedCard.addView(spacer(8));
+            selectedCard.addView(text(formatCoords(selected.latitude, selected.longitude), 17, TEXT, Typeface.BOLD));
+            selectedCard.addView(text(formatDate(selected.timestamp), 12, MUTED, Typeface.NORMAL));
+            body.addView(selectedCard, cardMargins());
+        }
+
         LinearLayout notice = row();
         notice.setGravity(Gravity.CENTER_VERTICAL);
-        TextView note = text("Offline prototype map · real tiles next", 12, MUTED, Typeface.NORMAL);
+        TextView note = text(selected == null ? "MapTiler Outdoor map · fishing layers next" : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
         notice.addView(note, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView count = text(pointStore.all().size() + " saved", 12, ACCENT, Typeface.BOLD);
         notice.addView(count);
@@ -419,6 +462,11 @@ public final class MainActivity extends Activity implements
         card.addView(text(formatDate(point.timestamp), 12, MUTED, Typeface.NORMAL));
         card.addView(spacer(8));
         card.addView(text(syncLabel(point.id), 12, syncColor(point.id), Typeface.BOLD));
+        card.addView(spacer(12));
+        Button openMap = smallButton("OPEN MAP");
+        openMap.setOnClickListener(v -> openPointOnMap(point));
+        card.addView(openMap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        card.setOnClickListener(v -> openPointOnMap(point));
         return card;
     }
 
@@ -573,6 +621,7 @@ public final class MainActivity extends Activity implements
             if (deleted) {
                 pointStore.delete(point.id);
                 clearSyncState(point.id);
+                if (selectedMapPointId == point.id) selectedMapPointId = -1L;
                 cloudSyncStatus = "Deleted from cloud and this device";
                 Toast.makeText(this, "Deleted from cloud", Toast.LENGTH_SHORT).show();
             } else {
@@ -598,6 +647,21 @@ public final class MainActivity extends Activity implements
                 && !SYNC_SYNCING.equals(state)
                 && !SYNC_DELETING.equals(state)
                 && !SYNC_DELETE_FAILED.equals(state);
+    }
+
+    private void openPointOnMap(SavedPoint point) {
+        selectedMapPointId = point.id;
+        Toast.makeText(this, "Opening saved point on map", Toast.LENGTH_SHORT).show();
+        render("map");
+    }
+
+    private SavedPoint selectedMapPoint() {
+        if (selectedMapPointId < 0) return null;
+        for (SavedPoint point : pointStore.all()) {
+            if (point.id == selectedMapPointId) return point;
+        }
+        selectedMapPointId = -1L;
+        return null;
     }
 
     private void setSyncState(long pointId, String state, String message) {
@@ -668,7 +732,11 @@ public final class MainActivity extends Activity implements
         runOnUiThread(() -> {
             lastLocation = location;
             if (trackStore.isActive()) trackStore.add(location);
-            if ("home".equals(screen) || "map".equals(screen)) render(screen);
+            if ("map".equals(screen) && activeMapView != null) {
+                activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
+            } else if ("home".equals(screen)) {
+                render("home");
+            }
         });
     }
 

@@ -4,3 +4,6 @@ sdk.dir=C:\\Users\\YOUR_NAME\\AppData\\Local\\Android\\Sdk
 # Fiskentra Supabase project: dwlbefpmwzmhutlvqfmu
 SUPABASE_URL=https://dwlbefpmwzmhutlvqfmu.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_WITH_FISKENTRA_KEY
+
+# MapTiler key used for the first real outdoor/fishing map layer.
+MAPTILER_API_KEY=Po4KLeYIgzOiUCmzXz5z

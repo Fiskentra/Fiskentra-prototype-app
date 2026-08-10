@@ -12,7 +12,8 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
-- Lightweight offline map canvas showing your current position and locally saved points around it.
+- Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the MapTiler Outdoor map.
+- Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
 - SafeX Lite-oriented device UI with single-press, double-press and long-press test actions for end-to-end button/GPS validation.
@@ -43,7 +44,37 @@ To complete the physical-button integration, provide one of:
 4. Run on a physical Android phone. BLE and real GPS are much easier to validate on hardware than an emulator.
 5. Grant Location and Nearby Devices permissions.
 
-A debug APK has been successfully compiled with Android SDK 35 / Build Tools 35.0.0 and JDK 17. The project uses no third-party runtime libraries.
+A debug APK has been successfully compiled with Android SDK 35 / Build Tools 35.0.0 and JDK 17. The project uses MapLibre Native Android for the real map view.
+
+If Android Studio fails right after the MapTiler update, make sure `MapTilerMapView.java` imports `org.maplibre.android.*`, not the old `com.mapbox.mapboxsdk.*` package. Current MapLibre Native Android uses the `org.maplibre.android` namespace.
+
+## MapTiler fishing map
+
+The first launch map stack is MapLibre Native Android + MapTiler Outdoor. MapLibre embeds the interactive map view inside the native Android app, and MapTiler serves the `outdoor-v2` style through:
+
+```text
+https://api.maptiler.com/maps/outdoor-v2/style.json?key=<MAPTILER_API_KEY>
+```
+
+`local.properties.example` includes `MAPTILER_API_KEY`. You can keep the supplied prototype key or replace it with another MapTiler key in your local `local.properties`. Gradle exposes it to `BuildConfig.MAPTILER_API_KEY`.
+
+The Android dependency is:
+
+```kotlin
+implementation("org.maplibre.gl:android-sdk:13.4.1")
+```
+
+After changing this dependency, run **File -> Sync Project with Gradle Files**, then **Build -> Clean Project**, then **Rebuild Project**.
+
+The current fishing map layer shows:
+
+- Real outdoor base map tiles.
+- Current phone location.
+- Local trip track.
+- Saved point markers for `Catch`, `Waypoint`, and `Tackle change`.
+- Selected saved point highlight when opened from the Saved screen.
+
+Depth/bathymetry, fishing zones and offline map packs are still future layers; this update replaces the prototype canvas with the real map engine and base map.
 
 ## Supabase backend
 
@@ -125,6 +156,8 @@ order by created_at desc;
 
 Delete one point in the app, then run the query again. The Saved screen should show `Deleting from cloud...`, then `Deleted from cloud`, and the deleted row should disappear from Supabase. If the app shows `Cloud delete failed · try again`, the point remains in the Saved list so the delete can be retried.
 
+To verify saved point map opening, create at least one saved point, open Saved, then tap the point card or `OPEN MAP`. The Map screen should open with `SELECTED SAVED POINT`, center the MapTiler Outdoor map on that location, and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to the normal current-location view.
+
 If an older app build already removed points from the phone but left rows in Supabase, clean those orphan rows manually by their visible `local_id` values:
 
 ```sql
@@ -141,9 +174,8 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 ## Suggested next integrations
 
 - Edit saved point type/name and notes.
-- Open a saved point on the map.
 - Decode SafeX Lite single/double/long press events.
-- Real map tiles + offline map packs (MapLibre is a good fit when a tile/data provider is selected).
+- Offline MapLibre/MapTiler map packs for low-signal fishing areas.
 - Track recording in a foreground service for background reliability.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
 - Fishing-specific overlays: depth/bathymetry, bite forecast, species and catch log.

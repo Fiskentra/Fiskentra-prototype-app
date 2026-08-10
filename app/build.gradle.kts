@@ -19,6 +19,7 @@ val supabaseUrl = localProperties.getProperty(
     "https://dwlbefpmwzmhutlvqfmu.supabase.co"
 )
 val supabasePublishableKey = localProperties.getProperty("SUPABASE_PUBLISHABLE_KEY", "")
+val maptilerApiKey = localProperties.getProperty("MAPTILER_API_KEY", "Po4KLeYIgzOiUCmzXz5z")
 
 android {
     namespace = "com.fiskentra.app"
@@ -34,6 +35,7 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(supabasePublishableKey))
+        buildConfigField("String", "MAPTILER_API_KEY", buildConfigString(maptilerApiKey))
     }
 
     buildFeatures {
@@ -51,4 +53,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation("org.maplibre.gl:android-sdk:13.4.1")
 }
