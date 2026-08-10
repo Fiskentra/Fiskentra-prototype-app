@@ -15,6 +15,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the MapTiler Outdoor map.
 - Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
 - Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
+- Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
 - SafeX Lite-oriented device UI with single-press, double-press and long-press test actions for end-to-end button/GPS validation.
@@ -72,7 +73,8 @@ The current fishing map layer shows:
 - Real outdoor base map tiles.
 - Current phone location.
 - Local trip track.
-- Saved point markers for `Catch`, `Waypoint`, and `Tackle change`.
+- Saved point markers with different colors and letters: `Catch`, `Waypoint`, `Tackle change`, plus older prototype types such as `Sighting`, `Camp`, `Hazard` and `Map`.
+- Compact marker legend on the Map screen.
 - Automatic camera fit around all saved points when the Map tab is opened normally.
 - Selected saved point highlight when opened from the Saved screen.
 
@@ -158,7 +160,7 @@ order by created_at desc;
 
 Delete one point in the app, then run the query again. The Saved screen should show `Deleting from cloud...`, then `Deleted from cloud`, and the deleted row should disappear from Supabase. If the app shows `Cloud delete failed · try again`, the point remains in the Saved list so the delete can be retried.
 
-To verify normal map saved-point markers, create several saved points in different nearby places, then open the Map tab directly from the bottom navigation. The Map screen should fit the camera around all saved points and show every marker in its real location.
+To verify normal map saved-point markers, create several saved points in different nearby places, then open the Map tab directly from the bottom navigation. The Map screen should fit the camera around all saved points and show every marker in its real location. Marker colors and letters identify the saved point type, and the legend explains the visible types.
 
 To verify selected saved point map opening, open Saved, then tap the point card or `OPEN MAP`. The Map screen should open with `SELECTED SAVED POINT`, center the MapTiler Outdoor map on that one location, and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to the normal all-saved-points view.
 

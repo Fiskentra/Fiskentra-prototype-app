@@ -224,13 +224,24 @@ public final class MapTilerMapView extends FrameLayout {
             for (SavedPoint point : points) {
                 PointF screenPoint = mapLibreMap.getProjection().toScreenLocation(new LatLng(point.latitude, point.longitude));
                 boolean selected = selectedPoint != null && selectedPoint.id == point.id;
+                float radius = selected ? 18f : 13f;
+
                 paint.setStyle(Paint.Style.FILL);
-                paint.setColor(colorFor(point.type, selected));
-                canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 18f : 12f, paint);
+                paint.setColor(colorFor(point.type));
+                canvas.drawCircle(screenPoint.x, screenPoint.y, radius, paint);
+
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(selected ? 5f : 3f);
-                paint.setColor(Color.WHITE);
-                canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 27f : 18f, paint);
+                paint.setColor(selected ? Color.rgb(0, 174, 213) : Color.WHITE);
+                canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 28f : 19f, paint);
+
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.rgb(7, 22, 12));
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setFakeBoldText(true);
+                paint.setTextSize(selected ? 17f : 13f);
+                canvas.drawText(markerLetter(point.type), screenPoint.x, screenPoint.y + (selected ? 6f : 5f), paint);
+                paint.setFakeBoldText(false);
             }
             paint.setStyle(Paint.Style.FILL);
         }
@@ -249,12 +260,26 @@ public final class MapTilerMapView extends FrameLayout {
             paint.setStyle(Paint.Style.FILL);
         }
 
-        private int colorFor(String type, boolean selected) {
-            if (selected) return Color.rgb(0, 174, 213);
+        private int colorFor(String type) {
             if ("Catch".equals(type)) return Color.rgb(83, 214, 137);
             if ("Waypoint".equals(type)) return Color.rgb(244, 190, 85);
             if ("Tackle change".equals(type)) return Color.rgb(197, 155, 255);
+            if ("Sighting".equals(type)) return Color.rgb(255, 142, 89);
+            if ("Camp".equals(type)) return Color.rgb(104, 196, 255);
+            if ("Hazard".equals(type)) return Color.rgb(246, 114, 103);
+            if ("Map".equals(type)) return Color.rgb(0, 174, 213);
             return Color.rgb(121, 227, 143);
+        }
+
+        private String markerLetter(String type) {
+            if ("Catch".equals(type)) return "C";
+            if ("Waypoint".equals(type)) return "W";
+            if ("Tackle change".equals(type)) return "T";
+            if ("Sighting".equals(type)) return "S";
+            if ("Camp".equals(type)) return "P";
+            if ("Hazard".equals(type)) return "!";
+            if ("Map".equals(type)) return "M";
+            return "?";
         }
     }
 

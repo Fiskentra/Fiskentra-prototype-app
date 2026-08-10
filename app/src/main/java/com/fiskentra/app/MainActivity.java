@@ -35,6 +35,7 @@ import com.fiskentra.app.ui.MapTilerMapView;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -353,14 +354,16 @@ public final class MainActivity extends Activity implements
         LinearLayout body = vertical();
         body.setPadding(dp(20), dp(20), dp(20), dp(20));
         SavedPoint selected = selectedMapPoint();
+        List<SavedPoint> points = pointStore.all();
         body.addView(pageTitle("Explore", selected == null ? "YOUR FIELD MAP" : "SELECTED SAVED POINT"));
         MapTilerMapView map = new MapTilerMapView(this);
         activeMapView = map;
         map.setBackground(roundRect(SURFACE, 20));
-        map.setData(lastLocation, pointStore.all(), trackStore.points(), selected);
+        map.setData(lastLocation, points, trackStore.points(), selected);
         LinearLayout.LayoutParams mapLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         mapLp.setMargins(0, dp(18), 0, dp(14));
         body.addView(map, mapLp);
+        body.addView(mapLegend(points), cardMargins());
 
         if (selected != null) {
             LinearLayout selectedCard = card();
@@ -386,14 +389,77 @@ public final class MainActivity extends Activity implements
         notice.setGravity(Gravity.CENTER_VERTICAL);
         TextView note = text(selected == null ? "Showing all saved points on the outdoor map" : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
         notice.addView(note, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView count = text(pointStore.all().size() + " saved", 12, ACCENT, Typeface.BOLD);
+        TextView count = text(points.size() + " saved", 12, ACCENT, Typeface.BOLD);
         notice.addView(count);
         body.addView(notice);
         body.addView(spacer(14));
         Button button = primaryButton("＋  SAVE HERE");
-        button.setOnClickListener(v -> saveCurrentMoment("Map"));
+        button.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_WAYPOINT));
         body.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
         return body;
+    }
+
+    private View mapLegend(List<SavedPoint> points) {
+        LinearLayout legend = card();
+        legend.setPadding(dp(14), dp(12), dp(14), dp(12));
+        legend.addView(text("MARKER COLORS", 10, MUTED, Typeface.BOLD));
+        legend.addView(spacer(8));
+        LinearLayout first = row();
+        LinearLayout second = row();
+        List<String> types = legendTypes(points);
+        for (int i = 0; i < types.size(); i++) {
+            LinearLayout target = i < 3 ? first : second;
+            target.addView(legendItem(types.get(i)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        legend.addView(first);
+        if (types.size() > 3) {
+            legend.addView(spacer(8));
+            legend.addView(second);
+        }
+        return legend;
+    }
+
+    private List<String> legendTypes(List<SavedPoint> points) {
+        LinkedHashSet<String> found = new LinkedHashSet<>();
+        String[] preferred = {
+                POINT_TYPE_CATCH,
+                POINT_TYPE_WAYPOINT,
+                POINT_TYPE_TACKLE_CHANGE,
+                "Sighting",
+                "Camp",
+                "Hazard",
+                "Map"
+        };
+        for (String type : preferred) {
+            for (SavedPoint point : points) {
+                if (type.equals(point.type)) found.add(type);
+            }
+        }
+        for (SavedPoint point : points) found.add(point.type);
+        if (found.isEmpty()) {
+            found.add(POINT_TYPE_CATCH);
+            found.add(POINT_TYPE_WAYPOINT);
+            found.add(POINT_TYPE_TACKLE_CHANGE);
+        }
+        return new ArrayList<>(found);
+    }
+
+    private View legendItem(String type) {
+        LinearLayout item = row();
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        TextView marker = text(markerLetter(type), 10, Color.rgb(7, 22, 12), Typeface.BOLD);
+        marker.setGravity(Gravity.CENTER);
+        GradientDrawable dot = new GradientDrawable();
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(markerColor(type));
+        dot.setStroke(dp(1), Color.WHITE);
+        marker.setBackground(dot);
+        item.addView(marker, new LinearLayout.LayoutParams(dp(23), dp(23)));
+        TextView label = text(shortTypeLabel(type), 11, TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        labelLp.setMargins(dp(7), 0, dp(4), 0);
+        item.addView(label, labelLp);
+        return item;
     }
 
     private View savedScreen() {
@@ -823,6 +889,34 @@ public final class MainActivity extends Activity implements
         b.setTypeface(Typeface.DEFAULT_BOLD); b.setBackground(roundRect(SURFACE_2, 12)); b.setGravity(Gravity.CENTER);
         b.setPadding(dp(8), 0, dp(8), 0);
         return b;
+    }
+
+    private int markerColor(String type) {
+        if (POINT_TYPE_CATCH.equals(type)) return SUCCESS;
+        if (POINT_TYPE_WAYPOINT.equals(type)) return WARNING;
+        if (POINT_TYPE_TACKLE_CHANGE.equals(type)) return Color.rgb(197, 155, 255);
+        if ("Sighting".equals(type)) return Color.rgb(255, 142, 89);
+        if ("Camp".equals(type)) return Color.rgb(104, 196, 255);
+        if ("Hazard".equals(type)) return DANGER;
+        if ("Map".equals(type)) return ACCENT;
+        return Color.rgb(121, 227, 143);
+    }
+
+    private String markerLetter(String type) {
+        if (POINT_TYPE_CATCH.equals(type)) return "C";
+        if (POINT_TYPE_WAYPOINT.equals(type)) return "W";
+        if (POINT_TYPE_TACKLE_CHANGE.equals(type)) return "T";
+        if ("Sighting".equals(type)) return "S";
+        if ("Camp".equals(type)) return "P";
+        if ("Hazard".equals(type)) return "!";
+        if ("Map".equals(type)) return "M";
+        return "?";
+    }
+
+    private String shortTypeLabel(String type) {
+        if (POINT_TYPE_TACKLE_CHANGE.equals(type)) return "Tackle";
+        if (type == null || type.trim().isEmpty()) return "Other";
+        return type;
     }
 
     private GradientDrawable roundRect(int color, int radiusDp) {
