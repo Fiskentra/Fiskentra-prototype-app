@@ -9,7 +9,8 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Save a current outdoor "Moment" with latitude/longitude/time to local device storage.
 - Start/stop an in-app trip track; route points persist locally and render on the field map.
 - Saved points list with delete confirmation that removes cloud-synced points from Supabase before removing them locally.
-- Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, or sync pending.
+- Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
+- Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - Lightweight offline map canvas showing your current position and locally saved points around it.
 - BLE scan, nearby device list and GATT connection flow.
@@ -57,7 +58,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. Duplicate rows are safe because Supabase returns an already-synced conflict for the same device/local point ID.
 
-When a saved point is deleted, the app first sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the point is removed from local storage. If the cloud delete fails or returns zero rows, the point stays on the phone so the user can retry instead of leaving orphaned GPS data in the database.
+When a saved point is deleted, the app first shows `Deleting from cloud...`, then sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the app shows `Deleted from cloud` and removes the point from local storage. If the cloud delete fails or returns zero rows, the app shows `Cloud delete failed · try again` and the point stays on the phone so the user can retry with the normal `DELETE` action instead of leaving orphaned GPS data in the database.
 
 ```sql
 create table if not exists public.saved_points (
@@ -122,7 +123,7 @@ from public.saved_points
 order by created_at desc;
 ```
 
-Delete one point in the app, then run the query again. The deleted row should disappear from Supabase after the app shows the point was deleted from phone and cloud.
+Delete one point in the app, then run the query again. The Saved screen should show `Deleting from cloud...`, then `Deleted from cloud`, and the deleted row should disappear from Supabase. If the app shows `Cloud delete failed · try again`, the point remains in the Saved list so the delete can be retried.
 
 If an older app build already removed points from the phone but left rows in Supabase, clean those orphan rows manually by their visible `local_id` values:
 
