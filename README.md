@@ -10,16 +10,23 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Start/stop an in-app trip track; route points persist locally and render on the field map.
 - Saved points list with delete confirmation.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, or sync pending.
+- Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - Lightweight offline map canvas showing your current position and locally saved points around it.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
-- SafeX Lite-oriented device UI with single-press and double-press test actions for end-to-end button/GPS validation.
+- SafeX Lite-oriented device UI with single-press, double-press and long-press test actions for end-to-end button/GPS validation.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
 ## Important SafeX Lite integration note
 
-The exact BlueUP SafeX Lite button-event payload / service UUID depends on its firmware and configuration. The app intentionally does **not** treat every BLE notification as a button press, because that could save false locations from battery/sensor/status notifications. `FiskentraBleManager` exposes raw candidate notifications and the Device screen shows their payload bytes; once the SafeX Lite profile is known, add a small decoder and route a confirmed press to `MainActivity.saveCurrentMoment("BLE button")`.
+The exact BlueUP SafeX Lite button-event payload / service UUID depends on its firmware and configuration. The app intentionally does **not** treat every BLE notification as a button press, because that could save false locations from battery/sensor/status notifications. `FiskentraBleManager` exposes raw candidate notifications and the Device screen shows their payload bytes; once the SafeX Lite profile is known, add a small decoder and route confirmed button events to the same point types used by the prototype test buttons:
+
+| SafeX Lite action | Saved point type |
+|---|---|
+| Single press | `Catch` |
+| Double press | `Waypoint` |
+| Long press | `Tackle change` |
 
 To complete the physical-button integration, provide one of:
 
@@ -48,7 +55,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen.
+Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. Duplicate rows are safe because Supabase returns an already-synced conflict for the same device/local point ID.
 
 ```sql
 create table if not exists public.saved_points (

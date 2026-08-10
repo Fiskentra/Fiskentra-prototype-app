@@ -55,6 +55,9 @@ public final class MainActivity extends Activity implements
     private static final String SYNC_SYNCING = "syncing";
     private static final String SYNC_SYNCED = "synced";
     private static final String SYNC_FAILED = "failed";
+    private static final String POINT_TYPE_CATCH = "Catch";
+    private static final String POINT_TYPE_WAYPOINT = "Waypoint";
+    private static final String POINT_TYPE_TACKLE_CHANGE = "Tackle change";
 
     private FrameLayout content;
     private LinearLayout nav;
@@ -368,6 +371,17 @@ public final class MainActivity extends Activity implements
             s.setGravity(Gravity.CENTER); empty.addView(s);
             body.addView(empty);
         } else {
+            int pending = pendingSyncCount(points);
+            if (pending > 0) {
+                LinearLayout syncCard = card();
+                syncCard.addView(text(pending + (pending == 1 ? " local point needs cloud sync" : " local points need cloud sync"), 16, TEXT, Typeface.BOLD));
+                syncCard.addView(text("Older points can show Saved locally because they were created before per-point sync status existed.", 12, MUTED, Typeface.NORMAL));
+                syncCard.addView(spacer(12));
+                Button sync = primaryButton("SYNC LOCAL POINTS");
+                sync.setOnClickListener(v -> syncPendingPoints());
+                syncCard.addView(sync, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+                body.addView(syncCard, cardMargins());
+            }
             for (SavedPoint p : points) body.addView(savedPointCard(p), cardMargins());
         }
         return scroll;
@@ -436,17 +450,21 @@ public final class MainActivity extends Activity implements
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
         testCard.addView(text("Test button behavior before hardware arrives", 17, TEXT, Typeface.BOLD));
-        testCard.addView(text("Single press and double press simulate the future SafeX Lite actions and save the current GPS position.", 13, MUTED, Typeface.NORMAL));
+        testCard.addView(text("Single press registers a catch. Double press saves a waypoint. Long press marks a tackle change.", 13, MUTED, Typeface.NORMAL));
         testCard.addView(spacer(14));
         LinearLayout testActions = row();
         Button single = smallButton("SINGLE PRESS");
-        single.setOnClickListener(v -> handleButtonPress("BLE single press", "Simulated single press saved a GPS point"));
+        single.setOnClickListener(v -> handleButtonPress(POINT_TYPE_CATCH, "Single press registered a catch"));
         testActions.addView(single, weighted());
         testActions.addView(spaceWide());
         Button doublePress = smallButton("DOUBLE PRESS");
-        doublePress.setOnClickListener(v -> handleButtonPress("BLE double press", "Simulated double press saved a priority GPS point"));
+        doublePress.setOnClickListener(v -> handleButtonPress(POINT_TYPE_WAYPOINT, "Double press saved a waypoint"));
         testActions.addView(doublePress, weighted());
         testCard.addView(testActions);
+        testCard.addView(spacer(10));
+        Button longPress = smallButton("LONG PRESS");
+        longPress.setOnClickListener(v -> handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Long press marked a tackle change"));
+        testCard.addView(longPress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         testCard.addView(spacer(12));
         buttonEventText = text(lastButtonEvent, 12, MUTED, Typeface.NORMAL);
         testCard.addView(buttonEventText);
@@ -456,6 +474,7 @@ public final class MainActivity extends Activity implements
         body.addView(checkRow(true, "BLE scanning & connection"));
         body.addView(checkRow(true, "GPS location saving"));
         body.addView(checkRow(true, "Local offline point storage"));
+        body.addView(checkRow(true, "Mock single/double/long press actions"));
         body.addView(checkRow(false, "SafeX button-packet decoder needs device profile/capture"));
         return scroll;
     }
@@ -515,6 +534,35 @@ public final class MainActivity extends Activity implements
             if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
             if (!synced) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         }));
+    }
+
+    private void syncPendingPoints() {
+        List<SavedPoint> points = pointStore.all();
+        int pending = pendingSyncCount(points);
+        if (pending == 0) {
+            cloudSyncStatus = "All local points are synced to cloud";
+            Toast.makeText(this, "All points are already synced", Toast.LENGTH_SHORT).show();
+            render("saved");
+            return;
+        }
+        cloudSyncStatus = "Syncing " + pending + (pending == 1 ? " local point…" : " local points…");
+        Toast.makeText(this, "Syncing local points to Supabase", Toast.LENGTH_SHORT).show();
+        for (SavedPoint point : points) {
+            if (shouldSync(point.id)) syncPoint(point);
+        }
+    }
+
+    private int pendingSyncCount(List<SavedPoint> points) {
+        int count = 0;
+        for (SavedPoint point : points) {
+            if (shouldSync(point.id)) count++;
+        }
+        return count;
+    }
+
+    private boolean shouldSync(long pointId) {
+        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
+        return !SYNC_SYNCED.equals(state) && !SYNC_SYNCING.equals(state);
     }
 
     private void setSyncState(long pointId, String state, String message) {
