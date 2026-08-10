@@ -29,6 +29,7 @@ public final class MapTilerMapView extends FrameLayout {
     private final MarkerOverlay overlay;
     private MapLibreMap mapLibreMap;
     private Location location;
+    private List<SavedPoint> points = Collections.emptyList();
     private SavedPoint selectedPoint;
     private boolean cameraMoved;
     private boolean started;
@@ -56,8 +57,9 @@ public final class MapTilerMapView extends FrameLayout {
 
     public void setData(Location location, List<SavedPoint> points, List<double[]> track, SavedPoint selectedPoint) {
         this.location = location;
+        this.points = points == null ? Collections.emptyList() : points;
         this.selectedPoint = selectedPoint;
-        overlay.setData(points, track);
+        overlay.setData(this.points, track);
         moveCameraIfReady();
     }
 
@@ -117,6 +119,11 @@ public final class MapTilerMapView extends FrameLayout {
             lat = selectedPoint.latitude;
             lon = selectedPoint.longitude;
             zoom = 14.5;
+        } else if (!points.isEmpty()) {
+            CameraTarget target = savedPointsCameraTarget();
+            lat = target.latitude;
+            lon = target.longitude;
+            zoom = target.zoom;
         } else if (location != null) {
             lat = location.getLatitude();
             lon = location.getLongitude();
@@ -132,6 +139,43 @@ public final class MapTilerMapView extends FrameLayout {
                 .build());
         cameraMoved = true;
         overlay.invalidate();
+    }
+
+    private CameraTarget savedPointsCameraTarget() {
+        double minLat = Double.MAX_VALUE;
+        double maxLat = -Double.MAX_VALUE;
+        double minLon = Double.MAX_VALUE;
+        double maxLon = -Double.MAX_VALUE;
+        for (SavedPoint point : points) {
+            minLat = Math.min(minLat, point.latitude);
+            maxLat = Math.max(maxLat, point.latitude);
+            minLon = Math.min(minLon, point.longitude);
+            maxLon = Math.max(maxLon, point.longitude);
+        }
+        if (location != null) {
+            minLat = Math.min(minLat, location.getLatitude());
+            maxLat = Math.max(maxLat, location.getLatitude());
+            minLon = Math.min(minLon, location.getLongitude());
+            maxLon = Math.max(maxLon, location.getLongitude());
+        }
+        double span = Math.max(Math.abs(maxLat - minLat), Math.abs(maxLon - minLon));
+        return new CameraTarget(
+                (minLat + maxLat) / 2.0,
+                (minLon + maxLon) / 2.0,
+                zoomForSpan(span)
+        );
+    }
+
+    private double zoomForSpan(double span) {
+        if (span < 0.002) return 16.0;
+        if (span < 0.006) return 15.0;
+        if (span < 0.015) return 14.0;
+        if (span < 0.04) return 13.0;
+        if (span < 0.10) return 12.0;
+        if (span < 0.25) return 11.0;
+        if (span < 0.60) return 10.0;
+        if (span < 1.20) return 9.0;
+        return 8.0;
     }
 
     private String styleUrl() {
@@ -211,6 +255,18 @@ public final class MapTilerMapView extends FrameLayout {
             if ("Waypoint".equals(type)) return Color.rgb(244, 190, 85);
             if ("Tackle change".equals(type)) return Color.rgb(197, 155, 255);
             return Color.rgb(121, 227, 143);
+        }
+    }
+
+    private static final class CameraTarget {
+        final double latitude;
+        final double longitude;
+        final double zoom;
+
+        CameraTarget(double latitude, double longitude, double zoom) {
+            this.latitude = latitude;
+            this.longitude = longitude;
+            this.zoom = zoom;
         }
     }
 }

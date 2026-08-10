@@ -384,7 +384,7 @@ public final class MainActivity extends Activity implements
 
         LinearLayout notice = row();
         notice.setGravity(Gravity.CENTER_VERTICAL);
-        TextView note = text(selected == null ? "MapTiler Outdoor map · fishing layers next" : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
+        TextView note = text(selected == null ? "Showing all saved points on the outdoor map" : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
         notice.addView(note, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView count = text(pointStore.all().size() + " saved", 12, ACCENT, Typeface.BOLD);
         notice.addView(count);

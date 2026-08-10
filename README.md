@@ -13,6 +13,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the MapTiler Outdoor map.
+- Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
 - Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
@@ -72,6 +73,7 @@ The current fishing map layer shows:
 - Current phone location.
 - Local trip track.
 - Saved point markers for `Catch`, `Waypoint`, and `Tackle change`.
+- Automatic camera fit around all saved points when the Map tab is opened normally.
 - Selected saved point highlight when opened from the Saved screen.
 
 Depth/bathymetry, fishing zones and offline map packs are still future layers; this update replaces the prototype canvas with the real map engine and base map.
@@ -156,7 +158,9 @@ order by created_at desc;
 
 Delete one point in the app, then run the query again. The Saved screen should show `Deleting from cloud...`, then `Deleted from cloud`, and the deleted row should disappear from Supabase. If the app shows `Cloud delete failed · try again`, the point remains in the Saved list so the delete can be retried.
 
-To verify saved point map opening, create at least one saved point, open Saved, then tap the point card or `OPEN MAP`. The Map screen should open with `SELECTED SAVED POINT`, center the MapTiler Outdoor map on that location, and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to the normal current-location view.
+To verify normal map saved-point markers, create several saved points in different nearby places, then open the Map tab directly from the bottom navigation. The Map screen should fit the camera around all saved points and show every marker in its real location.
+
+To verify selected saved point map opening, open Saved, then tap the point card or `OPEN MAP`. The Map screen should open with `SELECTED SAVED POINT`, center the MapTiler Outdoor map on that one location, and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to the normal all-saved-points view.
 
 If an older app build already removed points from the phone but left rows in Supabase, clean those orphan rows manually by their visible `local_id` values:
 
