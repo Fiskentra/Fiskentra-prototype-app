@@ -8,7 +8,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - GPS permission + live location acquisition using Android `LocationManager` (no Google dependency).
 - Save a current outdoor "Moment" with latitude/longitude/time to local device storage.
 - Start/stop an in-app trip track; route points persist locally and render on the field map.
-- Saved points list with delete confirmation.
+- Saved points list with delete confirmation that removes cloud-synced points from Supabase before removing them locally.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, or sync pending.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - Lightweight offline map canvas showing your current position and locally saved points around it.
@@ -57,6 +57,8 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. Duplicate rows are safe because Supabase returns an already-synced conflict for the same device/local point ID.
 
+When a saved point is deleted, the app first sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the point is removed from local storage. If the cloud delete fails or returns zero rows, the point stays on the phone so the user can retry instead of leaving orphaned GPS data in the database.
+
 ```sql
 create table if not exists public.saved_points (
   id text primary key,
@@ -74,6 +76,8 @@ create table if not exists public.saved_points (
 alter table public.saved_points enable row level security;
 
 drop policy if exists "Prototype clients can insert saved points" on public.saved_points;
+drop policy if exists "Prototype clients can read own saved points for delete" on public.saved_points;
+drop policy if exists "Prototype clients can delete saved points" on public.saved_points;
 
 create policy "Prototype clients can insert saved points"
 on public.saved_points
@@ -81,10 +85,51 @@ for insert
 to anon
 with check (true);
 
+create policy "Prototype clients can read own saved points for delete"
+on public.saved_points
+for select
+to anon
+using (
+  device_id = nullif(
+    coalesce(nullif(current_setting('request.headers', true), ''), '{}')::json ->> 'x-device-id',
+    ''
+  )
+);
+
+create policy "Prototype clients can delete saved points"
+on public.saved_points
+for delete
+to anon
+using (
+  device_id = nullif(
+    coalesce(nullif(current_setting('request.headers', true), ''), '{}')::json ->> 'x-device-id',
+    ''
+  )
+);
+
 grant insert on table public.saved_points to anon;
+grant select (device_id, local_id) on table public.saved_points to anon;
+grant delete on table public.saved_points to anon;
 ```
 
-This prototype policy lets the Android app upload newly saved points with the publishable key, but does not grant public read access to everyone else's GPS data. Use authenticated users and owner-based RLS before enabling account cloud backup.
+This prototype policy lets the Android app upload and delete its own saved points with the publishable key and the phone's install ID header. It grants only the `device_id` and `local_id` columns for the delete verification read, not latitude/longitude. Use authenticated users and owner-based RLS before enabling account cloud backup.
+
+To test cloud delete after running the SQL:
+
+```sql
+select recorded_at, type, latitude, longitude
+from public.saved_points
+order by created_at desc;
+```
+
+Delete one point in the app, then run the query again. The deleted row should disappear from Supabase after the app shows the point was deleted from phone and cloud.
+
+If an older app build already removed points from the phone but left rows in Supabase, clean those orphan rows manually by their visible `local_id` values:
+
+```sql
+delete from public.saved_points
+where local_id in (1786374585128, 1786374588505, 1786374593521);
+```
 
 ## GitHub repository
 
@@ -94,6 +139,8 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 
 ## Suggested next integrations
 
+- Edit saved point type/name and notes.
+- Open a saved point on the map.
 - Decode SafeX Lite single/double/long press events.
 - Real map tiles + offline map packs (MapLibre is a good fit when a tile/data provider is selected).
 - Track recording in a foreground service for background reliability.

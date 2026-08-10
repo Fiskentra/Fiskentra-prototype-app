@@ -55,6 +55,7 @@ public final class MainActivity extends Activity implements
     private static final String SYNC_SYNCING = "syncing";
     private static final String SYNC_SYNCED = "synced";
     private static final String SYNC_FAILED = "failed";
+    private static final String SYNC_DELETING = "deleting";
     private static final String POINT_TYPE_CATCH = "Catch";
     private static final String POINT_TYPE_WAYPOINT = "Waypoint";
     private static final String POINT_TYPE_TACKLE_CHANGE = "Tackle change";
@@ -396,9 +397,9 @@ public final class MainActivity extends Activity implements
         delete.setPadding(dp(8), dp(4), 0, dp(4));
         delete.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("Delete this moment?")
-                .setMessage("The saved location will be removed from this device.")
+                .setMessage("Fiskentra will remove this point from Supabase, then from this device.")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (dialog, which) -> { pointStore.delete(point.id); render("saved"); })
+                .setPositiveButton("Delete", (dialog, which) -> deletePoint(point))
                 .show());
         header.addView(delete);
         card.addView(header);
@@ -552,6 +553,26 @@ public final class MainActivity extends Activity implements
         }
     }
 
+    private void deletePoint(SavedPoint point) {
+        setSyncState(point.id, SYNC_DELETING, "Deleting from Supabase");
+        cloudSyncStatus = "Deleting point from Supabase…";
+        Toast.makeText(this, "Deleting point from Supabase", Toast.LENGTH_SHORT).show();
+        render("saved");
+        pointSync.delete(point, (deleted, message) -> runOnUiThread(() -> {
+            if (deleted) {
+                pointStore.delete(point.id);
+                clearSyncState(point.id);
+                cloudSyncStatus = "Point deleted from cloud and this device";
+                Toast.makeText(this, "Point deleted from phone and Supabase", Toast.LENGTH_SHORT).show();
+            } else {
+                setSyncState(point.id, SYNC_FAILED, message);
+                cloudSyncStatus = "Delete failed · point kept locally";
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+            }
+            render("saved");
+        }));
+    }
+
     private int pendingSyncCount(List<SavedPoint> points) {
         int count = 0;
         for (SavedPoint point : points) {
@@ -562,7 +583,7 @@ public final class MainActivity extends Activity implements
 
     private boolean shouldSync(long pointId) {
         String state = syncPrefs.getString(syncKey(pointId, "state"), "");
-        return !SYNC_SYNCED.equals(state) && !SYNC_SYNCING.equals(state);
+        return !SYNC_SYNCED.equals(state) && !SYNC_SYNCING.equals(state) && !SYNC_DELETING.equals(state);
     }
 
     private void setSyncState(long pointId, String state, String message) {
@@ -572,10 +593,18 @@ public final class MainActivity extends Activity implements
                 .apply();
     }
 
+    private void clearSyncState(long pointId) {
+        syncPrefs.edit()
+                .remove(syncKey(pointId, "state"))
+                .remove(syncKey(pointId, "message"))
+                .apply();
+    }
+
     private String syncLabel(long pointId) {
         String state = syncPrefs.getString(syncKey(pointId, "state"), "");
         if (SYNC_SYNCED.equals(state)) return "●  Synced to cloud";
         if (SYNC_SYNCING.equals(state)) return "○  Syncing to Supabase…";
+        if (SYNC_DELETING.equals(state)) return "○  Deleting from Supabase…";
         if (SYNC_FAILED.equals(state)) {
             String message = syncPrefs.getString(syncKey(pointId, "message"), "cloud sync pending");
             return "●  Saved locally · " + message;
@@ -587,6 +616,7 @@ public final class MainActivity extends Activity implements
         String state = syncPrefs.getString(syncKey(pointId, "state"), "");
         if (SYNC_SYNCED.equals(state)) return SUCCESS;
         if (SYNC_SYNCING.equals(state)) return WARNING;
+        if (SYNC_DELETING.equals(state)) return WARNING;
         if (SYNC_FAILED.equals(state)) return DANGER;
         return MUTED;
     }
@@ -595,7 +625,8 @@ public final class MainActivity extends Activity implements
         String value = cloudSyncStatus.toLowerCase(Locale.ROOT);
         if (value.contains("synced")) return SUCCESS;
         if (value.contains("pending") || value.contains("failed")) return DANGER;
-        if (value.contains("syncing")) return WARNING;
+        if (value.contains("syncing") || value.contains("deleting")) return WARNING;
+        if (value.contains("deleted")) return SUCCESS;
         return MUTED;
     }
 

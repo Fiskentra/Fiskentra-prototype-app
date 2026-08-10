@@ -5,12 +5,16 @@ import android.content.SharedPreferences;
 
 import com.fiskentra.app.model.SavedPoint;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -53,6 +57,7 @@ public final class SupabasePointSync {
                 connection.setReadTimeout(7000);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
+                connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
                 connection.setRequestProperty("Accept", "application/json");
                 connection.setRequestProperty("Content-Type", "application/json");
                 connection.setRequestProperty("Prefer", "return=minimal");
@@ -75,6 +80,49 @@ public final class SupabasePointSync {
         });
     }
 
+    public void delete(SavedPoint point, Listener listener) {
+        if (!SupabaseConfig.isConfigured()) {
+            listener.onResult(false, "Cloud delete skipped: Supabase is not configured");
+            return;
+        }
+
+        executor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                String installId = installId();
+                String deviceId = URLEncoder.encode(installId, "UTF-8");
+                String localId = URLEncoder.encode(String.valueOf(point.id), "UTF-8");
+                URL url = new URL(SupabaseConfig.url()
+                        + "/rest/v1/saved_points?select=local_id&device_id=eq." + deviceId
+                        + "&local_id=eq." + localId);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("DELETE");
+                connection.setConnectTimeout(7000);
+                connection.setReadTimeout(7000);
+                connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
+                connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
+                connection.setRequestProperty("X-Device-Id", installId);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Prefer", "return=representation");
+                int status = connection.getResponseCode();
+                if (status >= 200 && status < 300) {
+                    String body = read(connection.getInputStream());
+                    if (deletedRowCount(body) > 0) {
+                        listener.onResult(true, "Point deleted from Supabase");
+                    } else {
+                        listener.onResult(false, "No matching Supabase row deleted; check SELECT policy");
+                    }
+                } else {
+                    listener.onResult(false, "Supabase point delete HTTP " + status);
+                }
+            } catch (Exception e) {
+                listener.onResult(false, "Cloud delete failed; try again");
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
     public void close() {
         executor.shutdownNow();
     }
@@ -91,6 +139,30 @@ public final class SupabasePointSync {
         json.put("type", point.type);
         json.put("note", point.note == null ? "" : point.note);
         return json.toString();
+    }
+
+    private String remoteId(SavedPoint point) {
+        return installId() + "-" + point.id;
+    }
+
+    private static int deletedRowCount(String body) {
+        if (body == null || body.trim().isEmpty()) return 0;
+        try {
+            return new JSONArray(body).length();
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private static String read(InputStream input) throws IOException {
+        if (input == null) return "";
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            out.write(buffer, 0, count);
+        }
+        return out.toString("UTF-8");
     }
 
     private synchronized String installId() {
