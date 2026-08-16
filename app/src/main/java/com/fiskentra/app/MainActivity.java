@@ -244,6 +244,7 @@ public final class MainActivity extends Activity implements
         companionLp.setMargins(dp(10), 0, 0, 0);
         brand.addView(companion, companionLp);
         body.addView(brand);
+        body.addView(text("v" + BuildConfig.VERSION_NAME + " · INTERNAL PROTOTYPE", 10, ACCENT, Typeface.BOLD));
 
         TextView hello = text("Remember the moment.\nKeep moving.", 31, TEXT, Typeface.BOLD);
         hello.setLineSpacing(0f, 1.05f);
@@ -305,7 +306,7 @@ public final class MainActivity extends Activity implements
         LinearLayout deviceHead = row();
         LinearLayout deviceCopy = vertical();
         deviceCopy.addView(text("FIELD BUTTON", 11, MUTED, Typeface.BOLD));
-        deviceCopy.addView(text(connectedDevice.isEmpty() ? "SafeX Lite" : connectedDevice, 18, TEXT, Typeface.BOLD));
+        deviceCopy.addView(text(connectedDevice.isEmpty() ? "Flic 2" : connectedDevice, 18, TEXT, Typeface.BOLD));
         deviceCopy.addView(text(bleStatus, 12, connectedDevice.isEmpty() ? MUTED : ACCENT, Typeface.NORMAL));
         deviceHead.addView(deviceCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button connect = smallButton(connectedDevice.isEmpty() ? "CONNECT" : "OPEN");
@@ -541,20 +542,20 @@ public final class MainActivity extends Activity implements
         LinearLayout body = vertical();
         body.setPadding(dp(20), dp(20), dp(20), dp(28));
         scroll.addView(body);
-        body.addView(pageTitle("Field button", "BLUEUP SAFEX LITE PROTOTYPE"));
+        body.addView(pageTitle("Field button", "FLIC 2 · SDK MIGRATION"));
         body.addView(spacer(18));
 
         LinearLayout status = card();
         status.addView(text(connectedDevice.isEmpty() ? "○  NOT CONNECTED" : "●  CONNECTED", 11,
                 connectedDevice.isEmpty() ? MUTED : ACCENT, Typeface.BOLD));
         status.addView(spacer(8));
-        status.addView(text(connectedDevice.isEmpty() ? "SafeX Lite" : connectedDevice, 24, TEXT, Typeface.BOLD));
+        status.addView(text(connectedDevice.isEmpty() ? "Flic 2" : connectedDevice, 24, TEXT, Typeface.BOLD));
         deviceStatusText = text(bleStatus, 13, MUTED, Typeface.NORMAL);
         status.addView(deviceStatusText);
         status.addView(spacer(8));
         status.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.BOLD));
         status.addView(spacer(16));
-        Button scan = primaryButton("⌁  SCAN FOR BLE DEVICES");
+        Button scan = primaryButton("⌁  OPEN BLE DIAGNOSTIC SCAN");
         scan.setOnClickListener(v -> {
             if (!bleManager.hasPermissions()) { requestNeededPermissions(); return; }
             discoveredDevices.clear();
@@ -567,7 +568,7 @@ public final class MainActivity extends Activity implements
         body.addView(sectionTitle("NEARBY DEVICES"));
         deviceResults = vertical();
         if (discoveredDevices.isEmpty()) {
-            deviceResults.addView(text("Tap scan. SafeX / BlueUP devices will appear here with other nearby BLE hardware.", 13, MUTED, Typeface.NORMAL));
+            deviceResults.addView(text("Flic 2 pairing will use flic2lib-android. This generic BLE scan remains available for diagnostics.", 13, MUTED, Typeface.NORMAL));
         } else {
             for (DeviceRow d : discoveredDevices) addDeviceResult(d);
         }
@@ -575,8 +576,8 @@ public final class MainActivity extends Activity implements
 
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
-        testCard.addView(text("Test button behavior before hardware arrives", 17, TEXT, Typeface.BOLD));
-        testCard.addView(text("Single press registers a catch. Double press saves a waypoint. Long press marks a tackle change.", 13, MUTED, Typeface.NORMAL));
+        testCard.addView(text("Test the Fiskentra action mapping", 17, TEXT, Typeface.BOLD));
+        testCard.addView(text("Single press registers a catch. Double press saves a waypoint. Hold marks a tackle change.", 13, MUTED, Typeface.NORMAL));
         testCard.addView(spacer(14));
         LinearLayout testActions = row();
         Button single = smallButton("SINGLE PRESS");
@@ -588,20 +589,21 @@ public final class MainActivity extends Activity implements
         testActions.addView(doublePress, weighted());
         testCard.addView(testActions);
         testCard.addView(spacer(10));
-        Button longPress = smallButton("LONG PRESS");
-        longPress.setOnClickListener(v -> handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Long press marked a tackle change"));
-        testCard.addView(longPress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        Button hold = smallButton("HOLD");
+        hold.setOnClickListener(v -> handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Hold marked a tackle change"));
+        testCard.addView(hold, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         testCard.addView(spacer(12));
         buttonEventText = text(lastButtonEvent, 12, MUTED, Typeface.NORMAL);
         testCard.addView(buttonEventText);
         body.addView(testCard);
 
         body.addView(sectionTitle("PROTOTYPE STATUS"));
-        body.addView(checkRow(true, "BLE scanning & connection"));
+        body.addView(checkRow(true, "Generic BLE diagnostic scan"));
         body.addView(checkRow(true, "GPS location saving"));
         body.addView(checkRow(true, "Local offline point storage"));
-        body.addView(checkRow(true, "Mock single/double/long press actions"));
-        body.addView(checkRow(false, "SafeX button-packet decoder needs device profile/capture"));
+        body.addView(checkRow(true, "Mock single/double/hold actions"));
+        body.addView(checkRow(false, "Official Flic 2 SDK pairing and event callbacks"));
+        body.addView(checkRow(false, "Physical Flic 2 button test"));
         return scroll;
     }
 
@@ -829,9 +831,8 @@ public final class MainActivity extends Activity implements
     }
 
     @Override public void onButtonCandidate(byte[] payload) {
-        // Intentionally do not save a location yet. The SafeX profile must identify which
-        // notification really represents a press; treating sensor/battery data as a press
-        // would create false points. Surface the raw notification length for field testing.
+        // Generic GATT notifications are diagnostic only. Flic 2 actions will be accepted
+        // from the official SDK callbacks so unrelated BLE data cannot create false points.
         runOnUiThread(() -> {
             bleStatus = "Notification received · " + payload.length + " bytes · decoder pending";
             lastButtonEvent = "Raw BLE payload: " + hex(payload);

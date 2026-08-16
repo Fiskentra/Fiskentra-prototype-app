@@ -2,6 +2,13 @@
 
 Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing, hunting, hiking, tourism and general adventures.
 
+## Project stage
+
+- Current version: `v0.4.1` Internal Prototype / Pre-Alpha.
+- Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
+- Next target: `v0.5` official Flic 2 Android SDK integration and physical button testing.
+- Launch readiness: not ready for public users.
+
 ## What works in this prototype
 
 - Native Android app, minimum Android 8.0 (API 26).
@@ -18,25 +25,41 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - BLE scan, nearby device list and GATT connection flow.
 - Automatic subscription attempt to notify/indicate GATT characteristics after connection.
-- SafeX Lite-oriented device UI with single-press, double-press and long-press test actions for end-to-end button/GPS validation.
+- Flic 2-oriented device UI with single-press, double-press and hold test actions for end-to-end button/GPS validation.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
-## Important SafeX Lite integration note
+## Important Flic integration note
 
-The exact BlueUP SafeX Lite button-event payload / service UUID depends on its firmware and configuration. The app intentionally does **not** treat every BLE notification as a button press, because that could save false locations from battery/sensor/status notifications. `FiskentraBleManager` exposes raw candidate notifications and the Device screen shows their payload bytes; once the SafeX Lite profile is known, add a small decoder and route confirmed button events to the same point types used by the prototype test buttons:
+The selected hardware is the [Flic 2 Single Pack](https://flic.io/shop/flic-2-single-pack), replacing the previously planned BlueUP SafeX Lite. The current generic `FiskentraBleManager` is retained only as a BLE diagnostic tool; it is not the production Flic 2 integration and raw GATT notifications must not create saved points.
 
-| SafeX Lite action | Saved point type |
+Fiskentra will use the official [`flic2lib-android`](https://github.com/50ButtonsEach/flic2lib-android) SDK. It owns Flic 2 scanning, pairing, reconnect behavior and button callbacks.
+
+Verified hardware details relevant to the prototype:
+
+- Triggers: push, double push and hold.
+- Connection: Bluetooth 5 LE with direct Android support; no Flic Hub is required for phone use.
+- Battery: replaceable CR2032, advertised for up to three years.
+- Range: advertised up to 50 m indoors.
+- Protection: IP44 splashproof, not waterproof or suitable for submersion.
+
+The Fiskentra action mapping remains:
+
+| Flic action | Saved point type |
 |---|---|
 | Single press | `Catch` |
 | Double press | `Waypoint` |
-| Long press | `Tackle change` |
+| Hold | `Tackle change` |
 
-To complete the physical-button integration, provide one of:
+The `v0.5` implementation checklist is:
 
-1. The SafeX Lite GATT/service/button-event specification from BlueUP; or
-2. A BLE capture/log from the physical tag while pressing the button (nRF Connect is suitable); or
-3. Access to the actual device during Android testing so its services and advertisements can be inspected.
+1. Add `flic2lib-android` and replace the generic scan/connect flow with Flic 2 SDK pairing.
+2. Route click, double-click and hold callbacks through the existing action mapping.
+3. Ignore stale queued events so an old press cannot save a new GPS point after reconnection.
+4. Validate local save, GPS, Supabase sync and reconnect behavior on a physical Android phone.
+5. Test the button inside a splash-resistant case or wristband during fishing; the button itself is only IP44.
+
+Background and locked-phone reliability remains the separate `v0.6` milestone and will require a foreground service.
 
 ## Open and run
 
@@ -180,7 +203,7 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 ## Suggested next integrations
 
 - Edit saved point type/name and notes.
-- Decode SafeX Lite single/double/long press events.
+- Integrate `flic2lib-android` and validate Flic 2 single/double/hold events.
 - Offline MapLibre/MapTiler map packs for low-signal fishing areas.
 - Track recording in a foreground service for background reliability.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
