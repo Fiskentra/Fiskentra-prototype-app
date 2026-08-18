@@ -24,14 +24,13 @@ val maptilerApiKey = localProperties.getProperty("MAPTILER_API_KEY", "Po4KLeYIgz
 android {
     namespace = "com.fiskentra.app"
     compileSdk = 35
-    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.fiskentra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.4.1"
+        versionCode = 5
+        versionName = "0.5.2"
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(supabasePublishableKey))
@@ -56,5 +55,6 @@ android {
 }
 
 dependencies {
+    implementation("com.github.50ButtonsEach:flic2lib-android:2.0.1")
     implementation("org.maplibre.gl:android-sdk:13.4.1")
 }
