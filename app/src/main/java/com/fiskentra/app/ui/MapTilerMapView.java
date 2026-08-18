@@ -17,6 +17,7 @@ import org.maplibre.android.geometry.LatLng;
 import org.maplibre.android.maps.MapLibreMap;
 import org.maplibre.android.maps.MapView;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -203,6 +204,8 @@ public final class MapTilerMapView extends FrameLayout {
             if (mapLibreMap == null) return;
             drawTrack(canvas);
             drawSavedPoints(canvas);
+            // Keep the live GPS position as the topmost map element. Saved points reserve
+            // its screen position and spread around it, so neither layer hides the other.
             drawCurrentLocation(canvas);
         }
 
@@ -221,42 +224,113 @@ public final class MapTilerMapView extends FrameLayout {
         }
 
         private void drawSavedPoints(Canvas canvas) {
+            List<PointF> occupied = new ArrayList<>();
+            if (location != null) {
+                occupied.add(mapLibreMap.getProjection().toScreenLocation(
+                        new LatLng(location.getLatitude(), location.getLongitude())));
+            }
             for (SavedPoint point : points) {
-                PointF screenPoint = mapLibreMap.getProjection().toScreenLocation(new LatLng(point.latitude, point.longitude));
-                boolean selected = selectedPoint != null && selectedPoint.id == point.id;
-                float radius = selected ? 18f : 13f;
+                if (selectedPoint != null && selectedPoint.id == point.id) continue;
+                PointF origin = mapLibreMap.getProjection().toScreenLocation(
+                        new LatLng(point.latitude, point.longitude));
+                PointF screenPoint = spreadOverlappingMarker(origin, occupied);
+                occupied.add(screenPoint);
+                drawSavedPoint(canvas, point, origin, screenPoint, false);
+            }
 
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(colorFor(point.type));
-                canvas.drawCircle(screenPoint.x, screenPoint.y, radius, paint);
-
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(selected ? 5f : 3f);
-                paint.setColor(selected ? Color.rgb(0, 174, 213) : Color.WHITE);
-                canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 28f : 19f, paint);
-
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.rgb(7, 22, 12));
-                paint.setTextAlign(Paint.Align.CENTER);
-                paint.setFakeBoldText(true);
-                paint.setTextSize(selected ? 17f : 13f);
-                canvas.drawText(markerLetter(point.type), screenPoint.x, screenPoint.y + (selected ? 6f : 5f), paint);
-                paint.setFakeBoldText(false);
+            // Keep an explicitly selected point at its exact map coordinate and above every
+            // other marker so OPEN MAP always produces an unmistakable highlight.
+            if (selectedPoint != null) {
+                PointF origin = mapLibreMap.getProjection().toScreenLocation(
+                        new LatLng(selectedPoint.latitude, selectedPoint.longitude));
+                drawSavedPoint(canvas, selectedPoint, origin, origin, true);
             }
             paint.setStyle(Paint.Style.FILL);
+        }
+
+        private void drawSavedPoint(
+                Canvas canvas,
+                SavedPoint point,
+                PointF origin,
+                PointF screenPoint,
+                boolean selected) {
+            if (origin.x != screenPoint.x || origin.y != screenPoint.y) {
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(2f);
+                paint.setColor(Color.argb(150, 255, 255, 255));
+                canvas.drawLine(origin.x, origin.y, screenPoint.x, screenPoint.y, paint);
+            }
+
+            float radius = selected ? 18f : 13f;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(colorFor(point.type));
+            canvas.drawCircle(screenPoint.x, screenPoint.y, radius, paint);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(selected ? 5f : 3f);
+            paint.setColor(selected ? Color.rgb(0, 174, 213) : Color.WHITE);
+            canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 28f : 19f, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(7, 22, 12));
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setFakeBoldText(true);
+            paint.setTextSize(selected ? 17f : 13f);
+            canvas.drawText(markerLetter(point.type), screenPoint.x,
+                    screenPoint.y + (selected ? 6f : 5f), paint);
+            paint.setFakeBoldText(false);
+        }
+
+        private PointF spreadOverlappingMarker(PointF origin, List<PointF> occupied) {
+            final float minimumDistance = 42f;
+            if (isAvailable(origin, occupied, minimumDistance)) return origin;
+
+            // Try stable rings around the true coordinate. This keeps several moments saved
+            // from one fishing spot readable without pretending they have different GPS data.
+            for (int slot = 0; slot < 48; slot++) {
+                int ring = 1 + slot / 8;
+                int position = slot % 8;
+                double angle = position * (Math.PI / 4.0)
+                        + (ring % 2 == 0 ? Math.PI / 8.0 : 0.0);
+                float distance = ring * minimumDistance;
+                PointF candidate = new PointF(
+                        origin.x + (float) Math.cos(angle) * distance,
+                        origin.y + (float) Math.sin(angle) * distance);
+                if (isAvailable(candidate, occupied, minimumDistance * 0.85f)) return candidate;
+            }
+            return origin;
+        }
+
+        private boolean isAvailable(PointF candidate, List<PointF> occupied, float minimumDistance) {
+            float minimumDistanceSquared = minimumDistance * minimumDistance;
+            for (PointF existing : occupied) {
+                float dx = candidate.x - existing.x;
+                float dy = candidate.y - existing.y;
+                if (dx * dx + dy * dy < minimumDistanceSquared) return false;
+            }
+            return true;
         }
 
         private void drawCurrentLocation(Canvas canvas) {
             if (location == null) return;
             PointF screenPoint = mapLibreMap.getProjection().toScreenLocation(
                     new LatLng(location.getLatitude(), location.getLongitude()));
+
+            paint.setColor(Color.argb(150, 7, 22, 12));
+            paint.setStyle(Paint.Style.FILL);
+            canvas.drawCircle(screenPoint.x, screenPoint.y, 25f, paint);
+
             paint.setColor(Color.WHITE);
             paint.setStyle(Paint.Style.FILL);
-            canvas.drawCircle(screenPoint.x, screenPoint.y, 13f, paint);
+            canvas.drawCircle(screenPoint.x, screenPoint.y, 11f, paint);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(5f);
             paint.setColor(Color.rgb(121, 227, 143));
-            canvas.drawCircle(screenPoint.x, screenPoint.y, 20f, paint);
+            canvas.drawCircle(screenPoint.x, screenPoint.y, 21f, paint);
+            paint.setStrokeWidth(2f);
+            paint.setColor(Color.rgb(0, 174, 213));
+            canvas.drawCircle(screenPoint.x, screenPoint.y, 14f, paint);
             paint.setStyle(Paint.Style.FILL);
         }
 

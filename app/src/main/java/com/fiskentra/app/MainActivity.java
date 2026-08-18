@@ -3,7 +3,6 @@ package com.fiskentra.app;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.bluetooth.BluetoothDevice;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -25,9 +24,9 @@ import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
 import com.fiskentra.app.backend.SupabasePointSync;
-import com.fiskentra.app.ble.FiskentraBleManager;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
+import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.ui.MapTilerMapView;
@@ -40,7 +39,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class MainActivity extends Activity implements
-        FiskentraLocationManager.Listener, FiskentraBleManager.Listener {
+        FiskentraLocationManager.Listener, FiskentraFlic2Manager.Listener {
 
     private static final int REQUEST_PERMISSIONS = 1001;
     private static final int BG = Color.rgb(10, 18, 14);
@@ -67,7 +66,7 @@ public final class MainActivity extends Activity implements
     private PointStore pointStore;
     private TrackStore trackStore;
     private FiskentraLocationManager locationManager;
-    private FiskentraBleManager bleManager;
+    private FiskentraFlic2Manager flicManager;
     private SupabaseConnection supabaseConnection;
     private SupabasePointSync pointSync;
     private SharedPreferences syncPrefs;
@@ -75,16 +74,15 @@ public final class MainActivity extends Activity implements
     private String screen = "home";
     private String bleStatus = "No device connected";
     private String connectedDevice = "";
+    private boolean flicConnected = false;
     private boolean cloudConnected = false;
     private String cloudStatus = "Checking Fiskentra cloud…";
     private String cloudSyncStatus = "Saved points sync after each new moment";
-    private LinearLayout deviceResults;
     private TextView deviceStatusText;
     private TextView buttonEventText;
     private String lastButtonEvent = "No button event yet";
     private long selectedMapPointId = -1L;
     private MapTilerMapView activeMapView;
-    private final List<DeviceRow> discoveredDevices = new ArrayList<>();
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -97,7 +95,6 @@ public final class MainActivity extends Activity implements
         pointStore = new PointStore(this);
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
-        bleManager = new FiskentraBleManager(this, this);
         supabaseConnection = new SupabaseConnection();
         pointSync = new SupabasePointSync(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
@@ -118,6 +115,7 @@ public final class MainActivity extends Activity implements
         setContentView(page);
 
         render("home");
+        flicManager = new FiskentraFlic2Manager(this, this);
         supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
             cloudStatus = message;
@@ -151,7 +149,7 @@ public final class MainActivity extends Activity implements
     @Override protected void onDestroy() {
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
-        bleManager.close();
+        flicManager.close();
         supabaseConnection.close();
         pointSync.close();
     }
@@ -182,13 +180,15 @@ public final class MainActivity extends Activity implements
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_PERMISSIONS && locationManager.hasPermission()) locationManager.start();
-        if (requestCode == REQUEST_PERMISSIONS) render(screen);
+        if (requestCode == REQUEST_PERMISSIONS) {
+            flicManager.attachAndConnectPairedButtons();
+            render(screen);
+        }
     }
 
     private void render(String next) {
         screen = next;
         content.removeAllViews();
-        deviceResults = null;
         deviceStatusText = null;
         buttonEventText = null;
         activeMapView = null;
@@ -307,7 +307,7 @@ public final class MainActivity extends Activity implements
         LinearLayout deviceCopy = vertical();
         deviceCopy.addView(text("FIELD BUTTON", 11, MUTED, Typeface.BOLD));
         deviceCopy.addView(text(connectedDevice.isEmpty() ? "Flic 2" : connectedDevice, 18, TEXT, Typeface.BOLD));
-        deviceCopy.addView(text(bleStatus, 12, connectedDevice.isEmpty() ? MUTED : ACCENT, Typeface.NORMAL));
+        deviceCopy.addView(text(bleStatus, 12, flicConnected ? ACCENT : MUTED, Typeface.NORMAL));
         deviceHead.addView(deviceCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button connect = smallButton(connectedDevice.isEmpty() ? "CONNECT" : "OPEN");
         connect.setOnClickListener(v -> render("device"));
@@ -542,12 +542,12 @@ public final class MainActivity extends Activity implements
         LinearLayout body = vertical();
         body.setPadding(dp(20), dp(20), dp(20), dp(28));
         scroll.addView(body);
-        body.addView(pageTitle("Field button", "FLIC 2 · SDK MIGRATION"));
+        body.addView(pageTitle("Field button", "FLIC 2 · OFFICIAL SDK"));
         body.addView(spacer(18));
 
         LinearLayout status = card();
-        status.addView(text(connectedDevice.isEmpty() ? "○  NOT CONNECTED" : "●  CONNECTED", 11,
-                connectedDevice.isEmpty() ? MUTED : ACCENT, Typeface.BOLD));
+        status.addView(text(flicConnected ? "●  CONNECTED" : "○  NOT CONNECTED", 11,
+                flicConnected ? ACCENT : MUTED, Typeface.BOLD));
         status.addView(spacer(8));
         status.addView(text(connectedDevice.isEmpty() ? "Flic 2" : connectedDevice, 24, TEXT, Typeface.BOLD));
         deviceStatusText = text(bleStatus, 13, MUTED, Typeface.NORMAL);
@@ -555,24 +555,25 @@ public final class MainActivity extends Activity implements
         status.addView(spacer(8));
         status.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.BOLD));
         status.addView(spacer(16));
-        Button scan = primaryButton("⌁  OPEN BLE DIAGNOSTIC SCAN");
+        Button scan = primaryButton(flicManager.pairedButtonCount() == 0
+                ? "⌁  PAIR FLIC 2" : "⌁  PAIR ANOTHER FLIC 2");
         scan.setOnClickListener(v -> {
-            if (!bleManager.hasPermissions()) { requestNeededPermissions(); return; }
-            discoveredDevices.clear();
-            if (deviceResults != null) deviceResults.removeAllViews();
-            bleManager.scan();
+            if (!flicManager.hasPermissions()) { requestNeededPermissions(); return; }
+            flicManager.pairNewButton();
         });
         status.addView(scan, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         body.addView(status);
 
-        body.addView(sectionTitle("NEARBY DEVICES"));
-        deviceResults = vertical();
-        if (discoveredDevices.isEmpty()) {
-            deviceResults.addView(text("Flic 2 pairing will use flic2lib-android. This generic BLE scan remains available for diagnostics.", 13, MUTED, Typeface.NORMAL));
-        } else {
-            for (DeviceRow d : discoveredDevices) addDeviceResult(d);
-        }
-        body.addView(deviceResults);
+        body.addView(sectionTitle("PAIRING GUIDE"));
+        LinearLayout guide = card();
+        guide.addView(text("1  Keep Bluetooth on and the Flic 2 nearby.", 13, TEXT, Typeface.NORMAL));
+        guide.addView(spacer(8));
+        guide.addView(text("2  Tap PAIR FLIC 2, then hold the button for 6 seconds until it glows.", 13, TEXT, Typeface.NORMAL));
+        guide.addView(spacer(8));
+        guide.addView(text("3  Accept Android's Pair & connect dialog, then test all three presses below.", 13, TEXT, Typeface.NORMAL));
+        guide.addView(spacer(10));
+        guide.addView(text("The Flic Android app can remain installed. Fiskentra stores its own SDK pairing.", 12, MUTED, Typeface.NORMAL));
+        body.addView(guide);
 
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
@@ -598,11 +599,12 @@ public final class MainActivity extends Activity implements
         body.addView(testCard);
 
         body.addView(sectionTitle("PROTOTYPE STATUS"));
-        body.addView(checkRow(true, "Generic BLE diagnostic scan"));
+        body.addView(checkRow(true, "Official Flic 2 SDK pairing and reconnect"));
         body.addView(checkRow(true, "GPS location saving"));
         body.addView(checkRow(true, "Local offline point storage"));
         body.addView(checkRow(true, "Mock single/double/hold actions"));
-        body.addView(checkRow(false, "Official Flic 2 SDK pairing and event callbacks"));
+        body.addView(checkRow(true, "Real single/double/hold event callbacks"));
+        body.addView(checkRow(true, "Stale queued press protection"));
         body.addView(checkRow(false, "Physical Flic 2 button test"));
         return scroll;
     }
@@ -613,24 +615,6 @@ public final class MainActivity extends Activity implements
         row.addView(icon, new LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.WRAP_CONTENT));
         row.addView(text(label, 13, ready ? TEXT : MUTED, Typeface.NORMAL));
         return row;
-    }
-
-    private void addDeviceResult(DeviceRow d) {
-        if (deviceResults == null) return;
-        if (deviceResults.getChildCount() == 1 && deviceResults.getChildAt(0) instanceof TextView) deviceResults.removeAllViews();
-        LinearLayout card = row();
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(14), dp(12), dp(10), dp(12));
-        card.setBackground(roundRect(SURFACE, 14));
-        LinearLayout copy = vertical();
-        copy.addView(text(d.name, 14, TEXT, Typeface.BOLD));
-        copy.addView(text(d.address + " · " + d.rssi + " dBm", 10, MUTED, Typeface.NORMAL));
-        card.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button c = smallButton("CONNECT");
-        c.setOnClickListener(v -> bleManager.connect(d.address));
-        card.addView(c, new LinearLayout.LayoutParams(dp(92), dp(40)));
-        LinearLayout.LayoutParams lp = matchWrap(); lp.setMargins(0, 0, 0, dp(8));
-        deviceResults.addView(card, lp);
     }
 
     public boolean saveCurrentMoment(String source) {
@@ -815,27 +799,35 @@ public final class MainActivity extends Activity implements
         });
     }
 
-    @Override public void onDeviceFound(String name, String address, int rssi) {
+    @Override public void onButtonChanged(String name, String address, boolean connected) {
         runOnUiThread(() -> {
-            DeviceRow row = new DeviceRow(name, address, rssi);
-            discoveredDevices.add(row);
-            addDeviceResult(row);
+            flicConnected = connected;
+            String suffix = address == null ? "" : address.substring(Math.max(0, address.length() - 5));
+            connectedDevice = suffix.isEmpty() ? name : name + " · " + suffix;
+            if ("device".equals(screen) || "home".equals(screen)) render(screen);
         });
     }
 
-    @Override public void onConnected(String name, String address) {
+    @Override public void onAction(FiskentraFlic2Manager.Action action) {
         runOnUiThread(() -> {
-            connectedDevice = name + " · " + address.substring(Math.max(0, address.length() - 5));
-            if ("device".equals(screen)) render("device");
+            switch (action) {
+                case CATCH:
+                    handleButtonPress(POINT_TYPE_CATCH, "Single press registered a catch");
+                    break;
+                case WAYPOINT:
+                    handleButtonPress(POINT_TYPE_WAYPOINT, "Double press saved a waypoint");
+                    break;
+                case TACKLE_CHANGE:
+                    handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Hold marked a tackle change");
+                    break;
+            }
         });
     }
 
-    @Override public void onButtonCandidate(byte[] payload) {
-        // Generic GATT notifications are diagnostic only. Flic 2 actions will be accepted
-        // from the official SDK callbacks so unrelated BLE data cannot create false points.
+    @Override public void onStaleEventIgnored() {
         runOnUiThread(() -> {
-            bleStatus = "Notification received · " + payload.length + " bytes · decoder pending";
-            lastButtonEvent = "Raw BLE payload: " + hex(payload);
+            bleStatus = "Old queued Flic press ignored safely";
+            lastButtonEvent = "Ignored a queued press older than 15 seconds · " + nowTime();
             if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
             if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
         });
@@ -956,22 +948,5 @@ public final class MainActivity extends Activity implements
         return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(time));
     }
 
-    private static String hex(byte[] payload) {
-        if (payload.length == 0) return "(empty)";
-        StringBuilder out = new StringBuilder();
-        int shown = Math.min(payload.length, 24);
-        for (int i = 0; i < shown; i++) {
-            if (i > 0) out.append(' ');
-            out.append(String.format(Locale.US, "%02X", payload[i] & 0xff));
-        }
-        if (payload.length > shown) out.append(" ...");
-        return out.toString();
-    }
-
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-
-    private static final class DeviceRow {
-        final String name; final String address; final int rssi;
-        DeviceRow(String name, String address, int rssi) { this.name = name; this.address = address; this.rssi = rssi; }
-    }
 }

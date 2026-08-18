@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.4.1` Internal Prototype / Pre-Alpha.
+- Current version: `v0.5.2` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Next target: `v0.5` official Flic 2 Android SDK integration and physical button testing.
+- Current target: finish physical Flic 2 testing on an Android phone, then begin `v0.6` background/locked-phone reliability.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -23,15 +23,17 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
 - Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
-- BLE scan, nearby device list and GATT connection flow.
-- Automatic subscription attempt to notify/indicate GATT characteristics after connection.
-- Flic 2-oriented device UI with single-press, double-press and hold test actions for end-to-end button/GPS validation.
+- Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
+- Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
+- Protection against stale queued Flic events older than 15 seconds after reconnect.
+- Collision-aware map markers that reserve the live GPS position, spread overlapping Flic-created points around it and keep both layers visible.
+- Device UI with both real pairing and manual single/double/hold test actions for end-to-end validation.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
 ## Important Flic integration note
 
-The selected hardware is the [Flic 2 Single Pack](https://flic.io/shop/flic-2-single-pack), replacing the previously planned BlueUP SafeX Lite. The current generic `FiskentraBleManager` is retained only as a BLE diagnostic tool; it is not the production Flic 2 integration and raw GATT notifications must not create saved points.
+The selected hardware is the [Flic 2 Single Pack](https://flic.io/shop/flic-2-single-pack), replacing the previously planned BlueUP SafeX Lite. The old generic `FiskentraBleManager` source is retained only as a dormant BLE diagnostic utility. The app UI no longer uses it, and raw GATT notifications cannot create saved points.
 
 Fiskentra will use the official [`flic2lib-android`](https://github.com/50ButtonsEach/flic2lib-android) SDK. It owns Flic 2 scanning, pairing, reconnect behavior and button callbacks.
 
@@ -51,25 +53,35 @@ The Fiskentra action mapping remains:
 | Double press | `Waypoint` |
 | Hold | `Tackle change` |
 
-The `v0.5` implementation checklist is:
+The `v0.5` implementation state is:
 
-1. Add `flic2lib-android` and replace the generic scan/connect flow with Flic 2 SDK pairing.
-2. Route click, double-click and hold callbacks through the existing action mapping.
-3. Ignore stale queued events so an old press cannot save a new GPS point after reconnection.
-4. Validate local save, GPS, Supabase sync and reconnect behavior on a physical Android phone.
-5. Test the button inside a splash-resistant case or wristband during fishing; the button itself is only IP44.
+1. Complete: add `flic2lib-android` 2.0.1 and replace the UI's generic scan/connect flow with Flic 2 SDK pairing.
+2. Complete: route click, double-click and hold callbacks through the existing action mapping.
+3. Complete: ignore queued events older than 15 seconds so an old press cannot save a new GPS point after reconnection.
+4. Ready for hardware: validate local save, GPS, Supabase sync and reconnect behavior on a physical Android phone.
+5. Ready for field test: test the button inside a splash-resistant case or wristband; the button itself is only IP44.
 
-Background and locked-phone reliability remains the separate `v0.6` milestone and will require a foreground service.
+The Flic Android app may remain installed, but Fiskentra creates and stores its own official SDK pairing. Background and locked-phone reliability remains the separate `v0.6` milestone and will require a foreground service.
+
+### Pair and test your Flic 2
+
+1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
+2. Install and open Fiskentra v0.5, then allow Location and Nearby devices.
+3. Open **Device** and tap **PAIR FLIC 2**.
+4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
+5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
+
+If pairing says the button is busy with another device, temporarily disconnect it from that other phone/device and retry. Do not factory-reset it unless normal pairing repeatedly fails.
 
 ## Open and run
 
 1. Install current stable Android Studio and Android SDK 35.
 2. Open this folder as a project.
-3. Let Android Studio use JDK 17 and sync the included Gradle 8.9 wrapper.
+3. Let Android Studio use its bundled JDK and sync the included Gradle wrapper.
 4. Run on a physical Android phone. BLE and real GPS are much easier to validate on hardware than an emulator.
 5. Grant Location and Nearby Devices permissions.
 
-A debug APK has been successfully compiled with Android SDK 35 / Build Tools 35.0.0 and JDK 17. The project uses MapLibre Native Android for the real map view.
+A debug APK has been successfully compiled with Android SDK 35, the Android Gradle Plugin's default Build Tools and the Android Studio bundled JDK. The project uses MapLibre Native Android for the real map view.
 
 If Android Studio fails right after the MapTiler update, make sure `MapTilerMapView.java` imports `org.maplibre.android.*`, not the old `com.mapbox.mapboxsdk.*` package. Current MapLibre Native Android uses the `org.maplibre.android` namespace.
 
@@ -203,7 +215,7 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 ## Suggested next integrations
 
 - Edit saved point type/name and notes.
-- Integrate `flic2lib-android` and validate Flic 2 single/double/hold events.
+- Complete physical Flic 2 validation and record the phone/Android version results.
 - Offline MapLibre/MapTiler map packs for low-signal fishing areas.
 - Track recording in a foreground service for background reliability.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
