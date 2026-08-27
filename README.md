@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.5.2` Internal Prototype / Pre-Alpha.
+- Current version: `v0.6` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: finish physical Flic 2 testing on an Android phone, then begin `v0.6` background/locked-phone reliability.
+- Current target: validate v0.6 Flic 2 capture with the app backgrounded and the phone locked.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -28,6 +28,8 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Protection against stale queued Flic events older than 15 seconds after reconnect.
 - Collision-aware map markers that reserve the live GPS position, spread overlapping Flic-created points around it and keep both layers visible.
 - Device UI with both real pairing and manual single/double/hold test actions for end-to-end validation.
+- Foreground service with a persistent notification that keeps one Flic connection and GPS updates active while the screen is off.
+- Background capture that requires a GPS fix no older than 30 seconds, waits up to 20 seconds for a new fix and saves locally before cloud sync.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
@@ -61,12 +63,23 @@ The `v0.5` implementation state is:
 4. Ready for hardware: validate local save, GPS, Supabase sync and reconnect behavior on a physical Android phone.
 5. Ready for field test: test the button inside a splash-resistant case or wristband; the button itself is only IP44.
 
-The Flic Android app may remain installed, but Fiskentra creates and stores its own official SDK pairing. Background and locked-phone reliability remains the separate `v0.6` milestone and will require a foreground service.
+The Flic Android app may remain installed, but Fiskentra creates and stores its own official SDK pairing.
+
+### Background and locked-phone test
+
+1. Install and open Fiskentra v0.6.
+2. Allow Location, Nearby devices and Notifications.
+3. Confirm the persistent **Fiskentra field button active** notification appears.
+4. Wait until Flic 2 reports ready, lock the phone and test single press, double press and hold.
+5. Unlock the phone and confirm exactly one new `Catch`, `Waypoint` and `Tackle change` point.
+6. Turn off internet and repeat; the points must appear locally. After connectivity returns, open Saved and tap **Sync local points**.
+
+Open Fiskentra once after every phone reboot so Android can start the location foreground service from a visible activity. Force-stopping the app disables the service until Fiskentra is opened again.
 
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.5, then allow Location and Nearby devices.
+2. Install and open Fiskentra v0.6, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.

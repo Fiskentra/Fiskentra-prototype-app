@@ -29,6 +29,7 @@ import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
 
 import java.text.SimpleDateFormat;
@@ -115,7 +116,7 @@ public final class MainActivity extends Activity implements
         setContentView(page);
 
         render("home");
-        flicManager = new FiskentraFlic2Manager(this, this);
+        flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
         supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
             cloudStatus = message;
@@ -126,6 +127,7 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onStart() {
         super.onStart();
+        flicManager.addListener(this);
         if (activeMapView != null) activeMapView.start();
     }
 
@@ -133,6 +135,8 @@ public final class MainActivity extends Activity implements
         super.onResume();
         if (activeMapView != null) activeMapView.resume();
         if (locationManager.hasPermission()) locationManager.start();
+        ensureBackgroundService();
+        if ("saved".equals(screen)) render("saved");
     }
 
     @Override protected void onPause() {
@@ -144,12 +148,12 @@ public final class MainActivity extends Activity implements
     @Override protected void onStop() {
         super.onStop();
         if (activeMapView != null) activeMapView.stop();
+        flicManager.removeListener(this);
     }
 
     @Override protected void onDestroy() {
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
-        flicManager.close();
         supabaseConnection.close();
         pointSync.close();
     }
@@ -172,8 +176,23 @@ public final class MainActivity extends Activity implements
                 permissions.add(Manifest.permission.BLUETOOTH_CONNECT);
             }
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
         if (!permissions.isEmpty()) {
             requestPermissions(permissions.toArray(new String[0]), REQUEST_PERMISSIONS);
+        }
+    }
+
+    private void ensureBackgroundService() {
+        if (flicManager == null || flicManager.pairedButtonCount() == 0) return;
+        if (!locationManager.hasPermission() || !flicManager.hasPermissions()) return;
+        if (FiskentraFlicService.isRunning()) return;
+        try {
+            FiskentraFlicService.start(this);
+        } catch (RuntimeException error) {
+            bleStatus = "Background service could not start · reopen Fiskentra";
         }
     }
 
@@ -182,6 +201,7 @@ public final class MainActivity extends Activity implements
         if (requestCode == REQUEST_PERMISSIONS && locationManager.hasPermission()) locationManager.start();
         if (requestCode == REQUEST_PERMISSIONS) {
             flicManager.attachAndConnectPairedButtons();
+            ensureBackgroundService();
             render(screen);
         }
     }
@@ -554,6 +574,11 @@ public final class MainActivity extends Activity implements
         status.addView(deviceStatusText);
         status.addView(spacer(8));
         status.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.BOLD));
+        status.addView(spacer(8));
+        status.addView(text(FiskentraFlicService.isRunning()
+                        ? "●  BACKGROUND CAPTURE ACTIVE"
+                        : "○  BACKGROUND CAPTURE STARTING",
+                12, FiskentraFlicService.isRunning() ? SUCCESS : WARNING, Typeface.BOLD));
         status.addView(spacer(16));
         Button scan = primaryButton(flicManager.pairedButtonCount() == 0
                 ? "⌁  PAIR FLIC 2" : "⌁  PAIR ANOTHER FLIC 2");
@@ -600,12 +625,14 @@ public final class MainActivity extends Activity implements
 
         body.addView(sectionTitle("PROTOTYPE STATUS"));
         body.addView(checkRow(true, "Official Flic 2 SDK pairing and reconnect"));
+        body.addView(checkRow(FiskentraFlicService.isRunning(), "Foreground service for screen-off capture"));
         body.addView(checkRow(true, "GPS location saving"));
         body.addView(checkRow(true, "Local offline point storage"));
         body.addView(checkRow(true, "Mock single/double/hold actions"));
         body.addView(checkRow(true, "Real single/double/hold event callbacks"));
         body.addView(checkRow(true, "Stale queued press protection"));
-        body.addView(checkRow(false, "Physical Flic 2 button test"));
+        body.addView(checkRow(true, "Physical Flic 2 button test"));
+        body.addView(checkRow(false, "Locked-phone field test"));
         return scroll;
     }
 
@@ -804,22 +831,30 @@ public final class MainActivity extends Activity implements
             flicConnected = connected;
             String suffix = address == null ? "" : address.substring(Math.max(0, address.length() - 5));
             connectedDevice = suffix.isEmpty() ? name : name + " · " + suffix;
+            if (connected && content != null) content.post(this::ensureBackgroundService);
             if ("device".equals(screen) || "home".equals(screen)) render(screen);
         });
     }
 
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
+        if (FiskentraFlicService.isRunning()) return;
         runOnUiThread(() -> {
-            switch (action) {
-                case CATCH:
-                    handleButtonPress(POINT_TYPE_CATCH, "Single press registered a catch");
-                    break;
-                case WAYPOINT:
-                    handleButtonPress(POINT_TYPE_WAYPOINT, "Double press saved a waypoint");
-                    break;
-                case TACKLE_CHANGE:
-                    handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Hold marked a tackle change");
-                    break;
+            bleStatus = "Flic press received · background service is not active";
+            lastButtonEvent = bleStatus + " · " + nowTime();
+            if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
+            if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
+        });
+    }
+
+    @Override public void onActionResult(
+            FiskentraFlic2Manager.Action action, boolean saved, String message) {
+        runOnUiThread(() -> {
+            bleStatus = message;
+            lastButtonEvent = message + " · " + nowTime();
+            if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
+            if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
+            if (saved && ("home".equals(screen) || "map".equals(screen) || "saved".equals(screen))) {
+                render(screen);
             }
         });
     }

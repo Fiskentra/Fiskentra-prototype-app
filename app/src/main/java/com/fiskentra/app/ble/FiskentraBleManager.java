@@ -125,7 +125,13 @@ public final class FiskentraBleManager {
                 try { if (current.getDevice().getName() != null) name = current.getDevice().getName(); } catch (SecurityException ignored) { }
                 listener.onConnected(name, current.getDevice().getAddress());
                 listener.onStatus("Connected · discovering button channel");
-                if (hasPermissions()) current.discoverServices();
+                if (hasPermissions()) {
+                    try {
+                        current.discoverServices();
+                    } catch (SecurityException ignored) {
+                        listener.onStatus("Bluetooth permission was revoked");
+                    }
+                }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 listener.onStatus("Device disconnected");
             }

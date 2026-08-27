@@ -4,7 +4,7 @@ Last updated: 2026-08-18
 
 ## Current stage
 
-- Version: `v0.5.2`
+- Version: `v0.6`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -15,6 +15,7 @@ Last updated: 2026-08-18
 - Physical Flic 2 callbacks: Confirmed working by user on 2026-08-18
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
 - Map marker follow-up: The live GPS position is reserved, rendered last and remains visible inside overlapping saved-point clusters
+- Background service: Implemented; locked-phone physical validation pending
 
 ## Selected hardware
 
@@ -40,8 +41,8 @@ Last updated: 2026-08-18
 | Version | Goal | Status |
 |---|---|---|
 | `v0.4.1` | Record Flic 2 as the selected hardware and update the prototype | Complete |
-| `v0.5` | Integrate `flic2lib-android` and test the physical Flic 2 | Current · SDK complete, physical test pending |
-| `v0.6` | Support reliable button events with the app backgrounded or phone locked | Planned |
+| `v0.5` | Integrate `flic2lib-android` and test the physical Flic 2 | Complete |
+| `v0.6` | Support reliable button events with the app backgrounded or phone locked | Current · implementation complete, physical test pending |
 | `v0.7` | Add fishing day log and calendar | Planned |
 | `v0.8` | Add weather to saved points and trips | Planned |
 | `v0.9` | Add catch details | Planned |
@@ -63,12 +64,23 @@ Last updated: 2026-08-18
 - Queued events older than 15 seconds are ignored, preventing an old press from saving a point with a fresh GPS position.
 - The existing `FiskentraBleManager` remains dormant source for diagnostics only. It is not used by the app UI and cannot create points.
 
-## Physical test gate
+## v0.6 implementation
 
-1. Install the v0.5 debug APK on the Android phone and grant Location and Nearby devices.
-2. Open Device, tap `PAIR FLIC 2`, then hold the physical button for 6 seconds until it glows.
-3. Accept Android's `Pair & connect` dialog.
-4. With a current GPS fix, test single press, double press and hold and confirm the three expected saved point types.
-5. Walk out of range and return, then confirm the button reconnects without creating a stale point.
+- One application-scoped Flic controller feeds both UI and service listeners without duplicate SDK callbacks.
+- A `connectedDevice|location` foreground service keeps Flic and GPS active with the screen off.
+- Android 14+ foreground-service permissions and Android 13+ notification permission are declared/requested.
+- Flic actions use a GPS fix no older than 30 seconds.
+- If GPS is stale, the service waits up to 20 seconds for a fresh fix and refuses to save a false position.
+- Points are written locally first, then synced to Supabase on the service's background executor.
+- The service is sticky across ordinary process reclamation and exposes its state on the Device screen.
 
-Background and locked-phone reliability is intentionally the separate v0.6 foreground-service phase.
+## v0.6 physical test gate
+
+1. Install the v0.6 debug APK and allow Location, Nearby devices and Notifications.
+2. Open Fiskentra once after installation or phone reboot; confirm the persistent `Fiskentra field button active` notification.
+3. Lock the phone and test single press, double press and hold.
+4. Unlock the phone and confirm exactly three new points with the expected types and current coordinates.
+5. Repeat after leaving Bluetooth range and returning; confirm reconnect and no stale point.
+6. Repeat without internet; confirm local points appear, then use `Sync local points` after connectivity returns.
+
+Force-stopping Fiskentra disables all Android background work until the user opens the app again.
