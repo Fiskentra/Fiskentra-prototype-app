@@ -4,18 +4,19 @@ Last updated: 2026-08-30
 
 ## Current stage
 
-- Version: `v0.6.2`
+- Version: `v0.7`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
 - Product: https://flic.io/shop/flic-2-single-pack
 - Retired hardware plan: BlueUP SafeX Lite
 - Build status: Debug APK compiles successfully
-- Physical Flic 2 validation: Ready for user test
+- Physical Flic 2 validation: Foreground callbacks confirmed; locked-phone validation remains a field test
 - Physical Flic 2 callbacks: Confirmed working by user on 2026-08-18
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
 - Map marker follow-up: The live GPS position is reserved, rendered last and remains visible inside overlapping saved-point clusters
 - Background service: Implemented; locked-phone physical validation pending
+- Fishing day log: Implemented locally with active-session recovery, event summaries and calendar history
 
 ## Selected hardware
 
@@ -44,8 +45,8 @@ Last updated: 2026-08-30
 | `v0.5` | Integrate `flic2lib-android` and test the physical Flic 2 | Complete |
 | `v0.6` | Support reliable button events with the app backgrounded or phone locked | Superseded by v0.6.1 hotfix |
 | `v0.6.1` | Fix foreground fallback and true offline Flic capture | Superseded by v0.6.2 sync-status hotfix |
-| `v0.6.2` | Prevent offline points from remaining in `Syncing` | Current · implementation complete, physical test pending |
-| `v0.7` | Add fishing day log and calendar | Planned |
+| `v0.6.2` | Prevent offline points from remaining in `Syncing` | Complete · physical offline test confirmed by user on 2026-08-30 |
+| `v0.7` | Add fishing day log and calendar | Current · implementation complete, physical UI test pending |
 | `v0.8` | Add weather to saved points and trips | Planned |
 | `v0.9` | Add catch details | Planned |
 | `v0.10` | Polish offline storage and sync recovery | Planned |
@@ -115,3 +116,23 @@ Last updated: 2026-08-30
 6. Repeat without internet; confirm local points appear, then use `Sync local points` after connectivity returns.
 
 Force-stopping Fiskentra disables all Android background work until the user opens the app again.
+
+## v0.7 implementation
+
+- A new `Log` destination provides the fishing-day journal and calendar.
+- A fishing day can be started and finished from Home or Log.
+- The active session is stored locally and remains active after the activity or process is recreated.
+- Saved events created by the phone or Flic 2 are included automatically when their timestamps fall inside a fishing session.
+- Each journal day summarizes session duration, all events, catches, waypoints and tackle changes.
+- The monthly calendar marks dates that contain one or more fishing sessions.
+- Tapping a logged event opens its exact position on the field map.
+- Multiple fishing sessions on the same calendar day are supported and aggregated into one day summary.
+
+## v0.7 physical test gate
+
+1. Install v0.7 over v0.6.2 so existing paired buttons and saved points remain available.
+2. Open `Log`, tap `START FISHING DAY`, then verify the active state also appears on Home.
+3. Save one Catch, one Waypoint and one Tackle change using Flic 2 or the Device test controls.
+4. Return to `Log` and confirm the three counters and event list update.
+5. Finish the fishing day and confirm the session remains on its marked calendar date.
+6. Close and reopen Fiskentra, select that date and confirm the journal remains available.
