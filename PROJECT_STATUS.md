@@ -4,7 +4,7 @@ Last updated: 2026-08-30
 
 ## Current stage
 
-- Version: `v0.7`
+- Version: `v0.8`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -17,6 +17,8 @@ Last updated: 2026-08-30
 - Map marker follow-up: The live GPS position is reserved, rendered last and remains visible inside overlapping saved-point clusters
 - Background service: Implemented; locked-phone physical validation pending
 - Fishing day log: Implemented and physically validated with active-session recovery, event summaries and calendar history
+- Weather: Implemented with Open-Meteo capture, seven-day forecast, species outlook, local persistence and offline-safe cache; physical validation pending
+- Supabase weather storage: `public.saved_points.weather jsonb` migration applied and verified on project `dwlbefpmwzmhutlvqfmu` on 2026-08-30
 
 ## Selected hardware
 
@@ -47,7 +49,7 @@ Last updated: 2026-08-30
 | `v0.6.1` | Fix foreground fallback and true offline Flic capture | Superseded by v0.6.2 sync-status hotfix |
 | `v0.6.2` | Prevent offline points from remaining in `Syncing` | Complete · physical offline test confirmed by user on 2026-08-30 |
 | `v0.7` | Add fishing day log and calendar | Complete · physical app test confirmed by user on 2026-08-30 |
-| `v0.8` | Add weather to saved points and trips | Planned |
+| `v0.8` | Add weather capture, forecast and fishing outlook | Current · implementation complete, physical test pending |
 | `v0.9` | Add catch details | Planned |
 | `v0.10` | Polish offline storage and sync recovery | Planned |
 | `v0.11` | Improve fishing maps and layers | Planned |
@@ -138,3 +140,32 @@ Physical validation was confirmed by the user on 2026-08-30 using the corrected 
 4. Return to `Log` and confirm the three counters and event list update.
 5. Finish the fishing day and confirm the session remains on its marked calendar date.
 6. Close and reopen Fiskentra, select that date and confirm the journal remains available.
+
+## v0.8 implementation
+
+- Open-Meteo current conditions are captured by GPS coordinate without embedding an API key.
+- Each weather snapshot stores observation time, temperature, apparent temperature, humidity, precipitation, pressure, wind speed/direction, WMO code, timezone and provider.
+- New points are always stored locally before weather lookup or Supabase sync.
+- Foreground and background Flic capture use the same enrichment flow without blocking the button acknowledgement.
+- A 15-minute, 5 km local cache prevents rapid Flic actions from making duplicate weather requests and can enrich points during a short connectivity loss.
+- Saved point cards, selected map points and fishing-log events show their recorded weather.
+- Missing weather can be added or refreshed from Saved.
+- Fishing-day sessions and the local trip track retain weather at start and finish.
+- Existing v0.7 points, sessions and tracks remain readable because all weather fields are optional.
+- Supabase stores a structured optional `weather jsonb` object; the production migration is applied, while v0.8 still retains a compatibility retry without weather.
+- Explore now has adjacent Map and Weather pages with visible tabs and horizontal swipe navigation; map-to-weather swipe starts at the right edge so ordinary map panning remains available.
+- The Weather page shows current conditions and seven daily forecasts, cached for 30 minutes within 10 km and available from the last cache when offline.
+- The user can select Pike, Perch, Zander, Trout or Carp. A documented air-temperature, wind and precipitation heuristic produces an indicative score and reason, not a catch guarantee.
+- Fishing-calendar cells show the icon and temperature from the session's saved observed weather. Forecast data is never substituted for historical observations.
+
+## v0.8 physical test gate
+
+1. Install v0.8 over v0.7 without clearing app data.
+2. With GPS and internet enabled, save a point and confirm a weather summary appears in Saved and on the selected map point.
+3. Start and finish a fishing day and trip track; confirm start/finish conditions persist after restarting Fiskentra.
+4. Disable internet and test all three Flic actions; point capture and `Saved locally · offline` must remain correct whether cached weather is present or not.
+5. Restore internet, add weather to a point that has none, then sync pending local points.
+6. Confirm older v0.7 points and fishing journals still open normally.
+7. From Map, use the `WEATHER` tab and the left/right swipe gestures; verify the seven-day forecast and return to the interactive map.
+8. Change target fish and confirm each forecast card updates its fishing score and explanation.
+9. Start a fishing day online, wait for its weather, and confirm the journal calendar cell retains the observed weather after restarting Fiskentra.

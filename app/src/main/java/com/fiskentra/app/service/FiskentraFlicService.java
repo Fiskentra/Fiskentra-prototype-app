@@ -24,6 +24,7 @@ import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.weather.WeatherClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,6 +50,7 @@ public final class FiskentraFlicService extends Service implements
     private FiskentraLocationManager locationManager;
     private PointStore pointStore;
     private SupabasePointSync pointSync;
+    private WeatherClient weatherClient;
     private SharedPreferences syncPrefs;
     private NotificationManager notificationManager;
     private Location lastLocation;
@@ -69,6 +71,7 @@ public final class FiskentraFlicService extends Service implements
         locationManager = new FiskentraLocationManager(this, this);
         pointStore = new PointStore(this);
         pointSync = new SupabasePointSync(this);
+        weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
@@ -99,6 +102,7 @@ public final class FiskentraFlicService extends Service implements
         if (locationManager != null) locationManager.stop();
         if (flicManager != null) flicManager.removeListener(this);
         if (pointSync != null) pointSync.close();
+        if (weatherClient != null) weatherClient.close();
         super.onDestroy();
     }
 
@@ -164,16 +168,31 @@ public final class FiskentraFlicService extends Service implements
         updateNotification(message);
         flicManager.reportActionResult(action, true, message);
 
-        if (!pointSync.hasValidatedInternet()) {
-            setSyncState(point.id, "failed", "offline");
-            updateNotification(type + " saved locally · offline");
-            return;
-        }
+        enrichWeatherThenSync(point, type);
+    }
 
-        setSyncState(point.id, "syncing", "Syncing to Supabase");
-        pointSync.sync(point, (synced, syncMessage) -> {
-            setSyncState(point.id, synced ? "synced" : "failed", syncMessage);
-            if (!synced) updateNotification(type + " saved locally · cloud sync pending");
+    private void enrichWeatherThenSync(SavedPoint point, String type) {
+        weatherClient.fetch(point.latitude, point.longitude, (weather, weatherMessage) -> {
+            if (!running) return;
+            SavedPoint enriched = point;
+            if (weather != null) {
+                SavedPoint stored = pointStore.updateWeather(point.id, weather);
+                if (stored != null) enriched = stored;
+                updateNotification(type + " saved · " + weather.compactSummary());
+            }
+
+            if (!pointSync.hasValidatedInternet()) {
+                setSyncState(point.id, "failed", "offline");
+                updateNotification(type + " saved locally · offline");
+                return;
+            }
+
+            SavedPoint upload = enriched;
+            setSyncState(point.id, "syncing", "Syncing to Supabase");
+            pointSync.sync(upload, (synced, syncMessage) -> {
+                setSyncState(point.id, synced ? "synced" : "failed", syncMessage);
+                if (!synced) updateNotification(type + " saved locally · cloud sync pending");
+            });
         });
     }
 

@@ -3,6 +3,7 @@ package com.fiskentra.app;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -30,9 +31,15 @@ import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.FishingDay;
+import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.model.WeatherForecast;
+import com.fiskentra.app.model.WeatherSnapshot;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
+import com.fiskentra.app.ui.SwipeSwitchLayout;
+import com.fiskentra.app.weather.FishingAdvisor;
+import com.fiskentra.app.weather.WeatherClient;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -66,6 +73,8 @@ public final class MainActivity extends Activity implements
     private static final String POINT_TYPE_CATCH = "Catch";
     private static final String POINT_TYPE_WAYPOINT = "Waypoint";
     private static final String POINT_TYPE_TACKLE_CHANGE = "Tackle change";
+    private static final String WEATHER_PREFS = "fiskentra_weather_preferences";
+    private static final String WEATHER_SPECIES = "selected_species";
 
     private FrameLayout content;
     private LinearLayout nav;
@@ -76,7 +85,9 @@ public final class MainActivity extends Activity implements
     private FiskentraFlic2Manager flicManager;
     private SupabaseConnection supabaseConnection;
     private SupabasePointSync pointSync;
+    private WeatherClient weatherClient;
     private SharedPreferences syncPrefs;
+    private SharedPreferences weatherPrefs;
     private Location lastLocation;
     private String screen = "home";
     private String bleStatus = "No device connected";
@@ -92,6 +103,13 @@ public final class MainActivity extends Activity implements
     private long selectedLogDateMillis;
     private long calendarMonthMillis;
     private MapTilerMapView activeMapView;
+    private boolean showingWeatherPage;
+    private boolean forecastLoading;
+    private boolean forecastAttempted;
+    private WeatherForecast weatherForecast;
+    private String forecastStatus = "Open Weather to load the forecast";
+    private String selectedSpecies = FishingAdvisor.SPECIES[0];
+    private volatile boolean destroyed;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -107,7 +125,10 @@ public final class MainActivity extends Activity implements
         locationManager = new FiskentraLocationManager(this, this);
         supabaseConnection = new SupabaseConnection();
         pointSync = new SupabasePointSync(this);
+        weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
+        weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
+        selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedLogDateMillis = System.currentTimeMillis();
         calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
 
@@ -163,10 +184,12 @@ public final class MainActivity extends Activity implements
     }
 
     @Override protected void onDestroy() {
+        destroyed = true;
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
         supabaseConnection.close();
         pointSync.close();
+        weatherClient.close();
     }
 
     @Override public void onLowMemory() {
@@ -315,6 +338,10 @@ public final class MainActivity extends Activity implements
             DayStats activeStats = buildDayStats(fishingDayStore.sessionsOnDate(activeDay.startedAt));
             dayCopy.addView(text(formatDuration(System.currentTimeMillis() - activeDay.startedAt)
                     + " · " + activeStats.points.size() + " events", 13, TEXT, Typeface.NORMAL));
+            if (activeStats.lastWeather != null) {
+                dayCopy.addView(text(activeStats.lastWeather.compactSummary(),
+                        11, MUTED, Typeface.NORMAL));
+            }
         }
         dayRow.addView(dayCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button dayButton = smallButton(activeDay == null ? "START" : "OPEN");
@@ -344,13 +371,23 @@ public final class MainActivity extends Activity implements
         boolean tracking = trackStore.isActive();
         tripCopy.addView(text(tracking ? "●  TRIP RECORDING" : "TRIP TRACK", 11, tracking ? ACCENT : MUTED, Typeface.BOLD));
         tripCopy.addView(text(tracking ? trackStore.points().size() + " track points" : "Record your route while Fiskentra is open", 13, TEXT, Typeface.NORMAL));
+        WeatherSnapshot tripWeather = tracking ? trackStore.startWeather() : trackStore.endWeather();
+        if (tripWeather != null) {
+            tripCopy.addView(text((tracking ? "Start · " : "Finish · ") + tripWeather.compactSummary(),
+                    11, MUTED, Typeface.NORMAL));
+        }
         tripRow.addView(tripCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button tripButton = smallButton(tracking ? "STOP" : "START");
         tripButton.setOnClickListener(v -> {
-            if (tracking) trackStore.stop();
+            if (tracking) {
+                long tripId = trackStore.startedAt();
+                trackStore.stop();
+                captureTripWeather(false, tripId);
+            }
             else {
                 trackStore.start();
                 if (lastLocation != null) trackStore.add(lastLocation);
+                captureTripWeather(true, trackStore.startedAt());
             }
             render("home");
         });
@@ -521,6 +558,39 @@ public final class MainActivity extends Activity implements
         metricsBottom.addView(metricCard(formatDuration(stats.durationMs), "Time fishing", TEXT), weighted());
         body.addView(metricsBottom);
 
+        body.addView(sectionTitle("WEATHER"));
+        LinearLayout weatherCard = card();
+        if (stats.firstWeather == null) {
+            weatherCard.addView(text("Weather was not captured for this fishing day.",
+                    13, MUTED, Typeface.NORMAL));
+            FishingDay latestSession = sessions.get(0);
+            if (isSameDay(selectedLogDateMillis, System.currentTimeMillis())) {
+                weatherCard.addView(spacer(12));
+                Button addWeather = smallButton("ADD WEATHER NOW");
+                addWeather.setOnClickListener(v -> captureFishingDayWeather(
+                        latestSession, latestSession.startWeather == null));
+                weatherCard.addView(addWeather, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+            }
+        } else {
+            weatherCard.addView(text("START · " + stats.firstWeather.compactSummary(),
+                    14, TEXT, Typeface.BOLD));
+            weatherCard.addView(text(weatherDetails(stats.firstWeather),
+                    11, MUTED, Typeface.NORMAL));
+            if (stats.lastWeather != null
+                    && stats.lastWeather.observedAt != stats.firstWeather.observedAt) {
+                weatherCard.addView(spacer(10));
+                weatherCard.addView(text("LATEST · " + stats.lastWeather.compactSummary(),
+                        14, TEXT, Typeface.BOLD));
+                weatherCard.addView(text(weatherDetails(stats.lastWeather),
+                        11, MUTED, Typeface.NORMAL));
+            }
+            weatherCard.addView(spacer(8));
+            weatherCard.addView(text("Source: Open-Meteo · conditions are model data",
+                    10, MUTED, Typeface.NORMAL));
+        }
+        body.addView(weatherCard, cardMargins());
+
         body.addView(sectionTitle("SESSIONS"));
         for (FishingDay session : sessions) {
             LinearLayout sessionCard = card();
@@ -533,6 +603,14 @@ public final class MainActivity extends Activity implements
             sessionCard.addView(text(formatDuration(
                     session.effectiveEnd(System.currentTimeMillis()) - session.startedAt),
                     12, MUTED, Typeface.NORMAL));
+            if (session.startWeather != null) {
+                sessionCard.addView(text("Start · " + session.startWeather.compactSummary(),
+                        11, MUTED, Typeface.NORMAL));
+            }
+            if (session.endWeather != null) {
+                sessionCard.addView(text("Finish · " + session.endWeather.compactSummary(),
+                        11, MUTED, Typeface.NORMAL));
+            }
             body.addView(sessionCard, cardMargins());
         }
 
@@ -559,6 +637,10 @@ public final class MainActivity extends Activity implements
                 eventCopy.addView(text(point.type, 15, TEXT, Typeface.BOLD));
                 eventCopy.addView(text(formatTime(point.timestamp) + " · "
                         + formatCoords(point.latitude, point.longitude), 11, MUTED, Typeface.NORMAL));
+                if (point.weather != null) {
+                    eventCopy.addView(text(point.weather.compactSummary(),
+                            11, MUTED, Typeface.NORMAL));
+                }
                 LinearLayout.LayoutParams eventCopyLp = new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
                 eventCopyLp.setMargins(dp(10), 0, 0, 0);
@@ -612,7 +694,7 @@ public final class MainActivity extends Activity implements
             for (int weekday = 0; weekday < 7; weekday++) {
                 int slot = week * 7 + weekday;
                 if (slot < firstWeekday || day > maxDay) {
-                    weekRow.addView(new View(this), new LinearLayout.LayoutParams(0, dp(44), 1f));
+                    weekRow.addView(new View(this), new LinearLayout.LayoutParams(0, dp(54), 1f));
                     continue;
                 }
 
@@ -621,7 +703,15 @@ public final class MainActivity extends Activity implements
                 long dateMillis = date.getTimeInMillis();
                 boolean selected = isSameDay(dateMillis, selectedLogDateMillis);
                 boolean hasLog = hasSessionOnDate(allSessions, dateMillis);
-                TextView cell = text(day + (hasLog ? " •" : ""), 12,
+                WeatherSnapshot dayWeather = weatherForDate(allSessions, dateMillis);
+                String cellLabel = String.valueOf(day);
+                if (dayWeather != null) {
+                    cellLabel += "\n" + dayWeather.symbol() + " "
+                            + Math.round(dayWeather.temperatureC) + "°";
+                } else if (hasLog) {
+                    cellLabel += " •";
+                }
+                TextView cell = text(cellLabel, dayWeather == null ? 12 : 10,
                         selected ? Color.rgb(7, 22, 12) : (hasLog ? TEXT : MUTED),
                         hasLog || selected ? Typeface.BOLD : Typeface.NORMAL);
                 cell.setGravity(Gravity.CENTER);
@@ -630,14 +720,15 @@ public final class MainActivity extends Activity implements
                     selectedLogDateMillis = dateMillis;
                     render("log");
                 });
-                weekRow.addView(cell, new LinearLayout.LayoutParams(0, dp(44), 1f));
+                weekRow.addView(cell, new LinearLayout.LayoutParams(0, dp(54), 1f));
                 day++;
             }
             calendarCard.addView(weekRow);
             if (day > maxDay) break;
         }
         calendarCard.addView(spacer(8));
-        calendarCard.addView(text("•  Days with a fishing journal", 10, MUTED, Typeface.NORMAL));
+        calendarCard.addView(text("• Journal day · weather icon and temperature are saved observations",
+                10, MUTED, Typeface.NORMAL));
         return calendarCard;
     }
 
@@ -655,6 +746,7 @@ public final class MainActivity extends Activity implements
         selectedLogDateMillis = day.startedAt;
         calendarMonthMillis = firstDayOfMonth(day.startedAt);
         Toast.makeText(this, "Fishing day started", Toast.LENGTH_SHORT).show();
+        captureFishingDayWeather(day, true);
         render("log");
     }
 
@@ -670,6 +762,7 @@ public final class MainActivity extends Activity implements
                     if (finished != null) {
                         selectedLogDateMillis = finished.startedAt;
                         calendarMonthMillis = firstDayOfMonth(finished.startedAt);
+                        captureFishingDayWeather(finished, false);
                     }
                     Toast.makeText(this, "Fishing day finished", Toast.LENGTH_SHORT).show();
                     render("log");
@@ -691,6 +784,8 @@ public final class MainActivity extends Activity implements
         long now = System.currentTimeMillis();
         for (FishingDay session : sessions) {
             stats.durationMs += Math.max(0L, session.effectiveEnd(now) - session.startedAt);
+            includeWeather(stats, session.startWeather);
+            includeWeather(stats, session.endWeather);
         }
 
         Set<Long> included = new HashSet<>();
@@ -703,6 +798,7 @@ public final class MainActivity extends Activity implements
                     if (POINT_TYPE_CATCH.equals(point.type)) stats.catches++;
                     else if (POINT_TYPE_WAYPOINT.equals(point.type)) stats.waypoints++;
                     else if (POINT_TYPE_TACKLE_CHANGE.equals(point.type)) stats.tackleChanges++;
+                    includeWeather(stats, point.weather);
                     break;
                 }
             }
@@ -710,11 +806,34 @@ public final class MainActivity extends Activity implements
         return stats;
     }
 
+    private static void includeWeather(DayStats stats, WeatherSnapshot weather) {
+        if (weather == null) return;
+        if (stats.firstWeather == null || weather.observedAt < stats.firstWeather.observedAt) {
+            stats.firstWeather = weather;
+        }
+        if (stats.lastWeather == null || weather.observedAt > stats.lastWeather.observedAt) {
+            stats.lastWeather = weather;
+        }
+    }
+
     private static boolean hasSessionOnDate(List<FishingDay> sessions, long date) {
         for (FishingDay session : sessions) {
             if (isSameDay(session.startedAt, date)) return true;
         }
         return false;
+    }
+
+    private static WeatherSnapshot weatherForDate(List<FishingDay> sessions, long date) {
+        WeatherSnapshot result = null;
+        for (FishingDay session : sessions) {
+            if (!isSameDay(session.startedAt, date)) continue;
+            if (session.startWeather != null
+                    && (result == null || session.startWeather.observedAt < result.observedAt)) {
+                result = session.startWeather;
+            }
+            if (result == null && session.endWeather != null) result = session.endWeather;
+        }
+        return result;
     }
 
     private static boolean isSameDay(long first, long second) {
@@ -744,20 +863,82 @@ public final class MainActivity extends Activity implements
         int catches;
         int waypoints;
         int tackleChanges;
+        WeatherSnapshot firstWeather;
+        WeatherSnapshot lastWeather;
     }
 
     private View mapScreen() {
+        SwipeSwitchLayout swipe = new SwipeSwitchLayout(this);
+        swipe.configure(!showingWeatherPage, new SwipeSwitchLayout.Listener() {
+            @Override public void onSwipeLeft() {
+                if (!showingWeatherPage) switchMapWeather(true);
+            }
+
+            @Override public void onSwipeRight() {
+                if (showingWeatherPage) switchMapWeather(false);
+            }
+        });
+
         LinearLayout body = vertical();
         body.setPadding(dp(20), dp(20), dp(20), dp(20));
         SavedPoint selected = selectedMapPoint();
+        String eyebrow = showingWeatherPage ? "WEATHER · FISHING OUTLOOK"
+                : selected == null ? "YOUR FIELD MAP" : "SELECTED SAVED POINT";
+        body.addView(pageTitle("Explore", eyebrow));
+        body.addView(mapWeatherTabs(), cardMargins());
+        View page = showingWeatherPage ? weatherPage() : fieldMapPage();
+        body.addView(page, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        swipe.addView(body, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        if (showingWeatherPage && weatherForecast == null && !forecastLoading && !forecastAttempted
+                && lastLocation != null) {
+            content.post(() -> loadForecast(false));
+        }
+        return swipe;
+    }
+
+    private View mapWeatherTabs() {
+        LinearLayout tabs = row();
+        tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
+        tabs.setBackground(roundRect(SURFACE, 14));
+        TextView mapTab = weatherTab("MAP", !showingWeatherPage);
+        mapTab.setOnClickListener(v -> switchMapWeather(false));
+        tabs.addView(mapTab, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        TextView weatherTab = weatherTab("WEATHER", showingWeatherPage);
+        weatherTab.setOnClickListener(v -> switchMapWeather(true));
+        tabs.addView(weatherTab, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        LinearLayout.LayoutParams tabsLp = matchWrap();
+        tabsLp.setMargins(0, dp(14), 0, dp(12));
+        tabs.setLayoutParams(tabsLp);
+        return tabs;
+    }
+
+    private TextView weatherTab(String label, boolean selected) {
+        TextView tab = text(label, 11, selected ? Color.rgb(7, 22, 12) : MUTED, Typeface.BOLD);
+        tab.setGravity(Gravity.CENTER);
+        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, 11));
+        return tab;
+    }
+
+    private void switchMapWeather(boolean weather) {
+        if (showingWeatherPage == weather) return;
+        showingWeatherPage = weather;
+        render("map");
+        if (weather && lastLocation != null) content.post(() -> loadForecast(false));
+    }
+
+    private View fieldMapPage() {
+        LinearLayout body = vertical();
+        SavedPoint selected = selectedMapPoint();
         List<SavedPoint> points = pointStore.all();
-        body.addView(pageTitle("Explore", selected == null ? "YOUR FIELD MAP" : "SELECTED SAVED POINT"));
         MapTilerMapView map = new MapTilerMapView(this);
         activeMapView = map;
         map.setBackground(roundRect(SURFACE, 20));
         map.setData(lastLocation, points, trackStore.points(), selected);
         LinearLayout.LayoutParams mapLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        mapLp.setMargins(0, dp(18), 0, dp(14));
+        mapLp.setMargins(0, 0, 0, dp(14));
         body.addView(map, mapLp);
         body.addView(mapLegend(points), cardMargins());
 
@@ -778,6 +959,11 @@ public final class MainActivity extends Activity implements
             selectedCard.addView(spacer(8));
             selectedCard.addView(text(formatCoords(selected.latitude, selected.longitude), 17, TEXT, Typeface.BOLD));
             selectedCard.addView(text(formatDate(selected.timestamp), 12, MUTED, Typeface.NORMAL));
+            if (selected.weather != null) {
+                selectedCard.addView(spacer(8));
+                selectedCard.addView(text(selected.weather.compactSummary(), 13, TEXT, Typeface.BOLD));
+                selectedCard.addView(text(weatherDetails(selected.weather), 11, MUTED, Typeface.NORMAL));
+            }
             body.addView(selectedCard, cardMargins());
         }
 
@@ -792,7 +978,152 @@ public final class MainActivity extends Activity implements
         Button button = primaryButton("＋  SAVE HERE");
         button.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_WAYPOINT));
         body.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        TextView hint = text("Swipe left from the right edge for Weather  →", 10, MUTED, Typeface.NORMAL);
+        hint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hintLp = matchWrap();
+        hintLp.setMargins(0, dp(8), 0, 0);
+        body.addView(hint, hintLp);
         return body;
+    }
+
+    private View weatherPage() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout body = vertical();
+        body.setPadding(0, 0, 0, dp(16));
+        scroll.addView(body);
+
+        if (weatherForecast != null && weatherForecast.current != null) {
+            WeatherSnapshot current = weatherForecast.current;
+            LinearLayout now = card();
+            LinearLayout header = row();
+            header.setGravity(Gravity.CENTER_VERTICAL);
+            header.addView(text("NOW · " + current.condition().toUpperCase(Locale.ROOT),
+                    11, ACCENT, Typeface.BOLD), weighted());
+            header.addView(text(current.symbol() + "  " + Math.round(current.temperatureC) + "°C",
+                    24, TEXT, Typeface.BOLD));
+            now.addView(header);
+            now.addView(spacer(8));
+            now.addView(text(current.compactSummary(), 13, TEXT, Typeface.BOLD));
+            now.addView(text(weatherDetails(current), 11, MUTED, Typeface.NORMAL));
+            now.addView(text("Updated " + formatTime(weatherForecast.fetchedAt)
+                    + " · " + weatherForecast.timezone, 10, MUTED, Typeface.NORMAL));
+            body.addView(now, cardMargins());
+        }
+
+        LinearLayout fishCard = card();
+        fishCard.addView(text("TARGET FISH", 10, MUTED, Typeface.BOLD));
+        fishCard.addView(text("Choose a fish to adjust the weather outlook", 13, TEXT, Typeface.BOLD));
+        fishCard.addView(spacer(10));
+        LinearLayout first = row();
+        LinearLayout second = row();
+        for (int i = 0; i < FishingAdvisor.SPECIES.length; i++) {
+            String species = FishingAdvisor.SPECIES[i];
+            TextView choice = weatherTab(species.toUpperCase(Locale.ROOT), species.equals(selectedSpecies));
+            choice.setOnClickListener(v -> {
+                selectedSpecies = species;
+                weatherPrefs.edit().putString(WEATHER_SPECIES, species).apply();
+                render("map");
+            });
+            (i < 3 ? first : second).addView(choice,
+                    new LinearLayout.LayoutParams(0, dp(40), 1f));
+        }
+        fishCard.addView(first);
+        fishCard.addView(spacer(6));
+        fishCard.addView(second);
+        fishCard.addView(spacer(10));
+        fishCard.addView(text("Weather-based estimate using air conditions; not a catch guarantee.",
+                10, MUTED, Typeface.NORMAL));
+        body.addView(fishCard, cardMargins());
+
+        LinearLayout status = row();
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        status.addView(text(forecastStatus, 10, forecastLoading ? WARNING : MUTED, Typeface.NORMAL),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button refresh = smallButton(forecastLoading ? "LOADING…" : "REFRESH");
+        refresh.setEnabled(!forecastLoading && lastLocation != null);
+        refresh.setOnClickListener(v -> loadForecast(true));
+        status.addView(refresh, new LinearLayout.LayoutParams(dp(96), dp(38)));
+        body.addView(status, cardMargins());
+
+        if (lastLocation == null) {
+            LinearLayout missing = card();
+            missing.addView(text("Waiting for GPS", 17, TEXT, Typeface.BOLD));
+            missing.addView(text("Allow Location so Fiskentra can load the forecast for this place.",
+                    12, MUTED, Typeface.NORMAL));
+            body.addView(missing);
+        } else if (weatherForecast == null && !forecastLoading) {
+            LinearLayout missing = card();
+            missing.addView(text("Forecast is not available yet", 17, TEXT, Typeface.BOLD));
+            missing.addView(text("Check your internet connection, then tap Refresh.",
+                    12, MUTED, Typeface.NORMAL));
+            body.addView(missing);
+        } else if (weatherForecast != null) {
+            for (ForecastDay day : weatherForecast.days) {
+                body.addView(forecastDayCard(day), cardMargins());
+            }
+        }
+
+        TextView hint = text("←  Swipe right to return to Map", 10, MUTED, Typeface.NORMAL);
+        hint.setGravity(Gravity.CENTER);
+        body.addView(hint);
+        return scroll;
+    }
+
+    private View forecastDayCard(ForecastDay day) {
+        FishingAdvisor.Assessment assessment = FishingAdvisor.assess(day, selectedSpecies);
+        LinearLayout card = card();
+        LinearLayout header = row();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(text(day.symbol() + "  " + formatForecastDate(day.date),
+                15, TEXT, Typeface.BOLD), weighted());
+        TextView score = text(assessment.label.toUpperCase(Locale.ROOT) + "  " + assessment.score,
+                10, fishingScoreColor(assessment.score), Typeface.BOLD);
+        header.addView(score);
+        card.addView(header);
+        card.addView(text(day.condition() + " · " + Math.round(day.minTemperatureC) + "–"
+                + Math.round(day.maxTemperatureC) + "°C", 12, TEXT, Typeface.BOLD));
+        card.addView(text("Rain " + day.precipitationProbabilityPercent + "% · "
+                + String.format(Locale.getDefault(), "%.1f mm", day.precipitationMm)
+                + " · Wind " + Math.round(day.maxWindSpeedKmh) + " km/h",
+                11, MUTED, Typeface.NORMAL));
+        if (!day.sunrise.isEmpty() && !day.sunset.isEmpty()) {
+            card.addView(text("Sunrise " + forecastClock(day.sunrise) + " · Sunset "
+                    + forecastClock(day.sunset), 10, MUTED, Typeface.NORMAL));
+        }
+        card.addView(spacer(8));
+        card.addView(text(selectedSpecies + " outlook · " + assessment.reason,
+                11, fishingScoreColor(assessment.score), Typeface.BOLD));
+        return card;
+    }
+
+    private void loadForecast(boolean forceRefresh) {
+        if (forecastLoading) return;
+        Location location = lastLocation;
+        if (location == null) {
+            forecastStatus = "Waiting for GPS";
+            if ("map".equals(screen) && showingWeatherPage) render("map");
+            return;
+        }
+        forecastLoading = true;
+        forecastAttempted = true;
+        forecastStatus = forceRefresh ? "Refreshing forecast…" : "Loading forecast…";
+        if ("map".equals(screen) && showingWeatherPage) render("map");
+        weatherClient.fetchForecast(location.getLatitude(), location.getLongitude(), forceRefresh,
+                (forecast, message) -> runOnUiThread(() -> {
+                    if (destroyed) return;
+                    forecastLoading = false;
+                    if (forecast != null) weatherForecast = forecast;
+                    forecastStatus = message;
+                    if ("map".equals(screen) && showingWeatherPage) render("map");
+                }));
+    }
+
+    private int fishingScoreColor(int score) {
+        if (score >= 80) return SUCCESS;
+        if (score >= 65) return ACCENT;
+        if (score >= 45) return WARNING;
+        return DANGER;
     }
 
     private View mapLegend(List<SavedPoint> points) {
@@ -924,11 +1255,26 @@ public final class MainActivity extends Activity implements
         card.addView(text(formatCoords(point.latitude, point.longitude), 17, TEXT, Typeface.BOLD));
         card.addView(text(formatDate(point.timestamp), 12, MUTED, Typeface.NORMAL));
         card.addView(spacer(8));
+        if (point.weather == null) {
+            card.addView(text("○  Weather not captured", 12, MUTED, Typeface.BOLD));
+        } else {
+            card.addView(text(point.weather.compactSummary(), 13, TEXT, Typeface.BOLD));
+            card.addView(text(weatherDetails(point.weather), 11, MUTED, Typeface.NORMAL));
+            card.addView(text("Observed " + formatTime(point.weather.observedAt)
+                    + " · " + point.weather.provider, 10, MUTED, Typeface.NORMAL));
+        }
+        card.addView(spacer(8));
         card.addView(text(syncLabel(point.id), 12, syncColor(point.id), Typeface.BOLD));
         card.addView(spacer(12));
+        LinearLayout actions = row();
         Button openMap = smallButton("OPEN MAP");
         openMap.setOnClickListener(v -> openPointOnMap(point));
-        card.addView(openMap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        actions.addView(openMap, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        actions.addView(spaceWide());
+        Button weather = smallButton(point.weather == null ? "ADD WEATHER" : "REFRESH WEATHER");
+        weather.setOnClickListener(v -> refreshPointWeather(point));
+        actions.addView(weather, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        card.addView(actions);
         card.setOnClickListener(v -> openPointOnMap(point));
         return card;
     }
@@ -1034,9 +1380,78 @@ public final class MainActivity extends Activity implements
         }
         SavedPoint point = pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
         Toast.makeText(this, "Moment saved · " + source, Toast.LENGTH_SHORT).show();
-        syncPoint(point);
+        enrichWeatherThenSync(point);
         if ("map".equals(screen) || "saved".equals(screen) || "log".equals(screen)) render(screen);
         return true;
+    }
+
+    private void enrichWeatherThenSync(SavedPoint point) {
+        weatherClient.fetch(point.latitude, point.longitude, (weather, weatherMessage) -> {
+            SavedPoint updated = weather == null ? point : pointStore.updateWeather(point.id, weather);
+            if (updated == null) updated = point;
+            if (destroyed) return;
+            SavedPoint ready = updated;
+            runOnUiThread(() -> {
+                syncPoint(ready);
+                if (weather != null && ("saved".equals(screen) || "map".equals(screen)
+                        || "log".equals(screen) || "home".equals(screen))) {
+                    render(screen);
+                }
+            });
+        });
+    }
+
+    private void refreshPointWeather(SavedPoint point) {
+        Toast.makeText(this, "Getting weather for this point…", Toast.LENGTH_SHORT).show();
+        weatherClient.fetch(point.latitude, point.longitude, (weather, message) -> {
+            if (destroyed) return;
+            if (weather == null) {
+                runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
+                return;
+            }
+            SavedPoint updated = pointStore.updateWeather(point.id, weather);
+            runOnUiThread(() -> {
+                Toast.makeText(this, "Weather updated · " + weather.compactSummary(),
+                        Toast.LENGTH_SHORT).show();
+                if (updated != null && shouldSync(updated.id)) syncPoint(updated);
+                render("saved");
+            });
+        });
+    }
+
+    private void captureFishingDayWeather(FishingDay day, boolean start) {
+        Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        if (location == null) {
+            Toast.makeText(this, "Weather needs a GPS fix", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        weatherClient.fetch(location.getLatitude(), location.getLongitude(), (weather, message) -> {
+            if (destroyed) return;
+            if (weather == null) {
+                runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show());
+                return;
+            }
+            if (start) fishingDayStore.updateStartWeather(day.id, weather);
+            else fishingDayStore.updateEndWeather(day.id, weather);
+            runOnUiThread(() -> {
+                if ("log".equals(screen) || "home".equals(screen)) render(screen);
+            });
+        });
+    }
+
+    private void captureTripWeather(boolean start, long tripId) {
+        Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        if (location == null) return;
+        weatherClient.fetch(location.getLatitude(), location.getLongitude(), (weather, message) -> {
+            if (destroyed) return;
+            if (weather == null) return;
+            if (trackStore.startedAt() != tripId) return;
+            if (start) trackStore.updateStartWeather(weather);
+            else trackStore.updateEndWeather(weather);
+            runOnUiThread(() -> {
+                if ("home".equals(screen)) render("home");
+            });
+        });
     }
 
     private void syncPoint(SavedPoint point) {
@@ -1069,7 +1484,9 @@ public final class MainActivity extends Activity implements
         cloudSyncStatus = "Syncing " + pending + (pending == 1 ? " local point…" : " local points…");
         Toast.makeText(this, "Syncing local points to Supabase", Toast.LENGTH_SHORT).show();
         for (SavedPoint point : points) {
-            if (shouldSync(point.id)) syncPoint(point);
+            if (!shouldSync(point.id)) continue;
+            if (point.weather == null) enrichWeatherThenSync(point);
+            else syncPoint(point);
         }
     }
 
@@ -1208,6 +1625,12 @@ public final class MainActivity extends Activity implements
             if (trackStore.isActive()) trackStore.add(location);
             if ("map".equals(screen) && activeMapView != null) {
                 activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
+            } else if ("map".equals(screen) && showingWeatherPage && !forecastLoading) {
+                if (weatherForecast != null && !forecastCovers(location)) {
+                    weatherForecast = null;
+                    forecastAttempted = false;
+                }
+                if (weatherForecast == null && !forecastAttempted) loadForecast(false);
             } else if ("home".equals(screen)) {
                 render("home");
             }
@@ -1381,12 +1804,47 @@ public final class MainActivity extends Activity implements
         return String.format(Locale.US, "%.5f, %.5f", lat, lon);
     }
 
+    private static String weatherDetails(WeatherSnapshot weather) {
+        return String.format(Locale.getDefault(),
+                "Feels %.0f°C · Humidity %d%% · Pressure %.0f hPa · Precipitation %.1f mm",
+                weather.apparentTemperatureC,
+                weather.humidityPercent,
+                weather.pressureHpa,
+                weather.precipitationMm);
+    }
+
     private static String nowTime() {
         return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
     }
 
     private static String formatDate(long time) {
         return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(time));
+    }
+
+    private static String formatForecastDate(String isoDate) {
+        try {
+            Date parsed = new SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate);
+            if (parsed != null) {
+                return new SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(parsed);
+            }
+        } catch (Exception ignored) { }
+        return isoDate;
+    }
+
+    private static String forecastClock(String isoTime) {
+        int separator = isoTime.indexOf('T');
+        if (separator >= 0 && isoTime.length() >= separator + 6) {
+            return isoTime.substring(separator + 1, separator + 6);
+        }
+        return isoTime;
+    }
+
+    private boolean forecastCovers(Location location) {
+        if (weatherForecast == null || location == null) return false;
+        float[] distance = new float[1];
+        Location.distanceBetween(location.getLatitude(), location.getLongitude(),
+                weatherForecast.latitude, weatherForecast.longitude, distance);
+        return distance[0] <= 10_000f;
     }
 
     private static String formatTime(long time) {
