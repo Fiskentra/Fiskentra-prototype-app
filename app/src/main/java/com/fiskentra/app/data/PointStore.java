@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.model.WeatherSnapshot;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -39,7 +40,8 @@ public final class PointStore {
                 JSONObject o = array.getJSONObject(i);
                 out.add(new SavedPoint(
                         o.getLong("id"), o.getDouble("lat"), o.getDouble("lon"),
-                        o.getLong("time"), o.optString("type", "Moment"), o.optString("note", "")));
+                        o.getLong("time"), o.optString("type", "Moment"), o.optString("note", ""),
+                        WeatherSnapshot.fromJson(o.optJSONObject("weather"))));
             }
         } catch (Exception ignored) {
             // Corrupt local prototype data should not make the app unusable.
@@ -54,6 +56,26 @@ public final class PointStore {
         write(points);
     }
 
+    public synchronized SavedPoint updateWeather(long id, WeatherSnapshot weather) {
+        List<SavedPoint> points = new ArrayList<>(all());
+        SavedPoint updated = null;
+        for (int i = 0; i < points.size(); i++) {
+            if (points.get(i).id != id) continue;
+            updated = points.get(i).withWeather(weather);
+            points.set(i, updated);
+            break;
+        }
+        if (updated != null) write(points);
+        return updated;
+    }
+
+    public synchronized SavedPoint find(long id) {
+        for (SavedPoint point : all()) {
+            if (point.id == id) return point;
+        }
+        return null;
+    }
+
     private void write(List<SavedPoint> points) {
         JSONArray array = new JSONArray();
         try {
@@ -65,6 +87,7 @@ public final class PointStore {
                 o.put("time", p.timestamp);
                 o.put("type", p.type);
                 o.put("note", p.note);
+                if (p.weather != null) o.put("weather", p.weather.toJson());
                 array.put(o);
             }
             prefs.edit().putString(KEY, array.toString()).apply();

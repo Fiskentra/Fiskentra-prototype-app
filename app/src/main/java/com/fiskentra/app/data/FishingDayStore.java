@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.fiskentra.app.model.FishingDay;
+import com.fiskentra.app.model.WeatherSnapshot;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -41,7 +42,8 @@ public final class FishingDayStore {
         if (current == null) return null;
 
         long now = System.currentTimeMillis();
-        FishingDay finished = new FishingDay(current.id, current.startedAt, now);
+        FishingDay finished = new FishingDay(
+                current.id, current.startedAt, now, current.startWeather, current.endWeather);
         List<FishingDay> sessions = new ArrayList<>(all());
         for (int i = 0; i < sessions.size(); i++) {
             if (sessions.get(i).id == current.id) {
@@ -58,6 +60,14 @@ public final class FishingDayStore {
             if (day.isActive()) return day;
         }
         return null;
+    }
+
+    public synchronized FishingDay updateStartWeather(long id, WeatherSnapshot weather) {
+        return updateWeather(id, weather, true);
+    }
+
+    public synchronized FishingDay updateEndWeather(long id, WeatherSnapshot weather) {
+        return updateWeather(id, weather, false);
     }
 
     public synchronized List<FishingDay> sessionsOnDate(long date) {
@@ -78,7 +88,9 @@ public final class FishingDayStore {
                 out.add(new FishingDay(
                         value.getLong("id"),
                         value.getLong("started_at"),
-                        value.optLong("ended_at", 0L)));
+                        value.optLong("ended_at", 0L),
+                        WeatherSnapshot.fromJson(value.optJSONObject("start_weather")),
+                        WeatherSnapshot.fromJson(value.optJSONObject("end_weather"))));
             }
         } catch (Exception ignored) {
             // A malformed prototype entry must not prevent opening the log.
@@ -95,10 +107,26 @@ public final class FishingDayStore {
                 value.put("id", day.id);
                 value.put("started_at", day.startedAt);
                 value.put("ended_at", day.endedAt);
+                if (day.startWeather != null) value.put("start_weather", day.startWeather.toJson());
+                if (day.endWeather != null) value.put("end_weather", day.endWeather.toJson());
                 array.put(value);
             }
             prefs.edit().putString(KEY, array.toString()).apply();
         } catch (Exception ignored) { }
+    }
+
+    private FishingDay updateWeather(long id, WeatherSnapshot weather, boolean start) {
+        List<FishingDay> sessions = new ArrayList<>(all());
+        FishingDay updated = null;
+        for (int i = 0; i < sessions.size(); i++) {
+            FishingDay day = sessions.get(i);
+            if (day.id != id) continue;
+            updated = start ? day.withStartWeather(weather) : day.withEndWeather(weather);
+            sessions.set(i, updated);
+            break;
+        }
+        if (updated != null) write(sessions);
+        return updated;
     }
 
     private static String dayKey(long time) {

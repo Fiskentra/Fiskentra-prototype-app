@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.7` Internal Prototype / Pre-Alpha.
+- Current version: `v0.8` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current milestone: v0.7 fishing-day journal and retained v0.6.2 Flic/offline behavior physically validated on Android.
+- Current target: validate v0.8 weather while retaining the confirmed v0.7 journal and v0.6.2 Flic/offline behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -34,6 +34,13 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Monthly fishing calendar with marked journal dates, multiple sessions per day and persistent history.
 - Automatic fishing-day summaries for duration, catches, waypoints, tackle changes and all saved events.
 - Journal event rows that open the saved GPS position directly on the field map.
+- Open-Meteo current conditions captured for new saved points, including temperature, apparent temperature, humidity, precipitation, pressure and wind.
+- Weather conditions stored locally for fishing-day and trip-track start/finish, with a 15-minute nearby-location cache that avoids repeated network calls.
+- Saved-point weather can be added or refreshed later; a weather failure never blocks local point capture or Flic actions.
+- Map and Weather are adjacent Explore pages: use the visible tabs or swipe left from the map's right edge and swipe right from Weather.
+- Weather includes the current conditions and a cached seven-day Open-Meteo forecast.
+- Pike, perch, zander, trout and carp can be selected for a transparent weather-only fishing outlook; it is explicitly not a catch guarantee.
+- Fishing-calendar cells show the saved weather icon and temperature when a journal session captured conditions for that day.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
@@ -111,7 +118,7 @@ Fishing-day sessions are local-first. An event is included when its saved timest
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.7, then allow Location, Nearby devices and Notifications.
+2. Install and open Fiskentra v0.8, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
@@ -171,7 +178,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, shows "Syncing to Supabase..." while upload is running, then shows "Synced to cloud" or "Saved locally ... sync pending" in the Saved screen. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. Duplicate rows are safe because Supabase returns an already-synced conflict for the same device/local point ID.
+Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. If the optional weather JSONB column is unavailable, core point sync retries without that enrichment.
 
 When a saved point is deleted, the app first shows `Deleting from cloud...`, then sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the app shows `Deleted from cloud` and removes the point from local storage. If the cloud delete fails or returns zero rows, the app shows `Cloud delete failed · try again` and the point stays on the phone so the user can retry with the normal `DELETE` action instead of leaving orphaned GPS data in the database.
 
@@ -185,9 +192,13 @@ create table if not exists public.saved_points (
   recorded_at timestamptz not null,
   type text not null default 'Moment',
   note text not null default '',
+  weather jsonb,
   created_at timestamptz not null default now(),
   unique (device_id, local_id)
 );
+
+alter table public.saved_points
+add column if not exists weather jsonb;
 
 alter table public.saved_points enable row level security;
 
@@ -229,6 +240,22 @@ grant delete on table public.saved_points to anon;
 ```
 
 This prototype policy lets the Android app upload and delete its own saved points with the publishable key and the phone's install ID header. It grants only the `device_id` and `local_id` columns for the delete verification read, not latitude/longitude. Use authenticated users and owner-based RLS before enabling account cloud backup.
+
+The `weather` JSONB object is optional and contains only conditions returned for the point coordinates: observation time, Celsius temperature, humidity, precipitation, pressure, wind, WMO weather code, timezone and provider. This migration was applied and verified on Fiskentra Supabase project `dwlbefpmwzmhutlvqfmu` on 2026-08-30; the SQL remains here for reproducible setup.
+
+## v0.8 weather test
+
+1. Install v0.8 over v0.7 without uninstalling Fiskentra.
+2. Keep Location and internet enabled, save a point, then open Saved.
+3. Confirm the card shows condition, temperature, wind, humidity, pressure, precipitation and `Open-Meteo`.
+4. Open that point on Map and confirm the weather summary appears in the selected-point card.
+5. Start a fishing day and a trip track; confirm start weather appears on Home and in Log. Finish both and confirm finish/latest weather remains after reopening the app.
+6. Disable Wi-Fi and mobile data, then create Catch, Waypoint and Tackle change with Flic 2. All points must still show `Saved locally · offline`; weather may use the recent 15-minute cache or remain `Weather not captured`.
+7. Restore internet, open Saved, tap `ADD WEATHER` on a point without weather, then tap `SYNC LOCAL POINTS` for pending points.
+8. Open Map, tap `WEATHER` or swipe left from the right edge, and confirm seven forecast days appear.
+9. Select Pike, Perch, Zander, Trout and Carp; confirm the score and explanation change without claiming guaranteed catches.
+10. Swipe right to return to Map and verify normal map panning still works.
+11. Start a fishing day with internet, wait for weather capture, then open Log and verify its calendar cell contains the saved weather icon and temperature.
 
 To test cloud delete after running the SQL:
 

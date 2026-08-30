@@ -57,28 +57,16 @@ public final class SupabasePointSync {
         }
 
         executor.execute(() -> {
-            HttpURLConnection connection = null;
             try {
                 if (!hasValidatedInternet()) {
                     listener.onResult(false, "offline");
                     return;
                 }
-                byte[] body = payload(point).getBytes(StandardCharsets.UTF_8);
-                URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points");
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setRequestMethod("POST");
-                connection.setConnectTimeout(4000);
-                connection.setReadTimeout(4000);
-                connection.setDoOutput(true);
-                connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
-                connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
-                connection.setRequestProperty("Accept", "application/json");
-                connection.setRequestProperty("Content-Type", "application/json");
-                connection.setRequestProperty("Prefer", "return=minimal");
-                try (OutputStream out = connection.getOutputStream()) {
-                    out.write(body);
+                int status = post(point, true);
+                if (status == 400 && point.weather != null) {
+                    // Keep core sync compatible if the optional v0.8 column is unavailable.
+                    status = post(point, false);
                 }
-                int status = connection.getResponseCode();
                 if (status >= 200 && status < 300) {
                     listener.onResult(true, "Last point synced to Supabase");
                 } else if (status == 409) {
@@ -88,8 +76,6 @@ public final class SupabasePointSync {
                 }
             } catch (Exception e) {
                 listener.onResult(false, "Point saved locally; cloud sync pending");
-            } finally {
-                if (connection != null) connection.disconnect();
             }
         });
     }
@@ -151,8 +137,37 @@ public final class SupabasePointSync {
                 && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
     }
 
-    private String payload(SavedPoint point) throws Exception {
-        String installId = installId();
+    private int post(SavedPoint point, boolean includeWeather) throws Exception {
+        HttpURLConnection connection = null;
+        try {
+            String installId = installId();
+            byte[] body = payload(point, includeWeather, installId)
+                    .getBytes(StandardCharsets.UTF_8);
+            URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(4_000);
+            connection.setReadTimeout(4_000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
+            connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Prefer", "return=minimal");
+            try (OutputStream out = connection.getOutputStream()) {
+                out.write(body);
+            }
+            return connection.getResponseCode();
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String payload(
+            SavedPoint point,
+            boolean includeWeather,
+            String installId)
+            throws Exception {
         JSONObject json = new JSONObject();
         json.put("id", installId + "-" + point.id);
         json.put("device_id", installId);
@@ -162,6 +177,9 @@ public final class SupabasePointSync {
         json.put("recorded_at", iso(point.timestamp));
         json.put("type", point.type);
         json.put("note", point.note == null ? "" : point.note);
+        if (includeWeather && point.weather != null) {
+            json.put("weather", point.weather.toJson());
+        }
         return json.toString();
     }
 
