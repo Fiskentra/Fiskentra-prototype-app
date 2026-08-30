@@ -839,10 +839,20 @@ public final class MainActivity extends Activity implements
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
         if (FiskentraFlicService.isRunning()) return;
         runOnUiThread(() -> {
-            bleStatus = "Flic press received · background service is not active";
-            lastButtonEvent = bleStatus + " · " + nowTime();
-            if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
-            if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
+            switch (action) {
+                case CATCH:
+                    handleButtonPress(POINT_TYPE_CATCH,
+                            "Single press registered a catch · foreground fallback");
+                    break;
+                case WAYPOINT:
+                    handleButtonPress(POINT_TYPE_WAYPOINT,
+                            "Double press saved a waypoint · foreground fallback");
+                    break;
+                case TACKLE_CHANGE:
+                    handleButtonPress(POINT_TYPE_TACKLE_CHANGE,
+                            "Hold marked a tackle change · foreground fallback");
+                    break;
+            }
         });
     }
 

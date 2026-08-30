@@ -35,6 +35,8 @@ public final class FiskentraFlicService extends Service implements
     private static final int NOTIFICATION_ID = 620;
     private static final String CHANNEL_ID = "fiskentra_field_button";
     private static final long MAX_LOCATION_AGE_MS = 30_000L;
+    private static final long MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS = 5L * 60L * 1_000L;
+    private static final long MAX_FALLBACK_LOCATION_AGE_MS = 30L * 60L * 1_000L;
     private static final long GPS_WAIT_TIMEOUT_MS = 20_000L;
     private static final String SYNC_PREFS = "fiskentra_point_sync_status";
 
@@ -80,8 +82,8 @@ public final class FiskentraFlicService extends Service implements
             return;
         }
 
-        running = true;
         flicManager.addListener(this);
+        running = true;
         flicManager.attachAndConnectPairedButtons();
         locationManager.start();
     }
@@ -111,15 +113,21 @@ public final class FiskentraFlicService extends Service implements
         pendingActions.clear();
         for (PendingAction pending : ready) {
             if (SystemClock.elapsedRealtime() - pending.receivedAtMs <= GPS_WAIT_TIMEOUT_MS) {
-                saveAction(pending.action, location);
+                saveAction(pending.action, location, false);
             }
         }
     }
 
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
         Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        flicManager.reportActionResult(action, false,
+                pointType(action) + " press received · checking GPS");
         if (isFresh(location)) {
-            saveAction(action, location);
+            saveAction(action, location, false);
+            return;
+        }
+        if (locationAgeMs(location) <= MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS) {
+            saveAction(action, location, true);
             return;
         }
 
@@ -143,12 +151,17 @@ public final class FiskentraFlicService extends Service implements
         updateNotification("Old queued Flic press ignored safely");
     }
 
-    private void saveAction(FiskentraFlic2Manager.Action action, Location location) {
+    private void saveAction(
+            FiskentraFlic2Manager.Action action, Location location, boolean cachedLocation) {
         String type = pointType(action);
         SavedPoint point = pointStore.add(
-                location.getLatitude(), location.getLongitude(), type, "Captured by Flic 2 in background");
+                location.getLatitude(), location.getLongitude(), type,
+                cachedLocation
+                        ? "Captured by Flic 2 with recent cached location"
+                        : "Captured by Flic 2 in background");
         setSyncState(point.id, "syncing", "Syncing to Supabase");
-        String message = type + " saved · " + coordinateSummary(location);
+        String message = type + (cachedLocation ? " saved with recent location · " : " saved · ")
+                + coordinateSummary(location);
         updateNotification(message);
         flicManager.reportActionResult(action, true, message);
 
@@ -160,20 +173,33 @@ public final class FiskentraFlicService extends Service implements
 
     private void expirePendingAction(PendingAction pending) {
         if (!pendingActions.remove(pending)) return;
+        Location fallback = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        if (isRecentFallback(fallback)) {
+            saveAction(pending.action, fallback, true);
+            return;
+        }
         String message = "Flic press not saved · no fresh GPS fix within 20 seconds";
         updateNotification(message);
         flicManager.reportActionResult(pending.action, false, message);
     }
 
     private boolean isFresh(Location location) {
-        if (location == null) return false;
+        return locationAgeMs(location) <= MAX_LOCATION_AGE_MS;
+    }
+
+    private boolean isRecentFallback(Location location) {
+        return locationAgeMs(location) <= MAX_FALLBACK_LOCATION_AGE_MS;
+    }
+
+    private long locationAgeMs(Location location) {
+        if (location == null) return Long.MAX_VALUE;
         long elapsedNanos = location.getElapsedRealtimeNanos();
         if (elapsedNanos > 0L) {
             long ageNanos = SystemClock.elapsedRealtimeNanos() - elapsedNanos;
-            return ageNanos >= 0L && ageNanos <= MAX_LOCATION_AGE_MS * 1_000_000L;
+            if (ageNanos < 0L) return Long.MAX_VALUE;
+            return ageNanos / 1_000_000L;
         }
-        long ageMs = Math.abs(System.currentTimeMillis() - location.getTime());
-        return ageMs <= MAX_LOCATION_AGE_MS;
+        return Math.abs(System.currentTimeMillis() - location.getTime());
     }
 
     private void setSyncState(long pointId, String state, String message) {

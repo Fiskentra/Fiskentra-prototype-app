@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.6` Internal Prototype / Pre-Alpha.
+- Current version: `v0.6.1` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate v0.6 Flic 2 capture with the app backgrounded and the phone locked.
+- Current target: validate the v0.6.1 Flic 2 reliability and offline-capture fix.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -67,7 +67,7 @@ The Flic Android app may remain installed, but Fiskentra creates and stores its 
 
 ### Background and locked-phone test
 
-1. Install and open Fiskentra v0.6.
+1. Install and open Fiskentra v0.6.1.
 2. Allow Location, Nearby devices and Notifications.
 3. Confirm the persistent **Fiskentra field button active** notification appears.
 4. Wait until Flic 2 reports ready, lock the phone and test single press, double press and hold.
@@ -76,10 +76,22 @@ The Flic Android app may remain installed, but Fiskentra creates and stores its 
 
 Open Fiskentra once after every phone reboot so Android can start the location foreground service from a visible activity. Force-stopping the app disables the service until Fiskentra is opened again.
 
+### v0.6.1 Flic and offline regression test
+
+1. Install v0.6.1 over the current Fiskentra installation and open it once.
+2. Confirm **Flic 2 ready** and **BACKGROUND CAPTURE ACTIVE** on Device.
+3. Test single press, double press and hold with internet available.
+4. Disable Wi-Fi and mobile data while leaving Bluetooth and Location enabled.
+5. Repeat all three Flic actions. Fiskentra now acknowledges the press before checking GPS.
+6. Open Saved and verify all three points are present with **Saved locally · offline**.
+7. Restore internet, tap **Sync local points** and verify they become **Synced to cloud**.
+
+If Android cannot start the foreground service, v0.6.1 restores foreground Activity capture instead of discarding Flic actions. For background capture, Fiskentra prefers a GPS fix newer than 30 seconds, can immediately use a recent fix up to five minutes old when necessary, and uses a cached fix up to 30 minutes old after waiting for GPS. Cached-location saves are clearly identified in the point note and service status.
+
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.6, then allow Location, Nearby devices and Notifications.
+2. Install and open Fiskentra v0.6.1, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
