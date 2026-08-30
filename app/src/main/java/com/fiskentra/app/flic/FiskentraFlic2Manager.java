@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 import io.flic.flic2libandroid.Flic2Button;
 import io.flic.flic2libandroid.Flic2ButtonListener;
@@ -24,20 +25,36 @@ public final class FiskentraFlic2Manager {
         void onButtonChanged(String name, String address, boolean connected);
         void onAction(Action action);
         void onStaleEventIgnored();
+        default void onActionResult(Action action, boolean saved, String message) { }
     }
 
     private static final long MAX_QUEUED_EVENT_AGE_MS = 15_000L;
 
     private final Context context;
-    private final Listener listener;
     private final Flic2Manager manager;
     private final Set<Flic2Button> listeningButtons = new HashSet<>();
+    private final Set<Listener> listeners = new CopyOnWriteArraySet<>();
+    private String lastStatus = "No Flic 2 paired with Fiskentra";
+    private String lastButtonName = "Flic 2";
+    private String lastButtonAddress = "";
+    private boolean lastButtonConnected;
 
-    public FiskentraFlic2Manager(Context context, Listener listener) {
+    public FiskentraFlic2Manager(Context context) {
         this.context = context.getApplicationContext();
-        this.listener = listener;
         this.manager = Flic2Manager.getInstance();
         attachAndConnectPairedButtons();
+    }
+
+    public void addListener(Listener listener) {
+        if (listener == null || !listeners.add(listener)) return;
+        listener.onStatus(lastStatus);
+        if (!lastButtonAddress.isEmpty()) {
+            listener.onButtonChanged(lastButtonName, lastButtonAddress, lastButtonConnected);
+        }
+    }
+
+    public void removeListener(Listener listener) {
+        listeners.remove(listener);
     }
 
     public boolean hasPermissions() {
@@ -54,66 +71,70 @@ public final class FiskentraFlic2Manager {
 
     public void attachAndConnectPairedButtons() {
         if (!hasPermissions()) {
-            listener.onStatus("Nearby devices permission needed");
+            notifyStatus("Nearby devices permission needed");
             return;
         }
         List<Flic2Button> buttons = manager.getButtons();
         if (buttons.isEmpty()) {
-            listener.onStatus("No Flic 2 paired with Fiskentra");
+            notifyStatus("No Flic 2 paired with Fiskentra");
             return;
         }
         for (Flic2Button button : buttons) {
             attach(button);
             try {
                 button.connect();
-                listener.onButtonChanged(displayName(button), button.getBdAddr(),
+                notifyButtonChanged(displayName(button), button.getBdAddr(),
                         button.getConnectionState() == Flic2Button.CONNECTION_STATE_CONNECTED_READY);
             } catch (SecurityException error) {
-                listener.onStatus("Nearby devices permission needed");
+                notifyStatus("Nearby devices permission needed");
                 return;
             }
         }
-        listener.onStatus("Reconnecting to paired Flic 2…");
+        notifyStatus("Reconnecting to paired Flic 2…");
     }
 
     public void pairNewButton() {
         if (!hasPermissions()) {
-            listener.onStatus("Nearby devices permission needed");
+            notifyStatus("Nearby devices permission needed");
             return;
         }
-        listener.onStatus("Hold the Flic 2 for 6 seconds until it glows, then keep it nearby");
+        notifyStatus("Hold the Flic 2 for 6 seconds until it glows, then keep it nearby");
         try {
             manager.startScan(new Flic2ScanCallback() {
                 @Override public void onDiscoveredAlreadyPairedButton(Flic2Button button) {
                     attach(button);
-                    listener.onStatus("That Flic 2 is already paired with Fiskentra");
+                    notifyStatus("That Flic 2 is already paired with Fiskentra");
                 }
 
                 @Override public void onDiscovered(String bdAddr) {
-                    listener.onStatus("Flic 2 found · connecting…");
+                    notifyStatus("Flic 2 found · connecting…");
                 }
 
                 @Override public void onConnected() {
-                    listener.onStatus("Flic 2 connected · securing pairing…");
+                    notifyStatus("Flic 2 connected · securing pairing…");
                 }
 
                 @Override public void onAskToAcceptPairRequest() {
-                    listener.onStatus("Tap Pair & connect in the Android dialog");
+                    notifyStatus("Tap Pair & connect in the Android dialog");
                 }
 
                 @Override public void onComplete(int result, int subCode, Flic2Button button) {
                     if (result == Flic2ScanCallback.RESULT_SUCCESS && button != null) {
                         attach(button);
-                        listener.onButtonChanged(displayName(button), button.getBdAddr(), true);
-                        listener.onStatus("Flic 2 paired · press it to test Fiskentra");
+                        notifyButtonChanged(displayName(button), button.getBdAddr(), true);
+                        notifyStatus("Flic 2 paired · press it to test Fiskentra");
                     } else {
-                        listener.onStatus(scanFailureMessage(result, subCode));
+                        notifyStatus(scanFailureMessage(result, subCode));
                     }
                 }
             });
         } catch (SecurityException error) {
-            listener.onStatus("Nearby devices permission needed");
+            notifyStatus("Nearby devices permission needed");
         }
+    }
+
+    public void reportActionResult(Action action, boolean saved, String message) {
+        for (Listener listener : listeners) listener.onActionResult(action, saved, message);
     }
 
     public void close() {
@@ -131,28 +152,28 @@ public final class FiskentraFlic2Manager {
 
     private final Flic2ButtonListener buttonListener = new Flic2ButtonListener() {
         @Override public void onConnect(Flic2Button button) {
-            listener.onStatus("Flic 2 connected · preparing button…");
-            listener.onButtonChanged(displayName(button), button.getBdAddr(), false);
+            notifyStatus("Flic 2 connected · preparing button…");
+            notifyButtonChanged(displayName(button), button.getBdAddr(), false);
         }
 
         @Override public void onReady(Flic2Button button, long timestamp) {
-            listener.onButtonChanged(displayName(button), button.getBdAddr(), true);
-            listener.onStatus("Flic 2 ready · single, double or hold");
+            notifyButtonChanged(displayName(button), button.getBdAddr(), true);
+            notifyStatus("Flic 2 ready · single, double or hold");
         }
 
         @Override public void onDisconnect(Flic2Button button) {
-            listener.onButtonChanged(displayName(button), button.getBdAddr(), false);
-            listener.onStatus("Flic 2 disconnected · reconnecting when available");
+            notifyButtonChanged(displayName(button), button.getBdAddr(), false);
+            notifyStatus("Flic 2 disconnected · reconnecting when available");
         }
 
         @Override public void onUnpaired(Flic2Button button) {
             listeningButtons.remove(button);
-            listener.onButtonChanged(displayName(button), button.getBdAddr(), false);
-            listener.onStatus("Flic 2 was unpaired · pair it again");
+            notifyButtonChanged(displayName(button), button.getBdAddr(), false);
+            notifyStatus("Flic 2 was unpaired · pair it again");
         }
 
         @Override public void onFailure(Flic2Button button, int errorCode, int subCode) {
-            listener.onStatus("Flic 2 connection error " + errorCode + ":" + subCode + " · retrying");
+            notifyStatus("Flic 2 connection error " + errorCode + ":" + subCode + " · retrying");
         }
 
         @Override public void onButtonSingleOrDoubleClickOrHold(
@@ -164,14 +185,29 @@ public final class FiskentraFlic2Manager {
                 boolean isDoubleClick,
                 boolean isHold) {
             if (isStaleQueuedEvent(button, wasQueued, timestamp)) {
-                listener.onStaleEventIgnored();
+                for (Listener listener : listeners) listener.onStaleEventIgnored();
                 return;
             }
-            if (isHold) listener.onAction(Action.TACKLE_CHANGE);
-            else if (isDoubleClick) listener.onAction(Action.WAYPOINT);
-            else if (isSingleClick) listener.onAction(Action.CATCH);
+            Action action = isHold ? Action.TACKLE_CHANGE
+                    : isDoubleClick ? Action.WAYPOINT
+                    : isSingleClick ? Action.CATCH : null;
+            if (action != null) {
+                for (Listener listener : listeners) listener.onAction(action);
+            }
         }
     };
+
+    private void notifyStatus(String status) {
+        lastStatus = status;
+        for (Listener listener : listeners) listener.onStatus(status);
+    }
+
+    private void notifyButtonChanged(String name, String address, boolean connected) {
+        lastButtonName = name;
+        lastButtonAddress = address;
+        lastButtonConnected = connected;
+        for (Listener listener : listeners) listener.onButtonChanged(name, address, connected);
+    }
 
     private static String displayName(Flic2Button button) {
         String name = button.getName();

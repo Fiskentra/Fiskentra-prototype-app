@@ -2,6 +2,9 @@ package com.fiskentra.app.backend;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 
 import com.fiskentra.app.model.SavedPoint;
 
@@ -35,9 +38,12 @@ public final class SupabasePointSync {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final SharedPreferences prefs;
+    private final ConnectivityManager connectivityManager;
 
     public SupabasePointSync(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        connectivityManager = (ConnectivityManager) context.getApplicationContext()
+                .getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
     public void sync(SavedPoint point, Listener listener) {
@@ -45,16 +51,24 @@ public final class SupabasePointSync {
             listener.onResult(false, "Cloud sync skipped: Supabase is not configured");
             return;
         }
+        if (!hasValidatedInternet()) {
+            listener.onResult(false, "offline");
+            return;
+        }
 
         executor.execute(() -> {
             HttpURLConnection connection = null;
             try {
+                if (!hasValidatedInternet()) {
+                    listener.onResult(false, "offline");
+                    return;
+                }
                 byte[] body = payload(point).getBytes(StandardCharsets.UTF_8);
                 URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points");
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("POST");
-                connection.setConnectTimeout(7000);
-                connection.setReadTimeout(7000);
+                connection.setConnectTimeout(4000);
+                connection.setReadTimeout(4000);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
                 connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
@@ -125,6 +139,16 @@ public final class SupabasePointSync {
 
     public void close() {
         executor.shutdownNow();
+    }
+
+    public boolean hasValidatedInternet() {
+        if (connectivityManager == null) return false;
+        Network network = connectivityManager.getActiveNetwork();
+        if (network == null) return false;
+        NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(network);
+        return capabilities != null
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
     }
 
     private String payload(SavedPoint point) throws Exception {
