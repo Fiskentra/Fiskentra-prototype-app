@@ -24,20 +24,25 @@ import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
 import com.fiskentra.app.backend.SupabasePointSync;
+import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
+import com.fiskentra.app.model.FishingDay;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public final class MainActivity extends Activity implements
         FiskentraLocationManager.Listener, FiskentraFlic2Manager.Listener {
@@ -65,6 +70,7 @@ public final class MainActivity extends Activity implements
     private FrameLayout content;
     private LinearLayout nav;
     private PointStore pointStore;
+    private FishingDayStore fishingDayStore;
     private TrackStore trackStore;
     private FiskentraLocationManager locationManager;
     private FiskentraFlic2Manager flicManager;
@@ -83,6 +89,8 @@ public final class MainActivity extends Activity implements
     private TextView buttonEventText;
     private String lastButtonEvent = "No button event yet";
     private long selectedMapPointId = -1L;
+    private long selectedLogDateMillis;
+    private long calendarMonthMillis;
     private MapTilerMapView activeMapView;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -94,11 +102,14 @@ public final class MainActivity extends Activity implements
         }
 
         pointStore = new PointStore(this);
+        fishingDayStore = new FishingDayStore(this);
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
         supabaseConnection = new SupabaseConnection();
         pointSync = new SupabasePointSync(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
+        selectedLogDateMillis = System.currentTimeMillis();
+        calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -136,7 +147,7 @@ public final class MainActivity extends Activity implements
         if (activeMapView != null) activeMapView.resume();
         if (locationManager.hasPermission()) locationManager.start();
         ensureBackgroundService();
-        if ("saved".equals(screen)) render("saved");
+        if ("saved".equals(screen) || "log".equals(screen)) render(screen);
     }
 
     @Override protected void onPause() {
@@ -214,6 +225,7 @@ public final class MainActivity extends Activity implements
         activeMapView = null;
         switch (screen) {
             case "map": content.addView(mapScreen()); break;
+            case "log": content.addView(fishingLogScreen()); break;
             case "saved": content.addView(savedScreen()); break;
             case "device": content.addView(deviceScreen()); break;
             default: content.addView(homeScreen()); break;
@@ -225,6 +237,7 @@ public final class MainActivity extends Activity implements
         nav.removeAllViews();
         addNav("⌂", "Home", "home");
         addNav("⌖", "Map", "map");
+        addNav("▦", "Log", "log");
         addNav("◆", "Saved", "saved");
         addNav("◉", "Device", "device");
     }
@@ -288,6 +301,41 @@ public final class MainActivity extends Activity implements
             locationCard.addView(text("Accuracy ±" + Math.round(lastLocation.getAccuracy()) + " m", 12, MUTED, Typeface.NORMAL));
         }
         body.addView(locationCard, cardMargins());
+
+        FishingDay activeDay = fishingDayStore.active();
+        LinearLayout dayCard = card();
+        LinearLayout dayRow = row();
+        dayRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout dayCopy = vertical();
+        dayCopy.addView(text(activeDay == null ? "FISHING DAY" : "●  FISHING DAY ACTIVE", 11,
+                activeDay == null ? MUTED : SUCCESS, Typeface.BOLD));
+        if (activeDay == null) {
+            dayCopy.addView(text("Start a log for catches and field events", 13, TEXT, Typeface.NORMAL));
+        } else {
+            DayStats activeStats = buildDayStats(fishingDayStore.sessionsOnDate(activeDay.startedAt));
+            dayCopy.addView(text(formatDuration(System.currentTimeMillis() - activeDay.startedAt)
+                    + " · " + activeStats.points.size() + " events", 13, TEXT, Typeface.NORMAL));
+        }
+        dayRow.addView(dayCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button dayButton = smallButton(activeDay == null ? "START" : "OPEN");
+        dayButton.setOnClickListener(v -> {
+            if (activeDay == null) startFishingDay();
+            else {
+                selectedLogDateMillis = activeDay.startedAt;
+                calendarMonthMillis = firstDayOfMonth(activeDay.startedAt);
+                render("log");
+            }
+        });
+        dayRow.addView(dayButton, new LinearLayout.LayoutParams(dp(84), dp(42)));
+        dayCard.addView(dayRow);
+        if (activeDay != null) {
+            dayCard.addView(spacer(12));
+            Button finish = smallButton("FINISH FISHING DAY");
+            finish.setOnClickListener(v -> confirmFinishFishingDay());
+            dayCard.addView(finish, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        }
+        body.addView(dayCard, cardMargins());
 
         LinearLayout trip = card();
         LinearLayout tripRow = row();
@@ -369,6 +417,333 @@ public final class MainActivity extends Activity implements
         item.addView(text(subtitle, 11, MUTED, Typeface.NORMAL));
         item.setOnClickListener(v -> saveCurrentMoment(label));
         return item;
+    }
+
+    private View fishingLogScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(20), dp(20), dp(20), dp(28));
+        scroll.addView(body);
+
+        body.addView(pageTitle("Fishing log", "DAY JOURNAL · CALENDAR"));
+        body.addView(spacer(18));
+
+        FishingDay active = fishingDayStore.active();
+        LinearLayout activeCard = card();
+        activeCard.addView(text(active == null ? "○  NO ACTIVE DAY" : "●  FISHING DAY ACTIVE", 11,
+                active == null ? MUTED : SUCCESS, Typeface.BOLD));
+        activeCard.addView(spacer(7));
+        if (active == null) {
+            activeCard.addView(text("Start a fishing day to group Flic presses and saved places into one journal.",
+                    13, TEXT, Typeface.NORMAL));
+            activeCard.addView(spacer(14));
+            Button start = primaryButton("START FISHING DAY");
+            start.setOnClickListener(v -> startFishingDay());
+            activeCard.addView(start, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        } else {
+            DayStats activeStats = buildDayStats(fishingDayStore.sessionsOnDate(active.startedAt));
+            activeCard.addView(text("Started " + formatTime(active.startedAt), 19, TEXT, Typeface.BOLD));
+            activeCard.addView(text(formatDuration(System.currentTimeMillis() - active.startedAt)
+                    + " · " + activeStats.points.size() + " logged events", 13, MUTED, Typeface.NORMAL));
+            activeCard.addView(spacer(14));
+            Button finish = smallButton("FINISH FISHING DAY");
+            finish.setOnClickListener(v -> confirmFinishFishingDay());
+            activeCard.addView(finish, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        }
+        body.addView(activeCard, cardMargins());
+
+        body.addView(sectionTitle("CALENDAR"));
+        body.addView(calendarCard(), cardMargins());
+
+        List<FishingDay> sessions = fishingDayStore.sessionsOnDate(selectedLogDateMillis);
+        DayStats stats = buildDayStats(sessions);
+        LinearLayout selectedHeader = row();
+        selectedHeader.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout selectedCopy = vertical();
+        selectedCopy.addView(text(formatLogDay(selectedLogDateMillis), 20, TEXT, Typeface.BOLD));
+        selectedCopy.addView(text(sessions.isEmpty()
+                ? "No fishing day recorded" : sessions.size() + (sessions.size() == 1 ? " session" : " sessions"),
+                12, MUTED, Typeface.NORMAL));
+        selectedHeader.addView(selectedCopy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (!isSameDay(selectedLogDateMillis, System.currentTimeMillis())) {
+            Button today = smallButton("TODAY");
+            today.setOnClickListener(v -> {
+                selectedLogDateMillis = System.currentTimeMillis();
+                calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
+                render("log");
+            });
+            selectedHeader.addView(today, new LinearLayout.LayoutParams(dp(76), dp(40)));
+        }
+        LinearLayout.LayoutParams selectedHeaderLp = matchWrap();
+        selectedHeaderLp.setMargins(0, dp(16), 0, dp(12));
+        body.addView(selectedHeader, selectedHeaderLp);
+
+        if (sessions.isEmpty()) {
+            LinearLayout empty = card();
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(22), dp(28), dp(22), dp(28));
+            TextView icon = text("▦", 35, ACCENT, Typeface.NORMAL);
+            icon.setGravity(Gravity.CENTER);
+            empty.addView(icon);
+            empty.addView(spacer(8));
+            TextView title = text("No journal for this day", 18, TEXT, Typeface.BOLD);
+            title.setGravity(Gravity.CENTER);
+            empty.addView(title);
+            TextView copy = text("Choose a marked calendar day or start today's fishing day.",
+                    12, MUTED, Typeface.NORMAL);
+            copy.setGravity(Gravity.CENTER);
+            empty.addView(copy);
+            if (isSameDay(selectedLogDateMillis, System.currentTimeMillis()) && active == null) {
+                empty.addView(spacer(14));
+                Button start = primaryButton("START TODAY");
+                start.setOnClickListener(v -> startFishingDay());
+                empty.addView(start, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            }
+            body.addView(empty, cardMargins());
+            return scroll;
+        }
+
+        LinearLayout metricsTop = row();
+        metricsTop.addView(metricCard(String.valueOf(stats.catches), "Catches", SUCCESS), weighted());
+        metricsTop.addView(spaceWide());
+        metricsTop.addView(metricCard(String.valueOf(stats.waypoints), "Waypoints", WARNING), weighted());
+        metricsTop.addView(spaceWide());
+        metricsTop.addView(metricCard(String.valueOf(stats.tackleChanges), "Tackle", Color.rgb(197, 155, 255)), weighted());
+        body.addView(metricsTop);
+        body.addView(spacer(10));
+        LinearLayout metricsBottom = row();
+        metricsBottom.addView(metricCard(String.valueOf(stats.points.size()), "All events", ACCENT), weighted());
+        metricsBottom.addView(spaceWide());
+        metricsBottom.addView(metricCard(formatDuration(stats.durationMs), "Time fishing", TEXT), weighted());
+        body.addView(metricsBottom);
+
+        body.addView(sectionTitle("SESSIONS"));
+        for (FishingDay session : sessions) {
+            LinearLayout sessionCard = card();
+            sessionCard.addView(text(session.isActive() ? "●  ACTIVE" : "FINISHED", 10,
+                    session.isActive() ? SUCCESS : MUTED, Typeface.BOLD));
+            sessionCard.addView(spacer(6));
+            String range = formatTime(session.startedAt) + " — "
+                    + (session.isActive() ? "now" : formatTime(session.endedAt));
+            sessionCard.addView(text(range, 17, TEXT, Typeface.BOLD));
+            sessionCard.addView(text(formatDuration(
+                    session.effectiveEnd(System.currentTimeMillis()) - session.startedAt),
+                    12, MUTED, Typeface.NORMAL));
+            body.addView(sessionCard, cardMargins());
+        }
+
+        body.addView(sectionTitle("EVENTS"));
+        if (stats.points.isEmpty()) {
+            LinearLayout noEvents = card();
+            noEvents.addView(text("No events recorded during this fishing day.",
+                    13, MUTED, Typeface.NORMAL));
+            body.addView(noEvents);
+        } else {
+            for (SavedPoint point : stats.points) {
+                LinearLayout event = card();
+                LinearLayout eventRow = row();
+                eventRow.setGravity(Gravity.CENTER_VERTICAL);
+                TextView marker = text(markerLetter(point.type), 11,
+                        Color.rgb(7, 22, 12), Typeface.BOLD);
+                marker.setGravity(Gravity.CENTER);
+                GradientDrawable markerBg = new GradientDrawable();
+                markerBg.setShape(GradientDrawable.OVAL);
+                markerBg.setColor(markerColor(point.type));
+                marker.setBackground(markerBg);
+                eventRow.addView(marker, new LinearLayout.LayoutParams(dp(34), dp(34)));
+                LinearLayout eventCopy = vertical();
+                eventCopy.addView(text(point.type, 15, TEXT, Typeface.BOLD));
+                eventCopy.addView(text(formatTime(point.timestamp) + " · "
+                        + formatCoords(point.latitude, point.longitude), 11, MUTED, Typeface.NORMAL));
+                LinearLayout.LayoutParams eventCopyLp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                eventCopyLp.setMargins(dp(10), 0, 0, 0);
+                eventRow.addView(eventCopy, eventCopyLp);
+                event.setOnClickListener(v -> openPointOnMap(point));
+                event.addView(eventRow);
+                body.addView(event, cardMargins());
+            }
+        }
+        return scroll;
+    }
+
+    private View calendarCard() {
+        LinearLayout calendarCard = card();
+        Calendar month = Calendar.getInstance();
+        month.setTimeInMillis(calendarMonthMillis);
+
+        LinearLayout monthHeader = row();
+        monthHeader.setGravity(Gravity.CENTER_VERTICAL);
+        Button previous = smallButton("‹");
+        previous.setOnClickListener(v -> shiftCalendarMonth(-1));
+        monthHeader.addView(previous, new LinearLayout.LayoutParams(dp(42), dp(38)));
+        TextView monthTitle = text(new SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                .format(month.getTime()), 17, TEXT, Typeface.BOLD);
+        monthTitle.setGravity(Gravity.CENTER);
+        monthHeader.addView(monthTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button next = smallButton("›");
+        next.setOnClickListener(v -> shiftCalendarMonth(1));
+        monthHeader.addView(next, new LinearLayout.LayoutParams(dp(42), dp(38)));
+        calendarCard.addView(monthHeader);
+        calendarCard.addView(spacer(12));
+
+        LinearLayout weekdayRow = row();
+        String[] weekdays = {"M", "T", "W", "T", "F", "S", "S"};
+        for (String weekday : weekdays) {
+            TextView label = text(weekday, 10, MUTED, Typeface.BOLD);
+            label.setGravity(Gravity.CENTER);
+            weekdayRow.addView(label, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        calendarCard.addView(weekdayRow);
+        calendarCard.addView(spacer(6));
+
+        int firstWeekday = (month.get(Calendar.DAY_OF_WEEK) + 5) % 7;
+        int maxDay = month.getActualMaximum(Calendar.DAY_OF_MONTH);
+        List<FishingDay> allSessions = fishingDayStore.all();
+        int day = 1;
+        for (int week = 0; week < 6; week++) {
+            LinearLayout weekRow = row();
+            for (int weekday = 0; weekday < 7; weekday++) {
+                int slot = week * 7 + weekday;
+                if (slot < firstWeekday || day > maxDay) {
+                    weekRow.addView(new View(this), new LinearLayout.LayoutParams(0, dp(44), 1f));
+                    continue;
+                }
+
+                Calendar date = (Calendar) month.clone();
+                date.set(Calendar.DAY_OF_MONTH, day);
+                long dateMillis = date.getTimeInMillis();
+                boolean selected = isSameDay(dateMillis, selectedLogDateMillis);
+                boolean hasLog = hasSessionOnDate(allSessions, dateMillis);
+                TextView cell = text(day + (hasLog ? " •" : ""), 12,
+                        selected ? Color.rgb(7, 22, 12) : (hasLog ? TEXT : MUTED),
+                        hasLog || selected ? Typeface.BOLD : Typeface.NORMAL);
+                cell.setGravity(Gravity.CENTER);
+                cell.setBackground(roundRect(selected ? ACCENT : (hasLog ? SURFACE_2 : SURFACE), 10));
+                cell.setOnClickListener(v -> {
+                    selectedLogDateMillis = dateMillis;
+                    render("log");
+                });
+                weekRow.addView(cell, new LinearLayout.LayoutParams(0, dp(44), 1f));
+                day++;
+            }
+            calendarCard.addView(weekRow);
+            if (day > maxDay) break;
+        }
+        calendarCard.addView(spacer(8));
+        calendarCard.addView(text("•  Days with a fishing journal", 10, MUTED, Typeface.NORMAL));
+        return calendarCard;
+    }
+
+    private View metricCard(String value, String label, int color) {
+        LinearLayout metric = vertical();
+        metric.setPadding(dp(12), dp(13), dp(10), dp(13));
+        metric.setBackground(roundRect(SURFACE, 14));
+        metric.addView(text(value, 20, color, Typeface.BOLD));
+        metric.addView(text(label, 10, MUTED, Typeface.NORMAL));
+        return metric;
+    }
+
+    private void startFishingDay() {
+        FishingDay day = fishingDayStore.start();
+        selectedLogDateMillis = day.startedAt;
+        calendarMonthMillis = firstDayOfMonth(day.startedAt);
+        Toast.makeText(this, "Fishing day started", Toast.LENGTH_SHORT).show();
+        render("log");
+    }
+
+    private void confirmFinishFishingDay() {
+        FishingDay active = fishingDayStore.active();
+        if (active == null) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Finish fishing day?")
+                .setMessage("The session summary and all events will remain in your calendar.")
+                .setNegativeButton("Keep fishing", null)
+                .setPositiveButton("Finish", (dialog, which) -> {
+                    FishingDay finished = fishingDayStore.stop();
+                    if (finished != null) {
+                        selectedLogDateMillis = finished.startedAt;
+                        calendarMonthMillis = firstDayOfMonth(finished.startedAt);
+                    }
+                    Toast.makeText(this, "Fishing day finished", Toast.LENGTH_SHORT).show();
+                    render("log");
+                })
+                .show();
+    }
+
+    private void shiftCalendarMonth(int amount) {
+        Calendar month = Calendar.getInstance();
+        month.setTimeInMillis(calendarMonthMillis);
+        month.add(Calendar.MONTH, amount);
+        calendarMonthMillis = firstDayOfMonth(month.getTimeInMillis());
+        selectedLogDateMillis = calendarMonthMillis;
+        render("log");
+    }
+
+    private DayStats buildDayStats(List<FishingDay> sessions) {
+        DayStats stats = new DayStats();
+        long now = System.currentTimeMillis();
+        for (FishingDay session : sessions) {
+            stats.durationMs += Math.max(0L, session.effectiveEnd(now) - session.startedAt);
+        }
+
+        Set<Long> included = new HashSet<>();
+        for (SavedPoint point : pointStore.all()) {
+            for (FishingDay session : sessions) {
+                if (point.timestamp >= session.startedAt
+                        && point.timestamp <= session.effectiveEnd(now)
+                        && included.add(point.id)) {
+                    stats.points.add(point);
+                    if (POINT_TYPE_CATCH.equals(point.type)) stats.catches++;
+                    else if (POINT_TYPE_WAYPOINT.equals(point.type)) stats.waypoints++;
+                    else if (POINT_TYPE_TACKLE_CHANGE.equals(point.type)) stats.tackleChanges++;
+                    break;
+                }
+            }
+        }
+        return stats;
+    }
+
+    private static boolean hasSessionOnDate(List<FishingDay> sessions, long date) {
+        for (FishingDay session : sessions) {
+            if (isSameDay(session.startedAt, date)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isSameDay(long first, long second) {
+        Calendar a = Calendar.getInstance();
+        Calendar b = Calendar.getInstance();
+        a.setTimeInMillis(first);
+        b.setTimeInMillis(second);
+        return a.get(Calendar.ERA) == b.get(Calendar.ERA)
+                && a.get(Calendar.YEAR) == b.get(Calendar.YEAR)
+                && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR);
+    }
+
+    private static long firstDayOfMonth(long time) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTimeInMillis(time);
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        calendar.set(Calendar.HOUR_OF_DAY, 12);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar.getTimeInMillis();
+    }
+
+    private static final class DayStats {
+        final List<SavedPoint> points = new ArrayList<>();
+        long durationMs;
+        int catches;
+        int waypoints;
+        int tackleChanges;
     }
 
     private View mapScreen() {
@@ -660,7 +1035,7 @@ public final class MainActivity extends Activity implements
         SavedPoint point = pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
         Toast.makeText(this, "Moment saved · " + source, Toast.LENGTH_SHORT).show();
         syncPoint(point);
-        if ("map".equals(screen) || "saved".equals(screen)) render(screen);
+        if ("map".equals(screen) || "saved".equals(screen) || "log".equals(screen)) render(screen);
         return true;
     }
 
@@ -883,7 +1258,8 @@ public final class MainActivity extends Activity implements
             lastButtonEvent = message + " · " + nowTime();
             if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
             if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
-            if (saved && ("home".equals(screen) || "map".equals(screen) || "saved".equals(screen))) {
+            if (saved && ("home".equals(screen) || "map".equals(screen)
+                    || "log".equals(screen) || "saved".equals(screen))) {
                 render(screen);
             }
         });
@@ -1011,6 +1387,24 @@ public final class MainActivity extends Activity implements
 
     private static String formatDate(long time) {
         return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(time));
+    }
+
+    private static String formatTime(long time) {
+        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(time));
+    }
+
+    private static String formatLogDay(long time) {
+        return new SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(new Date(time));
+    }
+
+    private static String formatDuration(long durationMs) {
+        long totalMinutes = Math.max(0L, durationMs) / 60_000L;
+        if (totalMinutes < 1L) return "<1 min";
+        long hours = totalMinutes / 60L;
+        long minutes = totalMinutes % 60L;
+        if (hours == 0L) return minutes + " min";
+        if (minutes == 0L) return hours + " h";
+        return hours + " h " + minutes + " min";
     }
 
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }

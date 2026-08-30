@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.6.2` Internal Prototype / Pre-Alpha.
+- Current version: `v0.7` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate the v0.6.2 Flic 2 offline capture and sync-status recovery.
+- Current milestone: v0.7 fishing-day journal and retained v0.6.2 Flic/offline behavior physically validated on Android.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -30,6 +30,10 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Device UI with both real pairing and manual single/double/hold test actions for end-to-end validation.
 - Foreground service with a persistent notification that keeps one Flic connection and GPS updates active while the screen is off.
 - Background capture that requires a GPS fix no older than 30 seconds, waits up to 20 seconds for a new fix and saves locally before cloud sync.
+- Local fishing-day sessions that can be started and finished from Home or the new Log tab.
+- Monthly fishing calendar with marked journal dates, multiple sessions per day and persistent history.
+- Automatic fishing-day summaries for duration, catches, waypoints, tackle changes and all saved events.
+- Journal event rows that open the saved GPS position directly on the field map.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
@@ -90,10 +94,24 @@ If Android cannot start the foreground service, v0.6.1 restores foreground Activ
 
 v0.6.2 additionally prevents an offline point from remaining indefinitely in `Syncing to Supabase`. Fiskentra checks connectivity before and immediately after scheduling an upload. If Android briefly reports a disconnected network as available, Saved automatically changes a sync attempt older than 20 seconds to `sync interrupted · retry when online`.
 
+### Fishing day log and calendar test
+
+This v0.7 flow was physically validated by the user on 2026-08-30.
+
+1. Install and open Fiskentra v0.7 without uninstalling the previous build.
+2. Open **Log** and tap **START FISHING DAY**.
+3. Create a Catch, Waypoint and Tackle change using Flic 2 or the Device test buttons.
+4. Return to **Log** and verify the counters, duration and event rows.
+5. Tap an event to verify that its exact point opens on the map.
+6. Tap **FINISH FISHING DAY** and confirm the date remains marked in the calendar.
+7. Close and reopen Fiskentra and confirm the completed journal is still available.
+
+Fishing-day sessions are local-first. An event is included when its saved timestamp falls between the session start and finish times, so screen-off Flic events appear after the app is reopened.
+
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.6.1, then allow Location, Nearby devices and Notifications.
+2. Install and open Fiskentra v0.7, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
