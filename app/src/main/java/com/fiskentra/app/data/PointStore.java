@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.WeatherSnapshot;
+import com.fiskentra.app.model.CatchDetails;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -41,7 +42,8 @@ public final class PointStore {
                 out.add(new SavedPoint(
                         o.getLong("id"), o.getDouble("lat"), o.getDouble("lon"),
                         o.getLong("time"), o.optString("type", "Moment"), o.optString("note", ""),
-                        WeatherSnapshot.fromJson(o.optJSONObject("weather"))));
+                        WeatherSnapshot.fromJson(o.optJSONObject("weather")),
+                        CatchDetails.fromJson(o.optJSONObject("catch_details"))));
             }
         } catch (Exception ignored) {
             // Corrupt local prototype data should not make the app unusable.
@@ -69,6 +71,19 @@ public final class PointStore {
         return updated;
     }
 
+    public synchronized SavedPoint updateCatchDetails(long id, CatchDetails details) {
+        List<SavedPoint> points = new ArrayList<>(all());
+        SavedPoint updated = null;
+        for (int i = 0; i < points.size(); i++) {
+            if (points.get(i).id != id) continue;
+            updated = points.get(i).withCatchDetails(details);
+            points.set(i, updated);
+            break;
+        }
+        if (updated != null) write(points);
+        return updated;
+    }
+
     public synchronized SavedPoint find(long id) {
         for (SavedPoint point : all()) {
             if (point.id == id) return point;
@@ -88,6 +103,7 @@ public final class PointStore {
                 o.put("type", p.type);
                 o.put("note", p.note);
                 if (p.weather != null) o.put("weather", p.weather.toJson());
+                if (p.catchDetails != null) o.put("catch_details", p.catchDetails.toJson());
                 array.put(o);
             }
             prefs.edit().putString(KEY, array.toString()).apply();

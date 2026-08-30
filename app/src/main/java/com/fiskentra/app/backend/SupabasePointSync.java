@@ -62,17 +62,21 @@ public final class SupabasePointSync {
                     listener.onResult(false, "offline");
                     return;
                 }
-                int status = post(point, true);
-                if (status == 400 && point.weather != null) {
-                    // Keep core sync compatible if the optional v0.8 column is unavailable.
-                    status = post(point, false);
+                HttpResult result = post(point, true, true);
+                if (result.status == 400 && point.catchDetails != null) {
+                    // Keep core sync compatible if the optional v0.9 column has not been installed yet.
+                    result = post(point, true, false);
                 }
-                if (status >= 200 && status < 300) {
+                if (result.status == 400 && point.weather != null) {
+                    // Keep core sync compatible if the optional v0.8 column is unavailable.
+                    result = post(point, false, false);
+                }
+                if (result.status >= 200 && result.status < 300) {
                     listener.onResult(true, "Last point synced to Supabase");
-                } else if (status == 409) {
+                } else if (result.status == 409) {
                     listener.onResult(true, "Last point was already synced");
                 } else {
-                    listener.onResult(false, "Supabase point sync HTTP " + status);
+                    listener.onResult(false, result.userMessage());
                 }
             } catch (Exception e) {
                 listener.onResult(false, "Point saved locally; cloud sync pending");
@@ -137,13 +141,15 @@ public final class SupabasePointSync {
                 && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
     }
 
-    private int post(SavedPoint point, boolean includeWeather) throws Exception {
+    private HttpResult post(SavedPoint point, boolean includeWeather, boolean includeCatchDetails)
+            throws Exception {
         HttpURLConnection connection = null;
         try {
+            // The id in the payload and the RLS header must always identify the same installation.
             String installId = installId();
-            byte[] body = payload(point, includeWeather, installId)
+            byte[] body = payload(point, includeWeather, includeCatchDetails, installId)
                     .getBytes(StandardCharsets.UTF_8);
-            URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points");
+            URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points?on_conflict=id");
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(4_000);
@@ -151,13 +157,21 @@ public final class SupabasePointSync {
             connection.setDoOutput(true);
             connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
             connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
+            connection.setRequestProperty("X-Device-Id", installId);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json");
-            connection.setRequestProperty("Prefer", "return=minimal");
+            connection.setRequestProperty("Prefer", "resolution=merge-duplicates,return=minimal");
             try (OutputStream out = connection.getOutputStream()) {
                 out.write(body);
             }
-            return connection.getResponseCode();
+            int status = connection.getResponseCode();
+            String detail = "";
+            if (status < 200 || status >= 300) {
+                try (InputStream input = connection.getErrorStream()) {
+                    detail = safeErrorDetail(read(input));
+                }
+            }
+            return new HttpResult(status, detail);
         } finally {
             if (connection != null) connection.disconnect();
         }
@@ -166,6 +180,7 @@ public final class SupabasePointSync {
     private String payload(
             SavedPoint point,
             boolean includeWeather,
+            boolean includeCatchDetails,
             String installId)
             throws Exception {
         JSONObject json = new JSONObject();
@@ -180,7 +195,41 @@ public final class SupabasePointSync {
         if (includeWeather && point.weather != null) {
             json.put("weather", point.weather.toJson());
         }
+        if (includeCatchDetails && point.catchDetails != null) {
+            json.put("catch_details", point.catchDetails.toCloudJson());
+        }
         return json.toString();
+    }
+
+    private static String safeErrorDetail(String body) {
+        if (body == null || body.trim().isEmpty()) return "";
+        try {
+            JSONObject json = new JSONObject(body);
+            String code = json.optString("code", "").trim();
+            String message = json.optString("message", "").trim();
+            if (message.toLowerCase(Locale.US).contains("row-level security")) {
+                return code.isEmpty() ? "RLS rejected the request" : code + " · RLS rejected the request";
+            }
+            if (!code.isEmpty()) return code;
+        } catch (Exception ignored) {
+            // Do not expose arbitrary server or proxy response bodies in the UI.
+        }
+        return "";
+    }
+
+    private static final class HttpResult {
+        final int status;
+        final String detail;
+
+        HttpResult(int status, String detail) {
+            this.status = status;
+            this.detail = detail == null ? "" : detail;
+        }
+
+        String userMessage() {
+            String suffix = detail.isEmpty() ? "" : " · " + detail;
+            return "Supabase point sync HTTP " + status + suffix;
+        }
     }
 
     private String remoteId(SavedPoint point) {

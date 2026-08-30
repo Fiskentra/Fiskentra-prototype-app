@@ -29,8 +29,8 @@ android {
         applicationId = "com.fiskentra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.8"
+        versionCode = 14
+        versionName = "0.9.1"
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(supabasePublishableKey))

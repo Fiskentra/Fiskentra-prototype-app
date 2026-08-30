@@ -6,16 +6,22 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -31,6 +37,7 @@ import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.FishingDay;
+import com.fiskentra.app.model.CatchDetails;
 import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.WeatherForecast;
@@ -41,6 +48,9 @@ import com.fiskentra.app.ui.SwipeSwitchLayout;
 import com.fiskentra.app.weather.FishingAdvisor;
 import com.fiskentra.app.weather.WeatherClient;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -55,6 +65,7 @@ public final class MainActivity extends Activity implements
         FiskentraLocationManager.Listener, FiskentraFlic2Manager.Listener {
 
     private static final int REQUEST_PERMISSIONS = 1001;
+    private static final int REQUEST_CATCH_PHOTO = 1002;
     private static final int BG = Color.rgb(10, 18, 14);
     private static final int SURFACE = Color.rgb(18, 30, 24);
     private static final int SURFACE_2 = Color.rgb(24, 40, 32);
@@ -109,6 +120,7 @@ public final class MainActivity extends Activity implements
     private WeatherForecast weatherForecast;
     private String forecastStatus = "Open Weather to load the forecast";
     private String selectedSpecies = FishingAdvisor.SPECIES[0];
+    private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -637,6 +649,10 @@ public final class MainActivity extends Activity implements
                 eventCopy.addView(text(point.type, 15, TEXT, Typeface.BOLD));
                 eventCopy.addView(text(formatTime(point.timestamp) + " · "
                         + formatCoords(point.latitude, point.longitude), 11, MUTED, Typeface.NORMAL));
+                if (point.catchDetails != null) {
+                    eventCopy.addView(text(point.catchDetails.summary(),
+                            11, SUCCESS, Typeface.BOLD));
+                }
                 if (point.weather != null) {
                     eventCopy.addView(text(point.weather.compactSummary(),
                             11, MUTED, Typeface.NORMAL));
@@ -816,6 +832,15 @@ public final class MainActivity extends Activity implements
         }
     }
 
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_CATCH_PHOTO) return;
+        long pointId = pendingCatchPhotoPointId;
+        pendingCatchPhotoPointId = -1L;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null || pointId < 0L) return;
+        saveSelectedCatchPhoto(pointId, data.getData());
+    }
+
     private static boolean hasSessionOnDate(List<FishingDay> sessions, long date) {
         for (FishingDay session : sessions) {
             if (isSameDay(session.startedAt, date)) return true;
@@ -959,6 +984,14 @@ public final class MainActivity extends Activity implements
             selectedCard.addView(spacer(8));
             selectedCard.addView(text(formatCoords(selected.latitude, selected.longitude), 17, TEXT, Typeface.BOLD));
             selectedCard.addView(text(formatDate(selected.timestamp), 12, MUTED, Typeface.NORMAL));
+            if (selected.catchDetails != null) {
+                selectedCard.addView(spacer(8));
+                selectedCard.addView(text(selected.catchDetails.summary(), 13, SUCCESS, Typeface.BOLD));
+                if (!selected.catchDetails.secondarySummary().isEmpty()) {
+                    selectedCard.addView(text(selected.catchDetails.secondarySummary(),
+                            11, MUTED, Typeface.NORMAL));
+                }
+            }
             if (selected.weather != null) {
                 selectedCard.addView(spacer(8));
                 selectedCard.addView(text(selected.weather.compactSummary(), 13, TEXT, Typeface.BOLD));
@@ -1255,6 +1288,25 @@ public final class MainActivity extends Activity implements
         card.addView(text(formatCoords(point.latitude, point.longitude), 17, TEXT, Typeface.BOLD));
         card.addView(text(formatDate(point.timestamp), 12, MUTED, Typeface.NORMAL));
         card.addView(spacer(8));
+        if (POINT_TYPE_CATCH.equals(point.type)) {
+            if (point.catchDetails == null) {
+                card.addView(text("○  Catch details not added", 12, MUTED, Typeface.BOLD));
+            } else {
+                card.addView(text(point.catchDetails.summary(), 14, SUCCESS, Typeface.BOLD));
+                if (!point.catchDetails.secondarySummary().isEmpty()) {
+                    card.addView(text(point.catchDetails.secondarySummary(),
+                            11, MUTED, Typeface.NORMAL));
+                }
+                View photo = catchPhotoView(point.catchDetails.localPhotoPath);
+                if (photo != null) {
+                    LinearLayout.LayoutParams photoLp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, dp(160));
+                    photoLp.setMargins(0, dp(10), 0, 0);
+                    card.addView(photo, photoLp);
+                }
+            }
+            card.addView(spacer(10));
+        }
         if (point.weather == null) {
             card.addView(text("○  Weather not captured", 12, MUTED, Typeface.BOLD));
         } else {
@@ -1266,6 +1318,26 @@ public final class MainActivity extends Activity implements
         card.addView(spacer(8));
         card.addView(text(syncLabel(point.id), 12, syncColor(point.id), Typeface.BOLD));
         card.addView(spacer(12));
+        if (POINT_TYPE_CATCH.equals(point.type)) {
+            LinearLayout catchActions = row();
+            Button editCatch = smallButton(point.catchDetails == null ? "ADD CATCH DETAILS" : "EDIT CATCH");
+            editCatch.setOnClickListener(v -> showCatchDetailsDialog(point));
+            catchActions.addView(editCatch, new LinearLayout.LayoutParams(0, dp(44), 1f));
+            catchActions.addView(spaceWide());
+            Button photo = smallButton(point.catchDetails != null
+                    && !point.catchDetails.localPhotoPath.isEmpty() ? "CHANGE PHOTO" : "ADD PHOTO");
+            photo.setOnClickListener(v -> chooseCatchPhoto(point));
+            catchActions.addView(photo, new LinearLayout.LayoutParams(0, dp(44), 1f));
+            card.addView(catchActions);
+            if (point.catchDetails != null && !point.catchDetails.localPhotoPath.isEmpty()) {
+                TextView removePhoto = text("REMOVE LOCAL PHOTO", 10, DANGER, Typeface.BOLD);
+                removePhoto.setGravity(Gravity.CENTER);
+                removePhoto.setPadding(0, dp(10), 0, dp(6));
+                removePhoto.setOnClickListener(v -> removeCatchPhoto(point));
+                card.addView(removePhoto);
+            }
+            card.addView(spacer(8));
+        }
         LinearLayout actions = row();
         Button openMap = smallButton("OPEN MAP");
         openMap.setOnClickListener(v -> openPointOnMap(point));
@@ -1277,6 +1349,184 @@ public final class MainActivity extends Activity implements
         card.addView(actions);
         card.setOnClickListener(v -> openPointOnMap(point));
         return card;
+    }
+
+    private void showCatchDetailsDialog(SavedPoint point) {
+        if (!POINT_TYPE_CATCH.equals(point.type)) return;
+        CatchDetails existing = point.catchDetails;
+        LinearLayout form = vertical();
+        form.setPadding(dp(18), dp(8), dp(18), dp(4));
+
+        EditText species = catchField("Fish species", InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        EditText length = catchField("Length (cm)", InputType.TYPE_CLASS_NUMBER
+                | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText weight = catchField("Weight (kg)", InputType.TYPE_CLASS_NUMBER
+                | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText lure = catchField("Lure or bait", InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        EditText notes = catchField("Notes", InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        notes.setMinLines(2);
+        CheckBox released = new CheckBox(this);
+        released.setText(R.string.catch_released_label);
+        released.setTextColor(TEXT);
+
+        if (existing != null) {
+            species.setText(existing.species);
+            if (existing.lengthCm > 0d) length.setText(decimalInput(existing.lengthCm));
+            if (existing.weightKg > 0d) weight.setText(decimalInput(existing.weightKg));
+            lure.setText(existing.lure);
+            notes.setText(existing.notes);
+            released.setChecked(existing.released);
+        }
+        form.addView(species, matchWrap());
+        form.addView(length, matchWrap());
+        form.addView(weight, matchWrap());
+        form.addView(lure, matchWrap());
+        form.addView(notes, matchWrap());
+        form.addView(released, matchWrap());
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(form);
+        new AlertDialog.Builder(this)
+                .setTitle(existing == null ? "Add catch details" : "Edit catch details")
+                .setView(scroll)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (dialog, which) -> {
+                    String photoPath = existing == null ? "" : existing.localPhotoPath;
+                    CatchDetails details = new CatchDetails(
+                            species.getText().toString(),
+                            positiveNumber(length.getText().toString()),
+                            positiveNumber(weight.getText().toString()),
+                            lure.getText().toString(),
+                            notes.getText().toString(),
+                            released.isChecked(),
+                            photoPath);
+                    SavedPoint updated = pointStore.updateCatchDetails(point.id, details);
+                    if (updated == null) return;
+                    Toast.makeText(this, "Catch details saved", Toast.LENGTH_SHORT).show();
+                    syncPoint(updated);
+                    render("saved");
+                })
+                .show();
+    }
+
+    private EditText catchField(String hint, int inputType) {
+        EditText field = new EditText(this);
+        field.setHint(hint);
+        field.setHintTextColor(MUTED);
+        field.setTextColor(TEXT);
+        field.setInputType(inputType);
+        field.setSingleLine((inputType & InputType.TYPE_TEXT_FLAG_MULTI_LINE) == 0);
+        field.setPadding(dp(4), dp(10), dp(4), dp(10));
+        return field;
+    }
+
+    private void chooseCatchPhoto(SavedPoint point) {
+        if (point.catchDetails == null) {
+            Toast.makeText(this, "Save catch details before adding a photo", Toast.LENGTH_SHORT).show();
+            showCatchDetailsDialog(point);
+            return;
+        }
+        pendingCatchPhotoPointId = point.id;
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        picker.setType("image/*");
+        picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(picker, REQUEST_CATCH_PHOTO);
+    }
+
+    private void saveSelectedCatchPhoto(long pointId, Uri source) {
+        Toast.makeText(this, "Saving photo locally…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            File target = null;
+            try {
+                File directory = new File(getFilesDir(), "catch_photos");
+                if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("photo directory");
+                target = new File(directory, "catch-" + pointId + "-" + System.currentTimeMillis() + ".img");
+                try (InputStream input = getContentResolver().openInputStream(source);
+                     FileOutputStream output = new FileOutputStream(target)) {
+                    if (input == null) throw new IllegalStateException("photo input");
+                    byte[] buffer = new byte[8_192];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+                SavedPoint latest = pointStore.find(pointId);
+                if (latest == null || latest.catchDetails == null) throw new IllegalStateException("catch missing");
+                String previous = latest.catchDetails.localPhotoPath;
+                SavedPoint updated = pointStore.updateCatchDetails(
+                        pointId, latest.catchDetails.withLocalPhotoPath(target.getAbsolutePath()));
+                if (updated == null) throw new IllegalStateException("catch update");
+                if (!previous.isEmpty() && !previous.equals(target.getAbsolutePath())) {
+                    deleteLocalCatchPhoto(previous);
+                }
+                runOnUiThread(() -> {
+                    if (destroyed) return;
+                    Toast.makeText(this, "Catch photo saved on this device", Toast.LENGTH_SHORT).show();
+                    if ("saved".equals(screen)) render("saved");
+                });
+            } catch (Exception error) {
+                if (target != null) deleteLocalCatchPhoto(target.getAbsolutePath());
+                runOnUiThread(() -> {
+                    if (!destroyed) Toast.makeText(this, "Could not save this photo", Toast.LENGTH_SHORT).show();
+                });
+            }
+        }, "fiskentra-catch-photo").start();
+    }
+
+    private View catchPhotoView(String path) {
+        if (path == null || path.isEmpty()) return null;
+        File file = new File(path);
+        if (!file.isFile()) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(path, bounds);
+        int sample = 1;
+        int targetWidth = Math.max(1, dp(320));
+        int targetHeight = Math.max(1, dp(160));
+        while (bounds.outWidth / sample > targetWidth * 2
+                || bounds.outHeight / sample > targetHeight * 2) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        Bitmap bitmap = BitmapFactory.decodeFile(path, options);
+        if (bitmap == null) return null;
+        ImageView photo = new ImageView(this);
+        photo.setImageBitmap(bitmap);
+        photo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        photo.setContentDescription("Catch photo");
+        photo.setBackground(roundRect(SURFACE_2, 12));
+        return photo;
+    }
+
+    private void removeCatchPhoto(SavedPoint point) {
+        if (point.catchDetails == null || point.catchDetails.localPhotoPath.isEmpty()) return;
+        deleteLocalCatchPhoto(point.catchDetails.localPhotoPath);
+        pointStore.updateCatchDetails(point.id, point.catchDetails.withLocalPhotoPath(""));
+        Toast.makeText(this, "Local catch photo removed", Toast.LENGTH_SHORT).show();
+        render("saved");
+    }
+
+    private void deleteLocalCatchPhoto(String path) {
+        if (path == null || path.isEmpty()) return;
+        try {
+            File root = new File(getFilesDir(), "catch_photos").getCanonicalFile();
+            File target = new File(path).getCanonicalFile();
+            String prefix = root.getPath() + File.separator;
+            if (target.getPath().startsWith(prefix) && target.isFile()) target.delete();
+        } catch (Exception ignored) { }
+    }
+
+    private static double positiveNumber(String value) {
+        try {
+            return Math.max(0d, Double.parseDouble(value.trim().replace(',', '.')));
+        } catch (Exception ignored) {
+            return 0d;
+        }
+    }
+
+    private static String decimalInput(double value) {
+        return String.format(Locale.US, "%s", value);
     }
 
     private View deviceScreen() {
@@ -1497,6 +1747,9 @@ public final class MainActivity extends Activity implements
         render("saved");
         pointSync.delete(point, (deleted, message) -> runOnUiThread(() -> {
             if (deleted) {
+                if (point.catchDetails != null) {
+                    deleteLocalCatchPhoto(point.catchDetails.localPhotoPath);
+                }
                 pointStore.delete(point.id);
                 clearSyncState(point.id);
                 if (selectedMapPointId == point.id) selectedMapPointId = -1L;
