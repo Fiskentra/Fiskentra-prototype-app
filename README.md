@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.10` Internal Prototype / Pre-Alpha.
+- Current version: `v0.11` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate automatic offline queue recovery while retaining v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
+- Current target: validate selectable fishing-map layers while retaining v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -21,9 +21,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - A process-wide sequential sync queue shared by the app and Flic service, preventing duplicate concurrent uploads.
 - Automatic retry when Android validates internet access again, including while the foreground Flic service is active.
-- Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the MapTiler Outdoor map.
+- Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the selected MapTiler layer.
 - Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
-- Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
+- Selectable MapTiler Outdoor, Satellite/Hybrid, Topographic and Ocean maps powered by MapLibre Native Android.
+- The selected layer persists across app restarts, while Fiskentra overlays keep current position, track, saved points and selected point visible on every layer.
+- Map loading and failure status is shown without exposing the MapTiler API key.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
 - Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
@@ -144,11 +146,18 @@ If Android Studio fails right after the MapTiler update, make sure `MapTilerMapV
 
 ## MapTiler fishing map
 
-The first launch map stack is MapLibre Native Android + MapTiler Outdoor. MapLibre embeds the interactive map view inside the native Android app, and MapTiler serves the `outdoor-v2` style through:
+The first launch map stack is MapLibre Native Android + MapTiler Outdoor. MapLibre embeds the interactive map view inside the native Android app. v0.11 uses the current MapTiler v4 styles and lets the user switch between them:
 
 ```text
-https://api.maptiler.com/maps/outdoor-v2/style.json?key=<MAPTILER_API_KEY>
+https://api.maptiler.com/maps/<style-id>/style.json?key=<MAPTILER_API_KEY>
 ```
+
+| Layer | MapTiler style | Intended use |
+|---|---|---|
+| Outdoor | `outdoor-v4` | Trails, outdoor landmarks, terrain and contours |
+| Satellite | `hybrid-v4` | Aerial imagery with labels and roads |
+| Topographic | `topo-v4` | General topographic detail |
+| Ocean | `ocean-v4` | Marine seabed and bathymetry; inland lake depth is not guaranteed |
 
 `local.properties.example` includes `MAPTILER_API_KEY`. You can keep the supplied prototype key or replace it with another MapTiler key in your local `local.properties`. Gradle exposes it to `BuildConfig.MAPTILER_API_KEY`.
 
@@ -160,9 +169,10 @@ implementation("org.maplibre.gl:android-sdk:13.4.1")
 
 After changing this dependency, run **File -> Sync Project with Gradle Files**, then **Build -> Clean Project**, then **Rebuild Project**.
 
-The current fishing map layer shows:
+The current fishing map shows:
 
-- Real outdoor base map tiles.
+- Four selectable real base-map layers with the choice saved locally.
+- A clear loading or error message when the selected online layer is unavailable.
 - Current phone location.
 - Local trip track.
 - Saved point markers with different colors and letters: `Catch`, `Waypoint`, `Tackle change`, plus older prototype types such as `Sighting`, `Camp`, `Hazard` and `Map`.
@@ -170,7 +180,16 @@ The current fishing map layer shows:
 - Automatic camera fit around all saved points when the Map tab is opened normally.
 - Selected saved point highlight when opened from the Saved screen.
 
-Depth/bathymetry, fishing zones and offline map packs are still future layers; this update replaces the prototype canvas with the real map engine and base map.
+The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake depth, fishing zones and downloadable offline map packs are still future work.
+
+### v0.11 map-layer test
+
+1. Install v0.11 over v0.10 without clearing app data.
+2. Open Map and switch through `OUTDOOR`, `SATELLITE`, `TOPO` and `OCEAN`.
+3. Confirm every layer reaches its ready state and that GPS, track and saved markers remain visible.
+4. Open a point from Saved and confirm it remains centered and highlighted on every layer.
+5. Leave one layer selected, restart Fiskentra and confirm the same layer is restored.
+6. Disable internet, reopen Map and confirm a clear loading/error state appears without affecting local points or Flic capture.
 
 ## Supabase backend
 

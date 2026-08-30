@@ -22,12 +22,17 @@ import java.util.Collections;
 import java.util.List;
 
 public final class MapTilerMapView extends FrameLayout {
-    private static final String MAP_STYLE_ID = "outdoor-v2";
+    public static final String STYLE_OUTDOOR = "outdoor-v4";
+    public static final String STYLE_HYBRID = "hybrid-v4";
+    public static final String STYLE_TOPO = "topo-v4";
+    public static final String STYLE_OCEAN = "ocean-v4";
     private static final double DEFAULT_LAT = 56.9496;
     private static final double DEFAULT_LON = 24.1052;
 
     private final MapView mapView;
     private final MarkerOverlay overlay;
+    private final String styleId;
+    private final StyleListener styleListener;
     private MapLibreMap mapLibreMap;
     private Location location;
     private List<SavedPoint> points = Collections.emptyList();
@@ -37,11 +42,26 @@ public final class MapTilerMapView extends FrameLayout {
     private boolean resumed;
     private boolean destroyed;
 
+    public interface StyleListener {
+        void onStyleLoading(String styleId);
+        void onStyleLoaded(String styleId);
+        void onStyleError(String styleId);
+    }
+
     public MapTilerMapView(Context context) {
+        this(context, STYLE_OUTDOOR, null);
+    }
+
+    public MapTilerMapView(Context context, String requestedStyleId, StyleListener styleListener) {
         super(context);
+        styleId = normalizeStyleId(requestedStyleId);
+        this.styleListener = styleListener;
         MapLibre.getInstance(context);
         mapView = new MapView(context);
         mapView.onCreate(null);
+        mapView.addOnDidFailLoadingMapListener(error -> {
+            if (this.styleListener != null) this.styleListener.onStyleError(styleId);
+        });
         addView(mapView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         overlay = new MarkerOverlay(context);
@@ -49,11 +69,31 @@ public final class MapTilerMapView extends FrameLayout {
 
         mapView.getMapAsync(map -> {
             mapLibreMap = map;
-            mapLibreMap.setStyle(styleUrl());
+            if (this.styleListener != null) this.styleListener.onStyleLoading(styleId);
+            mapLibreMap.setStyle(styleUrl(), style -> {
+                if (this.styleListener != null) this.styleListener.onStyleLoaded(styleId);
+                moveCameraIfReady();
+                overlay.invalidate();
+            });
             mapLibreMap.addOnCameraIdleListener(overlay::invalidate);
             moveCameraIfReady();
             overlay.invalidate();
         });
+    }
+
+    public static String normalizeStyleId(String styleId) {
+        if (STYLE_HYBRID.equals(styleId)) return STYLE_HYBRID;
+        if (STYLE_TOPO.equals(styleId)) return STYLE_TOPO;
+        if (STYLE_OCEAN.equals(styleId)) return STYLE_OCEAN;
+        return STYLE_OUTDOOR;
+    }
+
+    public static String styleName(String styleId) {
+        String normalized = normalizeStyleId(styleId);
+        if (STYLE_HYBRID.equals(normalized)) return "Satellite";
+        if (STYLE_TOPO.equals(normalized)) return "Topographic";
+        if (STYLE_OCEAN.equals(normalized)) return "Ocean";
+        return "Outdoor";
     }
 
     public void setData(Location location, List<SavedPoint> points, List<double[]> track, SavedPoint selectedPoint) {
@@ -180,7 +220,7 @@ public final class MapTilerMapView extends FrameLayout {
     }
 
     private String styleUrl() {
-        return "https://api.maptiler.com/maps/" + MAP_STYLE_ID + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY;
+        return "https://api.maptiler.com/maps/" + styleId + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY;
     }
 
     private final class MarkerOverlay extends View {
