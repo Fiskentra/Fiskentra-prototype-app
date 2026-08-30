@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.location.Location;
 import android.os.Build;
@@ -19,7 +18,7 @@ import android.os.SystemClock;
 import com.fiskentra.app.FiskentraApplication;
 import com.fiskentra.app.MainActivity;
 import com.fiskentra.app.R;
-import com.fiskentra.app.backend.SupabasePointSync;
+import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
@@ -39,8 +38,6 @@ public final class FiskentraFlicService extends Service implements
     private static final long MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS = 5L * 60L * 1_000L;
     private static final long MAX_FALLBACK_LOCATION_AGE_MS = 30L * 60L * 1_000L;
     private static final long GPS_WAIT_TIMEOUT_MS = 20_000L;
-    private static final String SYNC_PREFS = "fiskentra_point_sync_status";
-
     private static volatile boolean running;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -49,11 +46,19 @@ public final class FiskentraFlicService extends Service implements
     private FiskentraFlic2Manager flicManager;
     private FiskentraLocationManager locationManager;
     private PointStore pointStore;
-    private SupabasePointSync pointSync;
+    private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
-    private SharedPreferences syncPrefs;
     private NotificationManager notificationManager;
     private Location lastLocation;
+    private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
+        if (PointSyncQueue.STATE_SYNCED.equals(state)) {
+            updateNotification(pending == 0
+                    ? "All saved points synced to Fiskentra cloud"
+                    : "Point synced · " + pending + " still queued");
+        } else if (PointSyncQueue.STATE_FAILED.equals(state)) {
+            updateNotification("Point saved locally · automatic retry queued");
+        }
+    };
 
     public static void start(Context context) {
         Intent intent = new Intent(context, FiskentraFlicService.class);
@@ -70,9 +75,8 @@ public final class FiskentraFlicService extends Service implements
         flicManager = application.getFlicManager();
         locationManager = new FiskentraLocationManager(this, this);
         pointStore = new PointStore(this);
-        pointSync = new SupabasePointSync(this);
+        syncQueue = PointSyncQueue.get(this);
         weatherClient = new WeatherClient(this);
-        syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         createNotificationChannel();
@@ -86,6 +90,7 @@ public final class FiskentraFlicService extends Service implements
         }
 
         flicManager.addListener(this);
+        syncQueue.addObserver(syncObserver);
         running = true;
         flicManager.attachAndConnectPairedButtons();
         locationManager.start();
@@ -101,7 +106,7 @@ public final class FiskentraFlicService extends Service implements
         pendingActions.clear();
         if (locationManager != null) locationManager.stop();
         if (flicManager != null) flicManager.removeListener(this);
-        if (pointSync != null) pointSync.close();
+        if (syncQueue != null) syncQueue.removeObserver(syncObserver);
         if (weatherClient != null) weatherClient.close();
         super.onDestroy();
     }
@@ -181,18 +186,10 @@ public final class FiskentraFlicService extends Service implements
                 updateNotification(type + " saved · " + weather.compactSummary());
             }
 
-            if (!pointSync.hasValidatedInternet()) {
-                setSyncState(point.id, "failed", "offline");
-                updateNotification(type + " saved locally · offline");
-                return;
-            }
-
-            SavedPoint upload = enriched;
-            setSyncState(point.id, "syncing", "Syncing to Supabase");
-            pointSync.sync(upload, (synced, syncMessage) -> {
-                setSyncState(point.id, synced ? "synced" : "failed", syncMessage);
-                if (!synced) updateNotification(type + " saved locally · cloud sync pending");
-            });
+            syncQueue.enqueue(enriched);
+            updateNotification(syncQueue.hasValidatedInternet()
+                    ? type + " saved · queued for cloud sync"
+                    : type + " saved locally · automatic retry queued");
         });
     }
 
@@ -225,14 +222,6 @@ public final class FiskentraFlicService extends Service implements
             return ageNanos / 1_000_000L;
         }
         return Math.abs(System.currentTimeMillis() - location.getTime());
-    }
-
-    private void setSyncState(long pointId, String state, String message) {
-        syncPrefs.edit()
-                .putString(pointId + "_state", state)
-                .putString(pointId + "_message", message)
-                .putLong(pointId + "_updated_at", System.currentTimeMillis())
-                .apply();
     }
 
     private void createNotificationChannel() {
