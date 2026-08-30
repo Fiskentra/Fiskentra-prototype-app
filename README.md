@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.8` Internal Prototype / Pre-Alpha.
+- Current version: `v0.9.1` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate v0.8 weather while retaining the confirmed v0.7 journal and v0.6.2 Flic/offline behavior.
+- Current target: validate the v0.9.1 Supabase sync hotfix and v0.9 catch details while retaining v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic/offline behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -41,6 +41,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Weather includes the current conditions and a cached seven-day Open-Meteo forecast.
 - Pike, perch, zander, trout and carp can be selected for a transparent weather-only fishing outlook; it is explicitly not a catch guarantee.
 - Fishing-calendar cells show the saved weather icon and temperature when a journal session captured conditions for that day.
+- Catch points can store fish species, length, weight, lure/bait, notes and released/kept status.
+- Catch details are local-first, survive restarts and update the existing Supabase point instead of creating a duplicate row.
+- An optional catch photo is copied into Fiskentra's private on-device storage; it can be changed or removed without requesting broad photo-library permission.
 - Dark outdoor-first prototype visual system.
 - Official Fiskentra compass/pin branding supplied for the prototype, including the launcher icon.
 
@@ -118,7 +121,7 @@ Fishing-day sessions are local-first. An event is included when its saved timest
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.8, then allow Location, Nearby devices and Notifications.
+2. Install and open Fiskentra v0.9, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
@@ -178,7 +181,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. If the optional weather JSONB column is unavailable, core point sync retries without that enrichment.
+Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. v0.9 upserts by the stable point ID, so catch-detail edits update the existing row instead of creating duplicates. v0.9.1 adds the required `X-Device-Id` header to that upsert so the device-owned RLS INSERT/UPDATE policies accept it. If an optional JSONB column is unavailable, core point sync retries without that enrichment.
 
 When a saved point is deleted, the app first shows `Deleting from cloud...`, then sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the app shows `Deleted from cloud` and removes the point from local storage. If the cloud delete fails or returns zero rows, the app shows `Cloud delete failed · try again` and the point stays on the phone so the user can retry with the normal `DELETE` action instead of leaving orphaned GPS data in the database.
 
@@ -193,6 +196,7 @@ create table if not exists public.saved_points (
   type text not null default 'Moment',
   note text not null default '',
   weather jsonb,
+  catch_details jsonb,
   created_at timestamptz not null default now(),
   unique (device_id, local_id)
 );
@@ -200,11 +204,22 @@ create table if not exists public.saved_points (
 alter table public.saved_points
 add column if not exists weather jsonb;
 
+alter table public.saved_points
+add column if not exists catch_details jsonb;
+
+alter table public.saved_points
+drop constraint if exists saved_points_catch_details_object;
+
+alter table public.saved_points
+add constraint saved_points_catch_details_object
+check (catch_details is null or jsonb_typeof(catch_details) = 'object');
+
 alter table public.saved_points enable row level security;
 
 drop policy if exists "Prototype clients can insert saved points" on public.saved_points;
 drop policy if exists "Prototype clients can read own saved points for delete" on public.saved_points;
 drop policy if exists "Prototype clients can delete saved points" on public.saved_points;
+drop policy if exists "Prototype clients can update own saved points" on public.saved_points;
 
 create policy "Prototype clients can insert saved points"
 on public.saved_points
@@ -234,14 +249,45 @@ using (
   )
 );
 
+create policy "Prototype clients can update own saved points"
+on public.saved_points
+for update
+to anon
+using (
+  device_id = nullif(
+    coalesce(nullif((select current_setting('request.headers', true)), ''), '{}')::json ->> 'x-device-id',
+    ''
+  )
+)
+with check (
+  device_id = nullif(
+    coalesce(nullif((select current_setting('request.headers', true)), ''), '{}')::json ->> 'x-device-id',
+    ''
+  )
+);
+
 grant insert on table public.saved_points to anon;
 grant select (device_id, local_id) on table public.saved_points to anon;
 grant delete on table public.saved_points to anon;
+grant update on table public.saved_points to anon;
 ```
 
 This prototype policy lets the Android app upload and delete its own saved points with the publishable key and the phone's install ID header. It grants only the `device_id` and `local_id` columns for the delete verification read, not latitude/longitude. Use authenticated users and owner-based RLS before enabling account cloud backup.
 
 The `weather` JSONB object is optional and contains only conditions returned for the point coordinates: observation time, Celsius temperature, humidity, precipitation, pressure, wind, WMO weather code, timezone and provider. This migration was applied and verified on Fiskentra Supabase project `dwlbefpmwzmhutlvqfmu` on 2026-08-30; the SQL remains here for reproducible setup.
+
+The optional `catch_details` JSONB object contains species, length, weight, lure, notes and released/kept status. Local Android photo paths are deliberately excluded from cloud JSON. The v0.9 migration and device-owned update policy were applied and verified on the same project on 2026-08-30.
+
+## v0.9.1 catch-details and sync test
+
+1. Install v0.9.1 over v0.8 or v0.9 without uninstalling Fiskentra.
+2. Save a Catch with Flic 2 or the Device single-press test.
+3. Open Saved, tap `ADD CATCH DETAILS`, enter species, length, weight, lure, notes and released/kept status, then save.
+4. Reopen the card and confirm every value remains; open Log and Map and confirm the catch summary appears there too.
+5. Tap `ADD PHOTO`, choose an image, restart Fiskentra and confirm the local photo remains. Test `CHANGE PHOTO` and `REMOVE LOCAL PHOTO`.
+6. Edit the catch again while online and confirm it remains one Supabase row with updated `catch_details`.
+7. Disable internet, edit another Catch, verify the local values remain, then restore internet and use `SYNC LOCAL POINTS`.
+8. For points that showed `Supabase point sync HTTP 401` in v0.9, tap `SYNC LOCAL POINTS` and confirm they change to `Synced to cloud`.
 
 ## v0.8 weather test
 

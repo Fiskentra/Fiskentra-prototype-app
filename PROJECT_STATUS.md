@@ -4,7 +4,7 @@ Last updated: 2026-08-30
 
 ## Current stage
 
-- Version: `v0.8`
+- Version: `v0.9.1`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -19,6 +19,9 @@ Last updated: 2026-08-30
 - Fishing day log: Implemented and physically validated with active-session recovery, event summaries and calendar history
 - Weather: Implemented with Open-Meteo capture, seven-day forecast, species outlook, local persistence and offline-safe cache; physical validation pending
 - Supabase weather storage: `public.saved_points.weather jsonb` migration applied and verified on project `dwlbefpmwzmhutlvqfmu` on 2026-08-30
+- Catch details: Implemented local-first with optional private-device photo and Supabase JSONB upsert; physical validation pending
+- Supabase catch storage: `public.saved_points.catch_details jsonb` plus device-owned update policy applied and verified on 2026-08-30
+- Supabase sync hotfix: v0.9.1 sends `X-Device-Id` on point upserts; live Data API verification returned HTTP 401 without the header and HTTP 201 with it
 
 ## Selected hardware
 
@@ -49,8 +52,9 @@ Last updated: 2026-08-30
 | `v0.6.1` | Fix foreground fallback and true offline Flic capture | Superseded by v0.6.2 sync-status hotfix |
 | `v0.6.2` | Prevent offline points from remaining in `Syncing` | Complete · physical offline test confirmed by user on 2026-08-30 |
 | `v0.7` | Add fishing day log and calendar | Complete · physical app test confirmed by user on 2026-08-30 |
-| `v0.8` | Add weather capture, forecast and fishing outlook | Current · implementation complete, physical test pending |
-| `v0.9` | Add catch details | Planned |
+| `v0.8` | Add weather capture, forecast and fishing outlook | Complete · advanced to v0.9 |
+| `v0.9` | Add catch details | Superseded by v0.9.1 sync hotfix |
+| `v0.9.1` | Fix Supabase RLS authorization for point upserts | Current · implementation and live API verification complete, physical test pending |
 | `v0.10` | Polish offline storage and sync recovery | Planned |
 | `v0.11` | Improve fishing maps and layers | Planned |
 | `v0.12` | Add user profiles and authentication | Planned |
@@ -169,3 +173,24 @@ Physical validation was confirmed by the user on 2026-08-30 using the corrected 
 7. From Map, use the `WEATHER` tab and the left/right swipe gestures; verify the seven-day forecast and return to the interactive map.
 8. Change target fish and confirm each forecast card updates its fishing score and explanation.
 9. Start a fishing day online, wait for its weather, and confirm the journal calendar cell retains the observed weather after restarting Fiskentra.
+
+## v0.9 implementation
+
+- Every `Catch` point can hold species, length in centimetres, weight in kilograms, lure/bait, notes and released/kept status.
+- Existing points remain readable because catch details are optional.
+- Saved, selected-map and fishing-log event cards show the catch summary.
+- Catch photos use Android's document picker and are copied into Fiskentra's private app storage for reliable offline access.
+- Photos can be changed or removed and are intentionally not sent as device file paths to Supabase.
+- The existing Supabase row is upserted by its stable point ID, so editing details does not create duplicates.
+- `catch_details jsonb`, its object constraint, UPDATE grant and device-header RLS policy are applied in production.
+- A real anonymous Data API test completed with HTTP 201 insert, HTTP 200 upsert and HTTP 204 cleanup delete.
+
+## v0.9.1 physical test gate
+
+1. Install v0.9.1 over v0.8 or v0.9 without clearing app data.
+2. Create a Catch with Flic 2, open Saved and add all catch-detail fields.
+3. Add a photo, restart Fiskentra, then change and remove the photo.
+4. Confirm the catch summary is visible in Saved, Map and the fishing-day Log.
+5. Edit a cloud-synced catch and confirm Supabase keeps one row and updates `catch_details`.
+6. Repeat an edit offline, restore connectivity and use `SYNC LOCAL POINTS`.
+7. Retry points that failed in v0.9 with HTTP 401 and confirm they become `Synced to cloud` without being recreated locally.
