@@ -4,7 +4,7 @@ Last updated: 2026-08-30
 
 ## Current stage
 
-- Version: `v0.10`
+- Version: `v0.11`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -23,6 +23,7 @@ Last updated: 2026-08-30
 - Supabase catch storage: `public.saved_points.catch_details jsonb` plus device-owned update policy applied and verified on 2026-08-30
 - Supabase sync hotfix: v0.9.1 sends `X-Device-Id` on point upserts; live Data API verification returned HTTP 401 without the header and HTTP 201 with it
 - Offline sync recovery: one process-wide sequential queue now retries persisted local points when Android validates internet access
+- Fishing map layers: Outdoor, Satellite/Hybrid, Topographic and Ocean are selectable and persist locally; physical validation pending
 
 ## Selected hardware
 
@@ -57,7 +58,7 @@ Last updated: 2026-08-30
 | `v0.9` | Add catch details | Superseded by v0.9.1 sync hotfix |
 | `v0.9.1` | Fix Supabase RLS authorization for point upserts | Complete · advanced to v0.10 |
 | `v0.10` | Polish offline storage and sync recovery | Complete · physical recovery test confirmed by user on 2026-08-30 |
-| `v0.11` | Improve fishing maps and layers | Planned |
+| `v0.11` | Improve fishing maps and layers | Implemented · physical validation pending |
 | `v0.12` | Add user profiles and authentication | Planned |
 | `v0.13` | Add settings | Planned |
 | `v0.14` | Add onboarding | Planned |
@@ -216,3 +217,21 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 4. Edit one Catch twice during sync and verify one Supabase row contains the latest details.
 5. Delete a point while another upload is running and verify the deleted row does not reappear.
 6. Restart the app with pending points and confirm the persisted queue resumes automatically.
+
+## v0.11 implementation
+
+- Replaced the deprecated `outdoor-v2` style with MapTiler `outdoor-v4`.
+- Added selectable `hybrid-v4`, `topo-v4` and `ocean-v4` base layers alongside Outdoor.
+- The chosen layer is stored locally and restored after app restart.
+- GPS, trip track, saved markers, collision spreading and selected-point highlighting remain Fiskentra overlays above every base layer.
+- The Map page reports layer loading, success and failure without displaying request URLs or the MapTiler key.
+- Ocean is described accurately as marine bathymetry; it does not promise depth data for inland lakes.
+
+## v0.11 physical test gate
+
+1. Install v0.11 over v0.10 without uninstalling or clearing data.
+2. Switch through Outdoor, Satellite, Topographic and Ocean and confirm each reaches its ready state.
+3. Confirm the live GPS dot, existing saved markers and active trip track remain visible on all four layers.
+4. Open a saved point on Map, switch layers and confirm the point stays centered and highlighted.
+5. Restart Fiskentra and confirm the last selected layer is restored.
+6. Test without internet and confirm the layer status reports failure while local point saving and Flic actions continue normally.

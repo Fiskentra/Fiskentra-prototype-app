@@ -86,6 +86,8 @@ public final class MainActivity extends Activity implements
     private static final String POINT_TYPE_TACKLE_CHANGE = "Tackle change";
     private static final String WEATHER_PREFS = "fiskentra_weather_preferences";
     private static final String WEATHER_SPECIES = "selected_species";
+    private static final String MAP_PREFS = "fiskentra_map_preferences";
+    private static final String MAP_STYLE = "selected_map_style";
 
     private FrameLayout content;
     private LinearLayout nav;
@@ -99,6 +101,7 @@ public final class MainActivity extends Activity implements
     private WeatherClient weatherClient;
     private SharedPreferences syncPrefs;
     private SharedPreferences weatherPrefs;
+    private SharedPreferences mapPrefs;
     private Location lastLocation;
     private String screen = "home";
     private String bleStatus = "No device connected";
@@ -120,6 +123,7 @@ public final class MainActivity extends Activity implements
     private WeatherForecast weatherForecast;
     private String forecastStatus = "Open Weather to load the forecast";
     private String selectedSpecies = FishingAdvisor.SPECIES[0];
+    private String selectedMapStyle = MapTilerMapView.STYLE_OUTDOOR;
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
@@ -160,7 +164,10 @@ public final class MainActivity extends Activity implements
         weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
+        mapPrefs = getSharedPreferences(MAP_PREFS, MODE_PRIVATE);
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
+        selectedMapStyle = MapTilerMapView.normalizeStyleId(
+                mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
         selectedLogDateMillis = System.currentTimeMillis();
         calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
 
@@ -980,7 +987,40 @@ public final class MainActivity extends Activity implements
         LinearLayout body = vertical();
         SavedPoint selected = selectedMapPoint();
         List<SavedPoint> points = pointStore.all();
-        MapTilerMapView map = new MapTilerMapView(this);
+        body.addView(mapLayerSelector(), cardMargins());
+
+        TextView layerStatus = text(
+                "Loading " + MapTilerMapView.styleName(selectedMapStyle) + " layer…",
+                10, MUTED, Typeface.NORMAL);
+        LinearLayout.LayoutParams statusLp = matchWrap();
+        statusLp.setMargins(dp(2), 0, dp(2), dp(8));
+        body.addView(layerStatus, statusLp);
+
+        MapTilerMapView map = new MapTilerMapView(this, selectedMapStyle,
+                new MapTilerMapView.StyleListener() {
+                    @Override public void onStyleLoading(String styleId) {
+                        layerStatus.post(() -> {
+                            layerStatus.setTextColor(MUTED);
+                            layerStatus.setText(
+                                    "Loading " + MapTilerMapView.styleName(styleId) + " layer…");
+                        });
+                    }
+
+                    @Override public void onStyleLoaded(String styleId) {
+                        layerStatus.post(() -> {
+                            layerStatus.setTextColor(MUTED);
+                            layerStatus.setText(layerReadyMessage(styleId));
+                        });
+                    }
+
+                    @Override public void onStyleError(String styleId) {
+                        layerStatus.post(() -> {
+                            layerStatus.setText("Could not load " + MapTilerMapView.styleName(styleId)
+                                    + " · check internet or choose another layer");
+                            layerStatus.setTextColor(DANGER);
+                        });
+                    }
+                });
         activeMapView = map;
         map.setBackground(roundRect(SURFACE, 20));
         map.setData(lastLocation, points, trackStore.points(), selected);
@@ -1024,7 +1064,10 @@ public final class MainActivity extends Activity implements
 
         LinearLayout notice = row();
         notice.setGravity(Gravity.CENTER_VERTICAL);
-        TextView note = text(selected == null ? "Showing all saved points on the outdoor map" : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
+        TextView note = text(selected == null
+                ? "Showing all saved points on the "
+                        + MapTilerMapView.styleName(selectedMapStyle).toLowerCase(Locale.ROOT) + " map"
+                : "Map centered on selected saved point", 12, MUTED, Typeface.NORMAL);
         notice.addView(note, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView count = text(points.size() + " saved", 12, ACCENT, Typeface.BOLD);
         notice.addView(count);
@@ -1039,6 +1082,51 @@ public final class MainActivity extends Activity implements
         hintLp.setMargins(0, dp(8), 0, 0);
         body.addView(hint, hintLp);
         return body;
+    }
+
+    private View mapLayerSelector() {
+        LinearLayout card = vertical();
+        card.setPadding(dp(6), dp(6), dp(6), dp(6));
+        card.setBackground(roundRect(SURFACE, 14));
+
+        LinearLayout tabs = row();
+        addMapLayerTab(tabs, "OUTDOOR", MapTilerMapView.STYLE_OUTDOOR);
+        addMapLayerTab(tabs, "SATELLITE", MapTilerMapView.STYLE_HYBRID);
+        addMapLayerTab(tabs, "TOPO", MapTilerMapView.STYLE_TOPO);
+        addMapLayerTab(tabs, "OCEAN", MapTilerMapView.STYLE_OCEAN);
+        card.addView(tabs, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
+        return card;
+    }
+
+    private void addMapLayerTab(LinearLayout tabs, String label, String styleId) {
+        boolean selected = styleId.equals(selectedMapStyle);
+        TextView tab = text(label, 9, selected ? Color.rgb(7, 22, 12) : MUTED, Typeface.BOLD);
+        tab.setGravity(Gravity.CENTER);
+        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, 10));
+        tab.setOnClickListener(v -> {
+            if (styleId.equals(selectedMapStyle)) return;
+            selectedMapStyle = styleId;
+            mapPrefs.edit().putString(MAP_STYLE, styleId).apply();
+            render("map");
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        lp.setMargins(dp(1), 0, dp(1), 0);
+        tabs.addView(tab, lp);
+    }
+
+    private String layerReadyMessage(String styleId) {
+        String normalized = MapTilerMapView.normalizeStyleId(styleId);
+        if (MapTilerMapView.STYLE_HYBRID.equals(normalized)) {
+            return "Satellite layer ready · aerial imagery with labels";
+        }
+        if (MapTilerMapView.STYLE_TOPO.equals(normalized)) {
+            return "Topographic layer ready · terrain and contour detail";
+        }
+        if (MapTilerMapView.STYLE_OCEAN.equals(normalized)) {
+            return "Ocean layer ready · marine bathymetry; inland depth is not guaranteed";
+        }
+        return "Outdoor layer ready · trails, terrain and contours";
     }
 
     private View weatherPage() {
