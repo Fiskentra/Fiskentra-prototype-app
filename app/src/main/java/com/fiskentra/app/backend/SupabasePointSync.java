@@ -52,19 +52,23 @@ public final class SupabasePointSync {
             return;
         }
         if (!hasValidatedInternet()) {
-            listener.onResult(false, "Saved locally · offline");
+            listener.onResult(false, "offline");
             return;
         }
 
         executor.execute(() -> {
             HttpURLConnection connection = null;
             try {
+                if (!hasValidatedInternet()) {
+                    listener.onResult(false, "offline");
+                    return;
+                }
                 byte[] body = payload(point).getBytes(StandardCharsets.UTF_8);
                 URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points");
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("POST");
-                connection.setConnectTimeout(7000);
-                connection.setReadTimeout(7000);
+                connection.setConnectTimeout(4000);
+                connection.setReadTimeout(4000);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
                 connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
@@ -137,7 +141,7 @@ public final class SupabasePointSync {
         executor.shutdownNow();
     }
 
-    private boolean hasValidatedInternet() {
+    public boolean hasValidatedInternet() {
         if (connectivityManager == null) return false;
         Network network = connectivityManager.getActiveNetwork();
         if (network == null) return false;

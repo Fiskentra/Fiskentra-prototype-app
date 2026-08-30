@@ -489,6 +489,7 @@ public final class MainActivity extends Activity implements
         body.setPadding(dp(20), dp(20), dp(20), dp(28));
         scroll.addView(body);
         List<SavedPoint> points = pointStore.all();
+        recoverStaleSyncStates(points);
         body.addView(pageTitle("Saved", points.size() + (points.size() == 1 ? " MOMENT" : " MOMENTS")));
         body.addView(spacer(18));
         if (shouldShowDeleteStatus()) {
@@ -664,6 +665,12 @@ public final class MainActivity extends Activity implements
     }
 
     private void syncPoint(SavedPoint point) {
+        if (!pointSync.hasValidatedInternet()) {
+            setSyncState(point.id, SYNC_FAILED, "offline");
+            cloudSyncStatus = "Latest point: saved locally · offline";
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
+            return;
+        }
         setSyncState(point.id, SYNC_SYNCING, "Syncing to Supabase");
         cloudSyncStatus = "Latest point: syncing to Supabase…";
         if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
@@ -747,6 +754,7 @@ public final class MainActivity extends Activity implements
         syncPrefs.edit()
                 .putString(syncKey(pointId, "state"), state)
                 .putString(syncKey(pointId, "message"), message)
+                .putLong(syncKey(pointId, "updated_at"), System.currentTimeMillis())
                 .apply();
     }
 
@@ -754,7 +762,19 @@ public final class MainActivity extends Activity implements
         syncPrefs.edit()
                 .remove(syncKey(pointId, "state"))
                 .remove(syncKey(pointId, "message"))
+                .remove(syncKey(pointId, "updated_at"))
                 .apply();
+    }
+
+    private void recoverStaleSyncStates(List<SavedPoint> points) {
+        long now = System.currentTimeMillis();
+        for (SavedPoint point : points) {
+            if (!SYNC_SYNCING.equals(syncPrefs.getString(syncKey(point.id, "state"), ""))) continue;
+            long updatedAt = syncPrefs.getLong(syncKey(point.id, "updated_at"), point.timestamp);
+            if (now - updatedAt > 20_000L) {
+                setSyncState(point.id, SYNC_FAILED, "sync interrupted · retry when online");
+            }
+        }
     }
 
     private String syncLabel(long pointId) {

@@ -159,12 +159,18 @@ public final class FiskentraFlicService extends Service implements
                 cachedLocation
                         ? "Captured by Flic 2 with recent cached location"
                         : "Captured by Flic 2 in background");
-        setSyncState(point.id, "syncing", "Syncing to Supabase");
         String message = type + (cachedLocation ? " saved with recent location · " : " saved · ")
                 + coordinateSummary(location);
         updateNotification(message);
         flicManager.reportActionResult(action, true, message);
 
+        if (!pointSync.hasValidatedInternet()) {
+            setSyncState(point.id, "failed", "offline");
+            updateNotification(type + " saved locally · offline");
+            return;
+        }
+
+        setSyncState(point.id, "syncing", "Syncing to Supabase");
         pointSync.sync(point, (synced, syncMessage) -> {
             setSyncState(point.id, synced ? "synced" : "failed", syncMessage);
             if (!synced) updateNotification(type + " saved locally · cloud sync pending");
@@ -206,6 +212,7 @@ public final class FiskentraFlicService extends Service implements
         syncPrefs.edit()
                 .putString(pointId + "_state", state)
                 .putString(pointId + "_message", message)
+                .putLong(pointId + "_updated_at", System.currentTimeMillis())
                 .apply();
     }
 

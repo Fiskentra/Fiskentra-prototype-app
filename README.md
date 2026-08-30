@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.6.1` Internal Prototype / Pre-Alpha.
+- Current version: `v0.6.2` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate the v0.6.1 Flic 2 reliability and offline-capture fix.
+- Current target: validate the v0.6.2 Flic 2 offline capture and sync-status recovery.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -76,9 +76,9 @@ The Flic Android app may remain installed, but Fiskentra creates and stores its 
 
 Open Fiskentra once after every phone reboot so Android can start the location foreground service from a visible activity. Force-stopping the app disables the service until Fiskentra is opened again.
 
-### v0.6.1 Flic and offline regression test
+### v0.6.2 Flic and offline regression test
 
-1. Install v0.6.1 over the current Fiskentra installation and open it once.
+1. Install v0.6.2 over the current Fiskentra installation and open it once.
 2. Confirm **Flic 2 ready** and **BACKGROUND CAPTURE ACTIVE** on Device.
 3. Test single press, double press and hold with internet available.
 4. Disable Wi-Fi and mobile data while leaving Bluetooth and Location enabled.
@@ -87,6 +87,8 @@ Open Fiskentra once after every phone reboot so Android can start the location f
 7. Restore internet, tap **Sync local points** and verify they become **Synced to cloud**.
 
 If Android cannot start the foreground service, v0.6.1 restores foreground Activity capture instead of discarding Flic actions. For background capture, Fiskentra prefers a GPS fix newer than 30 seconds, can immediately use a recent fix up to five minutes old when necessary, and uses a cached fix up to 30 minutes old after waiting for GPS. Cached-location saves are clearly identified in the point note and service status.
+
+v0.6.2 additionally prevents an offline point from remaining indefinitely in `Syncing to Supabase`. Fiskentra checks connectivity before and immediately after scheduling an upload. If Android briefly reports a disconnected network as available, Saved automatically changes a sync attempt older than 20 seconds to `sync interrupted · retry when online`.
 
 ### Pair and test your Flic 2
 
