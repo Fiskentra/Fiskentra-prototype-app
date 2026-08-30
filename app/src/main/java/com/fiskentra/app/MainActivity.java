@@ -30,7 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
-import com.fiskentra.app.backend.SupabasePointSync;
+import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
@@ -75,12 +75,12 @@ public final class MainActivity extends Activity implements
     private static final int SUCCESS = Color.rgb(83, 214, 137);
     private static final int WARNING = Color.rgb(244, 190, 85);
     private static final int DANGER = Color.rgb(246, 114, 103);
-    private static final String SYNC_PREFS = "fiskentra_point_sync_status";
-    private static final String SYNC_SYNCING = "syncing";
-    private static final String SYNC_SYNCED = "synced";
-    private static final String SYNC_FAILED = "failed";
-    private static final String SYNC_DELETING = "deleting";
-    private static final String SYNC_DELETE_FAILED = "delete_failed";
+    private static final String SYNC_PREFS = PointSyncQueue.PREFS;
+    private static final String SYNC_SYNCING = PointSyncQueue.STATE_SYNCING;
+    private static final String SYNC_SYNCED = PointSyncQueue.STATE_SYNCED;
+    private static final String SYNC_FAILED = PointSyncQueue.STATE_FAILED;
+    private static final String SYNC_DELETING = PointSyncQueue.STATE_DELETING;
+    private static final String SYNC_DELETE_FAILED = PointSyncQueue.STATE_DELETE_FAILED;
     private static final String POINT_TYPE_CATCH = "Catch";
     private static final String POINT_TYPE_WAYPOINT = "Waypoint";
     private static final String POINT_TYPE_TACKLE_CHANGE = "Tackle change";
@@ -95,7 +95,7 @@ public final class MainActivity extends Activity implements
     private FiskentraLocationManager locationManager;
     private FiskentraFlic2Manager flicManager;
     private SupabaseConnection supabaseConnection;
-    private SupabasePointSync pointSync;
+    private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
     private SharedPreferences syncPrefs;
     private SharedPreferences weatherPrefs;
@@ -122,6 +122,26 @@ public final class MainActivity extends Activity implements
     private String selectedSpecies = FishingAdvisor.SPECIES[0];
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
+    private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
+        if (destroyed) return;
+        runOnUiThread(() -> {
+            if (destroyed) return;
+            if (PointSyncQueue.STATE_SYNCED.equals(state)) {
+                cloudSyncStatus = pending == 0
+                        ? "All local points are synced to cloud"
+                        : "Point synced · " + pending + " still queued";
+            } else if (PointSyncQueue.STATE_SYNCING.equals(state)) {
+                cloudSyncStatus = "Automatic sync in progress…";
+            } else if (PointSyncQueue.STATE_FAILED.equals(state)) {
+                cloudSyncStatus = "Saved locally · automatic retry queued";
+            } else if (pointId < 0L && pending == 0) {
+                cloudSyncStatus = "All local points are synced to cloud";
+            }
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) {
+                render(screen);
+            }
+        });
+    };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -136,7 +156,7 @@ public final class MainActivity extends Activity implements
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
         supabaseConnection = new SupabaseConnection();
-        pointSync = new SupabasePointSync(this);
+        syncQueue = PointSyncQueue.get(this);
         weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
@@ -172,6 +192,8 @@ public final class MainActivity extends Activity implements
     @Override protected void onStart() {
         super.onStart();
         flicManager.addListener(this);
+        syncQueue.addObserver(syncObserver);
+        syncQueue.retryPending();
         if (activeMapView != null) activeMapView.start();
     }
 
@@ -193,6 +215,7 @@ public final class MainActivity extends Activity implements
         super.onStop();
         if (activeMapView != null) activeMapView.stop();
         flicManager.removeListener(this);
+        syncQueue.removeObserver(syncObserver);
     }
 
     @Override protected void onDestroy() {
@@ -200,7 +223,6 @@ public final class MainActivity extends Activity implements
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
         supabaseConnection.close();
-        pointSync.close();
         weatherClient.close();
     }
 
@@ -1705,21 +1727,12 @@ public final class MainActivity extends Activity implements
     }
 
     private void syncPoint(SavedPoint point) {
-        if (!pointSync.hasValidatedInternet()) {
-            setSyncState(point.id, SYNC_FAILED, "offline");
-            cloudSyncStatus = "Latest point: saved locally · offline";
-            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
-            return;
-        }
-        setSyncState(point.id, SYNC_SYNCING, "Syncing to Supabase");
-        cloudSyncStatus = "Latest point: syncing to Supabase…";
+        boolean online = syncQueue.hasValidatedInternet();
+        cloudSyncStatus = online
+                ? "Latest point queued for automatic sync"
+                : "Latest point saved locally · automatic retry queued";
+        syncQueue.enqueue(point);
         if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
-        pointSync.sync(point, (synced, message) -> runOnUiThread(() -> {
-            setSyncState(point.id, synced ? SYNC_SYNCED : SYNC_FAILED, message);
-            cloudSyncStatus = synced ? "Latest point: synced to cloud" : "Latest point: saved locally · sync pending";
-            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
-            if (!synced) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-        }));
     }
 
     private void syncPendingPoints() {
@@ -1731,13 +1744,18 @@ public final class MainActivity extends Activity implements
             render("saved");
             return;
         }
-        cloudSyncStatus = "Syncing " + pending + (pending == 1 ? " local point…" : " local points…");
-        Toast.makeText(this, "Syncing local points to Supabase", Toast.LENGTH_SHORT).show();
-        for (SavedPoint point : points) {
-            if (!shouldSync(point.id)) continue;
-            if (point.weather == null) enrichWeatherThenSync(point);
-            else syncPoint(point);
+        if (!syncQueue.hasValidatedInternet()) {
+            cloudSyncStatus = pending + (pending == 1
+                    ? " local point queued · waiting for internet"
+                    : " local points queued · waiting for internet");
+            Toast.makeText(this, "Offline · automatic retry is ready", Toast.LENGTH_SHORT).show();
+        } else {
+            cloudSyncStatus = "Syncing " + pending
+                    + (pending == 1 ? " local point…" : " local points…");
+            Toast.makeText(this, "Automatic sync started", Toast.LENGTH_SHORT).show();
+            syncQueue.retryPending();
         }
+        render("saved");
     }
 
     private void deletePoint(SavedPoint point) {
@@ -1745,7 +1763,7 @@ public final class MainActivity extends Activity implements
         cloudSyncStatus = "Deleting from cloud...";
         Toast.makeText(this, "Deleting from cloud...", Toast.LENGTH_SHORT).show();
         render("saved");
-        pointSync.delete(point, (deleted, message) -> runOnUiThread(() -> {
+        syncQueue.delete(point, (deleted, message) -> runOnUiThread(() -> {
             if (deleted) {
                 if (point.catchDetails != null) {
                     deleteLocalCatchPhoto(point.catchDetails.localPhotoPath);

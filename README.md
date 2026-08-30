@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.9.1` Internal Prototype / Pre-Alpha.
+- Current version: `v0.10` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate the v0.9.1 Supabase sync hotfix and v0.9 catch details while retaining v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic/offline behavior.
+- Current target: validate automatic offline queue recovery while retaining v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -19,6 +19,8 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
+- A process-wide sequential sync queue shared by the app and Flic service, preventing duplicate concurrent uploads.
+- Automatic retry when Android validates internet access again, including while the foreground Flic service is active.
 - Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the MapTiler Outdoor map.
 - Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
 - Real MapTiler Outdoor map powered by MapLibre Native Android, with Fiskentra overlays for current position, track, saved points and selected point.
@@ -121,7 +123,7 @@ Fishing-day sessions are local-first. An event is included when its saved timest
 ### Pair and test your Flic 2
 
 1. First verify the button works in the Flic Android app and update its firmware if the app offers an update.
-2. Install and open Fiskentra v0.9, then allow Location, Nearby devices and Notifications.
+2. Install and open Fiskentra v0.10, then allow Location, Nearby devices and Notifications.
 3. Open **Device** and tap **PAIR FLIC 2**.
 4. Hold the Flic 2 for 6 seconds until it glows. Keep it close to the phone and accept Android's **Pair & connect** dialog.
 5. Wait for **Flic 2 ready**, then test single press, double press and hold with a live GPS fix.
@@ -181,7 +183,7 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
-Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. Points created before per-point status existed may still show "Saved locally"; open Saved and tap "Sync local points" to resend them. v0.9 upserts by the stable point ID, so catch-detail edits update the existing row instead of creating duplicates. v0.9.1 adds the required `X-Device-Id` header to that upsert so the device-owned RLS INSERT/UPDATE policies accept it. If an optional JSONB column is unavailable, core point sync retries without that enrichment.
+Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. v0.10 keeps one sequential queue for the Activity and background Flic service, recovers interrupted states and retries unsynced points automatically when Android validates internet access again. The `SYNC LOCAL POINTS` button remains as a manual retry. v0.9 upserts by the stable point ID, so catch-detail edits update the existing row instead of creating duplicates. v0.9.1 adds the required `X-Device-Id` header to that upsert so the device-owned RLS INSERT/UPDATE policies accept it. If an optional JSONB column is unavailable, core point sync retries without that enrichment.
 
 When a saved point is deleted, the app first shows `Deleting from cloud...`, then sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the app shows `Deleted from cloud` and removes the point from local storage. If the cloud delete fails or returns zero rows, the app shows `Cloud delete failed · try again` and the point stays on the phone so the user can retry with the normal `DELETE` action instead of leaving orphaned GPS data in the database.
 
@@ -277,6 +279,19 @@ This prototype policy lets the Android app upload and delete its own saved point
 The `weather` JSONB object is optional and contains only conditions returned for the point coordinates: observation time, Celsius temperature, humidity, precipitation, pressure, wind, WMO weather code, timezone and provider. This migration was applied and verified on Fiskentra Supabase project `dwlbefpmwzmhutlvqfmu` on 2026-08-30; the SQL remains here for reproducible setup.
 
 The optional `catch_details` JSONB object contains species, length, weight, lure, notes and released/kept status. Local Android photo paths are deliberately excluded from cloud JSON. The v0.9 migration and device-owned update policy were applied and verified on the same project on 2026-08-30.
+
+## v0.10 offline recovery test
+
+1. Install v0.10 over v0.9.1 without uninstalling Fiskentra or clearing app data.
+2. Disable Wi-Fi and mobile data, then save three different points with Flic 2.
+3. Confirm every card says `Saved locally · offline · automatic retry queued`; no card may remain indefinitely in `Syncing`.
+4. Leave Fiskentra in the background, restore internet and wait for Android to validate the connection.
+5. Reopen Saved and confirm the three points changed to `Synced to cloud` without pressing the manual sync button.
+6. Edit a Catch twice quickly during sync and confirm Supabase contains one row with the latest details.
+7. Delete a point while another upload is active and confirm it does not reappear in Supabase.
+8. Repeat once after force-closing and reopening Fiskentra to verify persisted queue recovery.
+
+This v0.10 offline queue and automatic recovery flow was physically validated by the user on 2026-08-30.
 
 ## v0.9.1 catch-details and sync test
 

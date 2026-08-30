@@ -4,7 +4,7 @@ Last updated: 2026-08-30
 
 ## Current stage
 
-- Version: `v0.9.1`
+- Version: `v0.10`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -22,6 +22,7 @@ Last updated: 2026-08-30
 - Catch details: Implemented local-first with optional private-device photo and Supabase JSONB upsert; physical validation pending
 - Supabase catch storage: `public.saved_points.catch_details jsonb` plus device-owned update policy applied and verified on 2026-08-30
 - Supabase sync hotfix: v0.9.1 sends `X-Device-Id` on point upserts; live Data API verification returned HTTP 401 without the header and HTTP 201 with it
+- Offline sync recovery: one process-wide sequential queue now retries persisted local points when Android validates internet access
 
 ## Selected hardware
 
@@ -54,8 +55,8 @@ Last updated: 2026-08-30
 | `v0.7` | Add fishing day log and calendar | Complete · physical app test confirmed by user on 2026-08-30 |
 | `v0.8` | Add weather capture, forecast and fishing outlook | Complete · advanced to v0.9 |
 | `v0.9` | Add catch details | Superseded by v0.9.1 sync hotfix |
-| `v0.9.1` | Fix Supabase RLS authorization for point upserts | Current · implementation and live API verification complete, physical test pending |
-| `v0.10` | Polish offline storage and sync recovery | Planned |
+| `v0.9.1` | Fix Supabase RLS authorization for point upserts | Complete · advanced to v0.10 |
+| `v0.10` | Polish offline storage and sync recovery | Complete · physical recovery test confirmed by user on 2026-08-30 |
 | `v0.11` | Improve fishing maps and layers | Planned |
 | `v0.12` | Add user profiles and authentication | Planned |
 | `v0.13` | Add settings | Planned |
@@ -194,3 +195,24 @@ Physical validation was confirmed by the user on 2026-08-30 using the corrected 
 5. Edit a cloud-synced catch and confirm Supabase keeps one row and updates `catch_details`.
 6. Repeat an edit offline, restore connectivity and use `SYNC LOCAL POINTS`.
 7. Retry points that failed in v0.9 with HTTP 401 and confirm they become `Synced to cloud` without being recreated locally.
+
+## v0.10 implementation
+
+- `PointSyncQueue` is initialized at process start and shared by MainActivity and the foreground Flic service.
+- Android's validated-network callback automatically retries persisted unsynced points after connectivity returns.
+- Uploads are serialized, and one point is attempted only once per queue run.
+- A newer edit made during an upload remains pending and is uploaded again after the older request finishes.
+- Cloud delete is placed on the same remote executor after any active upload, preventing the upload from recreating a deleted row.
+- Existing v0.6-v0.9.1 sync states remain readable; interrupted `syncing` states older than 20 seconds recover to the retry queue and interrupted deletes become retryable.
+- No database migration or broader Supabase grant is required.
+
+## v0.10 physical test completed
+
+The user confirmed the v0.10 offline queue and automatic recovery flow on a physical Android phone on 2026-08-30.
+
+1. Install v0.10 over v0.9.1 without clearing app data.
+2. Save three different Flic points offline and confirm all three remain local with automatic retry queued.
+3. Background Fiskentra, restore internet and verify all three sync without pressing `SYNC LOCAL POINTS`.
+4. Edit one Catch twice during sync and verify one Supabase row contains the latest details.
+5. Delete a point while another upload is running and verify the deleted row does not reappear.
+6. Restart the app with pending points and confirm the persisted queue resumes automatically.
