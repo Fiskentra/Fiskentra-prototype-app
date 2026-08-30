@@ -6,7 +6,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 - Current version: `v0.7` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate the v0.7 fishing-day journal while retaining the confirmed v0.6.2 Flic/offline behavior.
+- Current milestone: v0.7 fishing-day journal and retained v0.6.2 Flic/offline behavior physically validated on Android.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -95,6 +95,8 @@ If Android cannot start the foreground service, v0.6.1 restores foreground Activ
 v0.6.2 additionally prevents an offline point from remaining indefinitely in `Syncing to Supabase`. Fiskentra checks connectivity before and immediately after scheduling an upload. If Android briefly reports a disconnected network as available, Saved automatically changes a sync attempt older than 20 seconds to `sync interrupted · retry when online`.
 
 ### Fishing day log and calendar test
+
+This v0.7 flow was physically validated by the user on 2026-08-30.
 
 1. Install and open Fiskentra v0.7 without uninstalling the previous build.
 2. Open **Log** and tap **START FISHING DAY**.

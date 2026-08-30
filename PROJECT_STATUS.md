@@ -16,7 +16,7 @@ Last updated: 2026-08-30
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
 - Map marker follow-up: The live GPS position is reserved, rendered last and remains visible inside overlapping saved-point clusters
 - Background service: Implemented; locked-phone physical validation pending
-- Fishing day log: Implemented locally with active-session recovery, event summaries and calendar history
+- Fishing day log: Implemented and physically validated with active-session recovery, event summaries and calendar history
 
 ## Selected hardware
 
@@ -46,7 +46,7 @@ Last updated: 2026-08-30
 | `v0.6` | Support reliable button events with the app backgrounded or phone locked | Superseded by v0.6.1 hotfix |
 | `v0.6.1` | Fix foreground fallback and true offline Flic capture | Superseded by v0.6.2 sync-status hotfix |
 | `v0.6.2` | Prevent offline points from remaining in `Syncing` | Complete · physical offline test confirmed by user on 2026-08-30 |
-| `v0.7` | Add fishing day log and calendar | Current · implementation complete, physical UI test pending |
+| `v0.7` | Add fishing day log and calendar | Complete · physical app test confirmed by user on 2026-08-30 |
 | `v0.8` | Add weather to saved points and trips | Planned |
 | `v0.9` | Add catch details | Planned |
 | `v0.10` | Polish offline storage and sync recovery | Planned |
@@ -128,7 +128,9 @@ Force-stopping Fiskentra disables all Android background work until the user ope
 - Tapping a logged event opens its exact position on the field map.
 - Multiple fishing sessions on the same calendar day are supported and aggregated into one day summary.
 
-## v0.7 physical test gate
+## v0.7 physical test completed
+
+Physical validation was confirmed by the user on 2026-08-30 using the corrected v0.7 build based on v0.6.2.
 
 1. Install v0.7 over v0.6.2 so existing paired buttons and saved points remain available.
 2. Open `Log`, tap `START FISHING DAY`, then verify the active state also appears on Home.
