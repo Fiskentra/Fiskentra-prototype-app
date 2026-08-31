@@ -31,6 +31,7 @@ import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
 import com.fiskentra.app.backend.SupabaseAuthManager;
+import com.fiskentra.app.backend.SupabaseConfig;
 import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
@@ -134,6 +135,8 @@ public final class MainActivity extends Activity implements
     private String authFormMode = "landing";
     private String authEmailDraft = "";
     private String authNameDraft = "";
+    private int onboardingStep;
+    private boolean onboardingReplay;
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
@@ -175,6 +178,7 @@ public final class MainActivity extends Activity implements
         weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
         mapPrefs = getSharedPreferences(MAP_PREFS, MODE_PRIVATE);
         userPreferences = new UserPreferences(this);
+        flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedMapStyle = MapTilerMapView.normalizeStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
@@ -204,8 +208,12 @@ public final class MainActivity extends Activity implements
         });
         page.requestApplyInsets();
 
-        render("home");
-        if (isAuthRedirect(getIntent())) {
+        boolean authRedirect = isAuthRedirect(getIntent());
+        boolean showOnboarding = !authRedirect && userPreferences.shouldShowOnboarding(
+                hasExistingLocalState());
+        render(showOnboarding ? "onboarding" : "home");
+        if (authRedirect) {
+            userPreferences.completeOnboarding();
             handleAuthRedirect(getIntent());
         } else {
             authManager.restore((success, message) -> runOnUiThread(() -> {
@@ -215,13 +223,12 @@ public final class MainActivity extends Activity implements
                 if ("home".equals(screen) || "profile".equals(screen)) render(screen);
             }));
         }
-        flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
         supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
             cloudStatus = message;
             if ("home".equals(screen)) render("home");
         }));
-        requestNeededPermissions();
+        if (!showOnboarding) requestNeededPermissions();
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -295,6 +302,14 @@ public final class MainActivity extends Activity implements
         }
     }
 
+    private boolean hasExistingLocalState() {
+        if (!pointStore.all().isEmpty() || !fishingDayStore.all().isEmpty()
+                || trackStore.isActive() || !trackStore.points().isEmpty()) return true;
+        if (authManager.isSignedIn() || flicManager.pairedButtonCount() > 0) return true;
+        if (mapPrefs.contains(MAP_STYLE) || weatherPrefs.contains(WEATHER_SPECIES)) return true;
+        return !getSharedPreferences("fiskentra_cloud", MODE_PRIVATE).getAll().isEmpty();
+    }
+
     private void ensureBackgroundService() {
         if (flicManager == null || flicManager.pairedButtonCount() == 0) return;
         if (!locationManager.hasPermission() || !flicManager.hasPermissions()) return;
@@ -323,6 +338,7 @@ public final class MainActivity extends Activity implements
         buttonEventText = null;
         activeMapView = null;
         switch (screen) {
+            case "onboarding": content.addView(onboardingScreen()); break;
             case "map": content.addView(mapScreen()); break;
             case "log": content.addView(fishingLogScreen()); break;
             case "saved": content.addView(savedScreen()); break;
@@ -336,6 +352,11 @@ public final class MainActivity extends Activity implements
 
     private void renderNav() {
         nav.removeAllViews();
+        if ("onboarding".equals(screen)) {
+            nav.setVisibility(View.GONE);
+            return;
+        }
+        nav.setVisibility(View.VISIBLE);
         addNav("⌂", "Home", "home");
         addNav("⌖", "Map", "map");
         addNav("▦", "Log", "log");
@@ -1705,6 +1726,188 @@ public final class MainActivity extends Activity implements
         return String.format(Locale.US, "%s", value);
     }
 
+    private View onboardingScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(22), dp(24), dp(22), dp(28));
+        scroll.addView(body);
+
+        LinearLayout top = row();
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView brand = text("FISKENTRA · QUICK START", 11, ACCENT, Typeface.BOLD);
+        top.addView(brand, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView skip = text(onboardingReplay ? "CLOSE" : "SKIP", 11, MUTED, Typeface.BOLD);
+        skip.setPadding(dp(12), dp(8), 0, dp(8));
+        skip.setOnClickListener(v -> finishOnboarding("home"));
+        top.addView(skip);
+        body.addView(top);
+        body.addView(spacer(18));
+
+        LinearLayout progress = row();
+        for (int index = 0; index < 4; index++) {
+            View segment = new View(this);
+            segment.setBackground(roundRect(index <= onboardingStep ? ACCENT : SURFACE_2, 3));
+            LinearLayout.LayoutParams segmentParams = new LinearLayout.LayoutParams(0, dp(5), 1f);
+            if (index > 0) segmentParams.setMargins(dp(6), 0, 0, 0);
+            progress.addView(segment, segmentParams);
+        }
+        body.addView(progress);
+        body.addView(spacer(28));
+
+        if (onboardingStep == 0) addOnboardingWelcome(body);
+        else if (onboardingStep == 1) addOnboardingPermissions(body);
+        else if (onboardingStep == 2) addOnboardingFlic(body);
+        else addOnboardingReady(body);
+
+        body.addView(spacer(22));
+        LinearLayout actions = row();
+        if (onboardingStep > 0) {
+            Button back = smallButton("BACK");
+            back.setOnClickListener(v -> {
+                onboardingStep--;
+                render("onboarding");
+            });
+            actions.addView(back, new LinearLayout.LayoutParams(0, dp(52), 1f));
+            actions.addView(spaceWide());
+        }
+        Button next = primaryButton(onboardingStep < 3 ? "CONTINUE" : "START FISKENTRA");
+        next.setOnClickListener(v -> {
+            if (onboardingStep < 3) {
+                onboardingStep++;
+                render("onboarding");
+            } else {
+                finishOnboarding("home");
+            }
+        });
+        actions.addView(next, new LinearLayout.LayoutParams(0, dp(52),
+                onboardingStep > 0 ? 1f : 2f));
+        body.addView(actions);
+
+        if (onboardingStep == 3) {
+            body.addView(spacer(10));
+            Button device = smallButton("START AND SET UP FLIC 2");
+            device.setOnClickListener(v -> finishOnboarding("device"));
+            body.addView(device, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        }
+        return scroll;
+    }
+
+    private void addOnboardingWelcome(LinearLayout body) {
+        TextView symbol = text("⌖", 52, ACCENT, Typeface.BOLD);
+        symbol.setGravity(Gravity.CENTER);
+        body.addView(symbol, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(76)));
+        body.addView(text("Remember every place and catch", 30, TEXT, Typeface.BOLD));
+        body.addView(spacer(10));
+        body.addView(text("Fiskentra combines your phone’s GPS, fishing journal, weather and Flic 2 button so a moment is never lost in the field.",
+                15, MUTED, Typeface.NORMAL));
+        body.addView(spacer(22));
+        body.addView(onboardingInfoCard("LOCAL FIRST",
+                "Every point is saved on this phone before cloud sync. Fishing still works without mobile data."), cardMargins());
+        body.addView(onboardingInfoCard("BUILT FOR THE WATER",
+                "Large actions, quick map access and button capture keep phone handling to a minimum."), cardMargins());
+    }
+
+    private void addOnboardingPermissions(LinearLayout body) {
+        body.addView(text("Prepare your phone for the field", 30, TEXT, Typeface.BOLD));
+        body.addView(spacer(10));
+        body.addView(text("Fiskentra asks only for access used by its field features. You can continue if you prefer to enable it later.",
+                15, MUTED, Typeface.NORMAL));
+        body.addView(spacer(22));
+        LinearLayout permissions = card();
+        permissions.addView(text("REQUIRED FOR CAPTURE", 11, ACCENT, Typeface.BOLD));
+        permissions.addView(spacer(10));
+        permissions.addView(checkRow(locationManager.hasPermission(),
+                "Location · coordinates and current position"));
+        permissions.addView(checkRow(flicManager.hasPermissions(),
+                "Nearby devices · Flic 2 pairing and reconnect"));
+        boolean notificationsReady = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+        permissions.addView(checkRow(notificationsReady,
+                "Notifications · screen-off button capture status"));
+        permissions.addView(spacer(14));
+        Button allow = smallButton("ALLOW FIELD ACCESS");
+        allow.setOnClickListener(v -> requestNeededPermissions());
+        permissions.addView(allow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        body.addView(permissions, cardMargins());
+        body.addView(text("Location and Bluetooth stay under Android permission control. Fiskentra does not require an account to use them.",
+                12, MUTED, Typeface.NORMAL));
+    }
+
+    private void addOnboardingFlic(LinearLayout body) {
+        body.addView(text("One button, three moments", 30, TEXT, Typeface.BOLD));
+        body.addView(spacer(10));
+        body.addView(text("Pair your Flic 2 once. Fiskentra then reconnects it and can capture with the screen off.",
+                15, MUTED, Typeface.NORMAL));
+        body.addView(spacer(22));
+        LinearLayout mapping = card();
+        mapping.addView(text("FLIC 2 ACTIONS", 11, ACCENT, Typeface.BOLD));
+        mapping.addView(spacer(12));
+        mapping.addView(onboardingMapping("1×", "Single press", "Register a catch", SUCCESS));
+        mapping.addView(spacer(12));
+        mapping.addView(onboardingMapping("2×", "Double press", "Save a waypoint", WARNING));
+        mapping.addView(spacer(12));
+        mapping.addView(onboardingMapping("—", "Hold", "Record a tackle change",
+                Color.rgb(197, 155, 255)));
+        body.addView(mapping, cardMargins());
+        body.addView(onboardingInfoCard("OFFLINE IS OK",
+                "The press is saved locally. Pending points sync automatically when Android validates internet access."), cardMargins());
+    }
+
+    private void addOnboardingReady(LinearLayout body) {
+        body.addView(text("Ready for your next fishing day", 30, TEXT, Typeface.BOLD));
+        body.addView(spacer(10));
+        body.addView(text("Start in local mode now. You can pair Flic 2, change units and map layers, or sign in later from Profile.",
+                15, MUTED, Typeface.NORMAL));
+        body.addView(spacer(22));
+        LinearLayout ready = card();
+        ready.addView(text("YOUR QUICK CHECKLIST", 11, ACCENT, Typeface.BOLD));
+        ready.addView(spacer(10));
+        ready.addView(checkRow(locationManager.hasPermission(), "GPS access"));
+        ready.addView(checkRow(flicManager.pairedButtonCount() > 0, "Flic 2 paired (optional)"));
+        ready.addView(checkRow(true, "Offline local storage ready"));
+        ready.addView(checkRow(SupabaseConfig.isConfigured(), "Cloud connection configured"));
+        body.addView(ready, cardMargins());
+        body.addView(text("Account registration is optional. Existing local points, journal entries and Flic pairing remain on this phone when you sign in or out.",
+                12, MUTED, Typeface.NORMAL));
+    }
+
+    private View onboardingInfoCard(String title, String description) {
+        LinearLayout info = card();
+        info.addView(text(title, 11, ACCENT, Typeface.BOLD));
+        info.addView(spacer(7));
+        info.addView(text(description, 13, TEXT, Typeface.NORMAL));
+        return info;
+    }
+
+    private View onboardingMapping(String badge, String action, String result, int color) {
+        LinearLayout mapping = row();
+        mapping.setGravity(Gravity.CENTER_VERTICAL);
+        TextView icon = text(badge, 14, Color.rgb(7, 22, 12), Typeface.BOLD);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(roundRect(color, 20));
+        mapping.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(12), 0, 0, 0);
+        copy.addView(text(action, 13, TEXT, Typeface.BOLD));
+        copy.addView(text(result, 12, MUTED, Typeface.NORMAL));
+        mapping.addView(copy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return mapping;
+    }
+
+    private void finishOnboarding(String destination) {
+        userPreferences.completeOnboarding();
+        onboardingStep = 0;
+        onboardingReplay = false;
+        render(destination);
+        requestNeededPermissions();
+    }
+
     private View profileScreen() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = vertical();
@@ -1945,6 +2148,15 @@ public final class MainActivity extends Activity implements
         about.addView(text("Settings are stored only on this phone and work without an account or internet connection.",
                 12, MUTED, Typeface.NORMAL));
         about.addView(spacer(12));
+        Button quickStart = smallButton("VIEW QUICK START");
+        quickStart.setOnClickListener(v -> {
+            onboardingReplay = true;
+            onboardingStep = 0;
+            render("onboarding");
+        });
+        about.addView(quickStart, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        about.addView(spacer(10));
         Button back = smallButton("BACK TO PROFILE");
         back.setOnClickListener(v -> render("profile"));
         about.addView(back, new LinearLayout.LayoutParams(

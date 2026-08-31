@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.13` Internal Prototype / Pre-Alpha.
+- Current version: `v0.14` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate device-local settings while retaining v0.12.1 accounts, v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
+- Current target: validate first-run onboarding while retaining v0.13 settings, v0.12.1 accounts, v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -35,6 +35,8 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Metric/Imperial display and catch-entry units can be changed without changing canonical local or Supabase values.
 - Explore start page, map layer, target fish and delete confirmation persist across restarts.
 - Settings reports saved and pending-sync counts and can start the existing safe retry queue.
+- New installs open a four-step quick start before Android permission prompts, explaining local-first capture, field permissions, Flic 2 actions and optional accounts.
+- Existing installations skip onboarding automatically, while `Profile → Settings → View Quick Start` can reopen it at any time.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
 - Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
@@ -221,6 +223,16 @@ The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake dep
 5. Open a saved point while Weather is the Explore default and confirm the selected point still opens on Map.
 6. Disable and re-enable delete confirmation using a disposable point.
 7. Create a point offline and confirm Settings reports it as pending, then restore internet and use `SYNC NOW`.
+
+### v0.14 onboarding test
+
+1. Install v0.14 over v0.13 without clearing app data and confirm it opens the normal Home screen rather than interrupting an existing user.
+2. Open `Profile → Settings → View Quick Start` and move through all four steps with Back and Continue.
+3. On the permission step, verify Location, Nearby devices and Notification statuses match Android settings and `ALLOW FIELD ACCESS` opens only missing permission requests.
+4. Confirm the Flic page shows single press = Catch, double press = Waypoint and hold = Tackle change.
+5. Finish with `START FISKENTRA` and confirm the normal Home screen appears with existing data unchanged.
+6. Reopen Quick Start and finish with `START AND SET UP FLIC 2`; confirm Device opens without losing the existing pairing.
+7. On a clean installation, confirm Quick Start appears before Android permission dialogs and does not return after completion or Skip.
 
 ## Supabase backend
 

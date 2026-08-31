@@ -1,10 +1,10 @@
 # Fiskentra Project Status
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 ## Current stage
 
-- Version: `v0.13`
+- Version: `v0.14`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -26,6 +26,7 @@ Last updated: 2026-08-31
 - Fishing map layers: Outdoor, Satellite/Hybrid, Topographic and Ocean are selectable and persist locally; physical validation pending
 - Accounts and profiles: production-shaped email/password UI, encrypted sessions, email deep links, recovery and private owner-only profile RLS implemented; physical validation pending
 - Settings: device-local units, Explore start page, default map layer, target fish, delete confirmation and sync overview implemented; physical validation pending
+- Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
 
 ## Selected hardware
 
@@ -64,7 +65,7 @@ Last updated: 2026-08-31
 | `v0.12` | Add user profiles and authentication | Superseded by v0.12.1 profile/auth hotfix |
 | `v0.12.1` | Repair profiles and complete the real-user auth flow | Implemented · physical validation pending |
 | `v0.13` | Add settings | Implemented · physical validation pending |
-| `v0.14` | Add onboarding | Planned |
+| `v0.14` | Add onboarding | Implemented · physical validation pending |
 | `v0.15` | Closed beta | Planned |
 | `v1.0` | Official public launch | Planned |
 
@@ -288,3 +289,24 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 6. Change the default map layer and target fish, restart Fiskentra and confirm both choices persist.
 7. Disable delete confirmation, delete a disposable point, then re-enable confirmation and verify the dialog returns.
 8. Create a point offline, confirm Settings reports one pending point, restore internet and use Sync Now.
+
+## v0.14 implementation
+
+- A clean installation now opens a four-step quick start before Android permission dialogs.
+- The welcome step explains the GPS, journal, weather and local-first field workflow.
+- The permission step explains Location, Nearby devices and Notifications individually, shows their current Android state and requests only permissions that are still missing.
+- The Flic 2 step documents the production mapping: single press Catch, double press Waypoint and hold Tackle change, including offline queue behavior.
+- The final step keeps account creation optional and offers either Home or direct Device setup.
+- Existing installations with saved local state, an account, Flic pairing, track, journal or cloud identity are migrated as onboarding-complete and continue to Home normally.
+- Quick Start can be replayed from Profile → Settings without resetting preferences, pairing, account session, journal or saved points.
+- Completing or skipping onboarding persists locally and does not depend on Supabase or internet access.
+
+## v0.14 physical test gate
+
+1. Install v0.14 over v0.13 without uninstalling or clearing data; confirm Home opens normally and all existing data remains.
+2. Open Profile → Settings → View Quick Start and verify Back, Continue, Close and all four progress states.
+3. Open the permission step and confirm the three status rows match Android permissions; use Allow Field Access and deny one permission to confirm onboarding can still continue.
+4. Confirm the Flic action mapping and offline explanation are accurate.
+5. Finish on Home, reopen Quick Start, then finish on Device and confirm the existing button remains paired.
+6. Clear app data or use a clean test installation and confirm onboarding appears before system permission prompts.
+7. Complete or Skip, restart Fiskentra and confirm onboarding does not appear again automatically.
