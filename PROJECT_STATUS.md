@@ -4,7 +4,7 @@ Last updated: 2026-08-31
 
 ## Current stage
 
-- Version: `v0.12.1`
+- Version: `v0.13`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -25,6 +25,7 @@ Last updated: 2026-08-31
 - Offline sync recovery: one process-wide sequential queue now retries persisted local points when Android validates internet access
 - Fishing map layers: Outdoor, Satellite/Hybrid, Topographic and Ocean are selectable and persist locally; physical validation pending
 - Accounts and profiles: production-shaped email/password UI, encrypted sessions, email deep links, recovery and private owner-only profile RLS implemented; physical validation pending
+- Settings: device-local units, Explore start page, default map layer, target fish, delete confirmation and sync overview implemented; physical validation pending
 
 ## Selected hardware
 
@@ -62,7 +63,7 @@ Last updated: 2026-08-31
 | `v0.11` | Improve fishing maps and layers | Implemented · physical validation pending |
 | `v0.12` | Add user profiles and authentication | Superseded by v0.12.1 profile/auth hotfix |
 | `v0.12.1` | Repair profiles and complete the real-user auth flow | Implemented · physical validation pending |
-| `v0.13` | Add settings | Planned |
+| `v0.13` | Add settings | Implemented · physical validation pending |
 | `v0.14` | Add onboarding | Planned |
 | `v0.15` | Closed beta | Planned |
 | `v1.0` | Official public launch | Planned |
@@ -265,3 +266,25 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 6. Restore internet and confirm the existing automatic point-sync behavior is unchanged.
 7. Sign out and verify local points and journal data remain, while Profile returns to local mode.
 8. Request a password reset, open the newest email and set a new password in Fiskentra.
+
+## v0.13 implementation
+
+- Added a Settings screen reachable from Profile in both local mode and signed-in mode.
+- Metric remains the default; Imperial changes displayed weather, catch summaries and catch-entry fields while canonical local/cloud storage stays in centimetres, kilograms and Celsius.
+- Explore can default to Map or Weather when opened from another bottom tab. Opening a saved point always overrides the preference and opens the map itself.
+- Outdoor, Satellite, Topographic and Ocean can be selected from Settings using the same persisted map-layer preference as Explore.
+- Pike, Perch, Zander, Trout and Carp can be selected as the default fishing-outlook species using the existing weather preference.
+- Delete confirmation remains enabled by default and can be disabled explicitly. Failed cloud deletion still preserves the local point.
+- Settings shows local saved-point and pending-sync counts and exposes the existing safe sync action without adding a destructive clear-data command.
+- All settings remain local to the phone and work without an account or internet connection.
+
+## v0.13 physical test gate
+
+1. Install v0.13 over v0.12.1 without uninstalling or clearing data; confirm existing Flic pairing, points, journal and account session remain.
+2. Open Profile → Settings in local mode and signed-in mode.
+3. Switch Metric to Imperial and verify Weather, forecast cards, calendar temperatures and catch summaries show °F, mph, inches and pounds.
+4. Edit an existing catch in Imperial, switch back to Metric and confirm the converted value is unchanged rather than duplicated or corrupted.
+5. Select Weather as the Explore start page, leave Explore, then reopen it from another tab. Open a saved point and confirm it still opens Map.
+6. Change the default map layer and target fish, restart Fiskentra and confirm both choices persist.
+7. Disable delete confirmation, delete a disposable point, then re-enable confirmation and verify the dialog returns.
+8. Create a point offline, confirm Settings reports one pending point, restore internet and use Sync Now.
