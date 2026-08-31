@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.11` Internal Prototype / Pre-Alpha.
+- Current version: `v0.12.1` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate selectable fishing-map layers while retaining v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
+- Current target: validate optional user accounts and private profiles while retaining v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -26,6 +26,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Selectable MapTiler Outdoor, Satellite/Hybrid, Topographic and Ocean maps powered by MapLibre Native Android.
 - The selected layer persists across app restarts, while Fiskentra overlays keep current position, track, saved points and selected point visible on every layer.
 - Map loading and failure status is shown without exposing the MapTiler API key.
+- Optional Supabase email/password registration and sign-in; local Flic, GPS, map and journal features remain available without an account.
+- Full-page Sign Up and Sign In forms with confirmation-email resend, password visibility, safe inline validation and password recovery.
+- Email confirmation and password-reset links can return directly to Fiskentra through the private Android callback `com.fiskentra.app://auth/callback`.
+- Access and refresh tokens are encrypted on-device with an Android Keystore AES-GCM key; passwords are never stored.
+- `public.profiles` uses owner-only authenticated RLS policies and is inaccessible to unauthenticated clients.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
 - Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
@@ -191,6 +196,18 @@ The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake dep
 5. Leave one layer selected, restart Fiskentra and confirm the same layer is restored.
 6. Disable internet, reopen Map and confirm a clear loading/error state appears without affecting local points or Flic capture.
 
+### v0.12.1 account and profile test
+
+1. Install v0.12.1 over v0.11 or v0.12 without uninstalling or clearing app data.
+2. Open `Profile` and confirm local mode still allows Map, Saved, Log, Device and all three Flic actions.
+3. Create an account with an email address you can receive mail at and a password of at least eight characters.
+4. Open the Supabase confirmation email and confirm that Android returns directly to Fiskentra and signs in.
+5. Change the display name, restart Fiskentra and confirm the encrypted session and profile name are restored.
+6. Disable internet and confirm the existing account remains visible offline and local field capture still works.
+7. Sign out and confirm saved points, the journal and Flic pairing remain on the phone.
+8. Confirm an incorrect password shows a safe error and never exposes an access token or raw server response.
+9. Use `FORGOT PASSWORD?`, open the newest reset email and set a new password inside Fiskentra.
+
 ## Supabase backend
 
 Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
@@ -203,6 +220,10 @@ Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
 `local.properties` is ignored by Git. Gradle exposes only the URL and publishable key to `BuildConfig`, and `SupabaseConfig` is the single Android-side source for backend configuration. At runtime, `SupabaseConnection` performs a lightweight REST health check and the Home screen reports whether Fiskentra cloud is reachable.
 
 Saved points can sync to Supabase through the REST Data API after this prototype table is created. The app stores each point locally first, enriches it with Open-Meteo conditions when available, then shows "Syncing to Supabase...", "Synced to cloud" or "Saved locally ... sync pending" in Saved. v0.10 keeps one sequential queue for the Activity and background Flic service, recovers interrupted states and retries unsynced points automatically when Android validates internet access again. The `SYNC LOCAL POINTS` button remains as a manual retry. v0.9 upserts by the stable point ID, so catch-detail edits update the existing row instead of creating duplicates. v0.9.1 adds the required `X-Device-Id` header to that upsert so the device-owned RLS INSERT/UPDATE policies accept it. If an optional JSONB column is unavailable, core point sync retries without that enrichment.
+
+v0.12.1 adds optional Supabase Auth without making login a prerequisite for field use. Email confirmation is enabled on the Fiskentra Supabase project. Add `com.fiskentra.app://auth/callback` under **Authentication → URL Configuration → Redirect URLs** so confirmation and recovery emails return to the Android app. The default Supabase mailer is for team-member testing only; configure custom SMTP under **Authentication → Emails → SMTP Settings** before inviting external beta users. The account profile table is private by default: an authenticated user can select, insert and update only the row whose `id` equals `auth.uid()`. Existing saved points remain device-owned and are not silently reassigned when a user signs in.
+
+The applied profile migrations are tracked at `supabase/migrations/20260831121112_add_private_user_profiles.sql` and `supabase/migrations/20260831153334_repair_profiles_primary_key.sql`. The follow-up `20260831163827_optimize_saved_points_owner_policy_lookup.sql` removes per-row request-header evaluation from the existing device-owner policies.
 
 When a saved point is deleted, the app first shows `Deleting from cloud...`, then sends `DELETE /rest/v1/saved_points?select=local_id&device_id=eq.<install-id>&local_id=eq.<point-id>` to Supabase with an `X-Device-Id` header. Supabase must have a matching `SELECT` policy because RLS only lets `DELETE` affect rows that are visible to that role. If Supabase returns the deleted row, the app shows `Deleted from cloud` and removes the point from local storage. If the cloud delete fails or returns zero rows, the app shows `Cloud delete failed · try again` and the point stays on the phone so the user can retry with the normal `DELETE` action instead of leaving orphaned GPS data in the database.
 

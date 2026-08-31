@@ -1,16 +1,16 @@
 # Fiskentra Project Status
 
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 ## Current stage
 
-- Version: `v0.11`
+- Version: `v0.12.1`
 - Stage: Internal Prototype / Pre-Alpha
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
 - Product: https://flic.io/shop/flic-2-single-pack
 - Retired hardware plan: BlueUP SafeX Lite
-- Build status: Debug APK compiles successfully
+- Build status: Debug APK, Android Lint and signature verification pass
 - Physical Flic 2 validation: Foreground callbacks confirmed; locked-phone validation remains a field test
 - Physical Flic 2 callbacks: Confirmed working by user on 2026-08-18
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
@@ -24,6 +24,7 @@ Last updated: 2026-08-30
 - Supabase sync hotfix: v0.9.1 sends `X-Device-Id` on point upserts; live Data API verification returned HTTP 401 without the header and HTTP 201 with it
 - Offline sync recovery: one process-wide sequential queue now retries persisted local points when Android validates internet access
 - Fishing map layers: Outdoor, Satellite/Hybrid, Topographic and Ocean are selectable and persist locally; physical validation pending
+- Accounts and profiles: production-shaped email/password UI, encrypted sessions, email deep links, recovery and private owner-only profile RLS implemented; physical validation pending
 
 ## Selected hardware
 
@@ -59,7 +60,8 @@ Last updated: 2026-08-30
 | `v0.9.1` | Fix Supabase RLS authorization for point upserts | Complete · advanced to v0.10 |
 | `v0.10` | Polish offline storage and sync recovery | Complete · physical recovery test confirmed by user on 2026-08-30 |
 | `v0.11` | Improve fishing maps and layers | Implemented · physical validation pending |
-| `v0.12` | Add user profiles and authentication | Planned |
+| `v0.12` | Add user profiles and authentication | Superseded by v0.12.1 profile/auth hotfix |
+| `v0.12.1` | Repair profiles and complete the real-user auth flow | Implemented · physical validation pending |
 | `v0.13` | Add settings | Planned |
 | `v0.14` | Add onboarding | Planned |
 | `v0.15` | Closed beta | Planned |
@@ -235,3 +237,31 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 4. Open a saved point on Map, switch layers and confirm the point stays centered and highlighted.
 5. Restart Fiskentra and confirm the last selected layer is restored.
 6. Test without internet and confirm the layer status reports failure while local point saving and Flic actions continue normally.
+
+## v0.12.1 implementation
+
+- Added an optional Profile destination; authentication never gates Flic, GPS, Saved, Map or the fishing journal.
+- Replaced temporary auth dialogs with dedicated Sign Up, Sign In and password-recovery forms.
+- Email/password sign-up handles confirmation, resend and app deep-link return with safe user-facing errors.
+- Password recovery opens a verified in-app new-password form.
+- A valid access/refresh-token session is restored on launch and refreshed through Supabase Auth when needed.
+- Passwords are never persisted. Session JSON is encrypted with AES-GCM using a non-exportable Android Keystore key.
+- Sign-out attempts to revoke the Supabase session and always clears the encrypted local session, including offline use.
+- Display names are stored in `public.profiles`, not trusted JWT user metadata, and can be edited from the Profile screen.
+- Migration `20260831121112_add_private_user_profiles` created the profiles table with owner-only SELECT, INSERT and UPDATE policies.
+- Migration `20260831153334_repair_profiles_primary_key` removed an accidental empty `Email` array column and restored `profiles.id` as the primary key without deleting the existing profile row.
+- Migration `20260831163827_optimize_saved_points_owner_policy_lookup` removes the remaining Supabase performance-advisor warnings without changing device ownership rules.
+- Anonymous Data API access to profiles returns HTTP 401. Security Advisor reports only the Pro-plan leaked-password-protection recommendation.
+- Android system-bar insets prevent the title and bottom navigation from overlapping status/navigation controls; five primary tabs replace the crowded six-tab layout, with Device still reachable from Home.
+- Existing saved points stay device-owned in v0.12, avoiding any silent ownership or data migration during sign-in.
+
+## v0.12.1 physical test gate
+
+1. Add `com.fiskentra.app://auth/callback` to Supabase Auth Redirect URLs, then install v0.12.1 over v0.11/v0.12 without clearing app data.
+2. Verify all field features still work in local mode without creating an account.
+3. Create an email/password account and confirm the email returns directly to Fiskentra.
+4. Edit the display name and restart Fiskentra; the same account and profile should be restored.
+5. Disable internet, reopen Profile and save all three Flic actions; the profile remains locally available and points remain local-first.
+6. Restore internet and confirm the existing automatic point-sync behavior is unchanged.
+7. Sign out and verify local points and journal data remain, while Profile returns to local mode.
+8. Request a password reset, open the newest email and set a new password in Fiskentra.
