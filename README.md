@@ -4,9 +4,9 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.12.1` Internal Prototype / Pre-Alpha.
+- Current version: `v0.13` Internal Prototype / Pre-Alpha.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate optional user accounts and private profiles while retaining v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
+- Current target: validate device-local settings while retaining v0.12.1 accounts, v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -31,6 +31,10 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Email confirmation and password-reset links can return directly to Fiskentra through the private Android callback `com.fiskentra.app://auth/callback`.
 - Access and refresh tokens are encrypted on-device with an Android Keystore AES-GCM key; passwords are never stored.
 - `public.profiles` uses owner-only authenticated RLS policies and is inaccessible to unauthenticated clients.
+- Profile now opens a device-local Settings screen in both local and signed-in modes.
+- Metric/Imperial display and catch-entry units can be changed without changing canonical local or Supabase values.
+- Explore start page, map layer, target fish and delete confirmation persist across restarts.
+- Settings reports saved and pending-sync counts and can start the existing safe retry queue.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
 - Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
@@ -207,6 +211,16 @@ The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake dep
 7. Sign out and confirm saved points, the journal and Flic pairing remain on the phone.
 8. Confirm an incorrect password shows a safe error and never exposes an access token or raw server response.
 9. Use `FORGOT PASSWORD?`, open the newest reset email and set a new password inside Fiskentra.
+
+### v0.13 settings test
+
+1. Install v0.13 over v0.12.1 without uninstalling or clearing app data.
+2. Open `Profile → Settings` and switch Metric/Imperial; verify weather, forecast, calendar and catch values update.
+3. Edit an existing catch in Imperial, switch back to Metric and confirm the same canonical value is retained.
+4. Select the Explore start page, map layer and target fish, restart Fiskentra and confirm all choices persist.
+5. Open a saved point while Weather is the Explore default and confirm the selected point still opens on Map.
+6. Disable and re-enable delete confirmation using a disposable point.
+7. Create a point offline and confirm Settings reports it as pending, then restore internet and use `SYNC NOW`.
 
 ## Supabase backend
 

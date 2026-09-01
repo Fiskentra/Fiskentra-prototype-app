@@ -35,6 +35,7 @@ import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
+import com.fiskentra.app.data.UserPreferences;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.FishingDay;
@@ -104,6 +105,7 @@ public final class MainActivity extends Activity implements
     private SharedPreferences syncPrefs;
     private SharedPreferences weatherPrefs;
     private SharedPreferences mapPrefs;
+    private UserPreferences userPreferences;
     private Location lastLocation;
     private String screen = "home";
     private String bleStatus = "No device connected";
@@ -172,9 +174,11 @@ public final class MainActivity extends Activity implements
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
         mapPrefs = getSharedPreferences(MAP_PREFS, MODE_PRIVATE);
+        userPreferences = new UserPreferences(this);
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedMapStyle = MapTilerMapView.normalizeStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
+        showingWeatherPage = userPreferences.defaultWeatherPage();
         selectedLogDateMillis = System.currentTimeMillis();
         calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
 
@@ -324,6 +328,7 @@ public final class MainActivity extends Activity implements
             case "saved": content.addView(savedScreen()); break;
             case "device": content.addView(deviceScreen()); break;
             case "profile": content.addView(profileScreen()); break;
+            case "settings": content.addView(settingsScreen()); break;
             default: content.addView(homeScreen()); break;
         }
         renderNav();
@@ -343,13 +348,20 @@ public final class MainActivity extends Activity implements
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
         item.setPadding(dp(4), 0, dp(4), 0);
-        TextView i = text(icon, 21, screen.equals(target) ? ACCENT : MUTED, Typeface.BOLD);
+        boolean selected = screen.equals(target)
+                || ("profile".equals(target) && "settings".equals(screen));
+        TextView i = text(icon, 21, selected ? ACCENT : MUTED, Typeface.BOLD);
         i.setGravity(Gravity.CENTER);
-        TextView l = text(label, 11, screen.equals(target) ? ACCENT : MUTED, Typeface.NORMAL);
+        TextView l = text(label, 11, selected ? ACCENT : MUTED, Typeface.NORMAL);
         l.setGravity(Gravity.CENTER);
         item.addView(i);
         item.addView(l);
-        item.setOnClickListener(v -> render(target));
+        item.setOnClickListener(v -> {
+            if ("map".equals(target) && !"map".equals(screen)) {
+                showingWeatherPage = userPreferences.defaultWeatherPage();
+            }
+            render(target);
+        });
         nav.addView(item, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
     }
 
@@ -412,7 +424,7 @@ public final class MainActivity extends Activity implements
             dayCopy.addView(text(formatDuration(System.currentTimeMillis() - activeDay.startedAt)
                     + " · " + activeStats.points.size() + " events", 13, TEXT, Typeface.NORMAL));
             if (activeStats.lastWeather != null) {
-                dayCopy.addView(text(activeStats.lastWeather.compactSummary(),
+                dayCopy.addView(text(weatherSummary(activeStats.lastWeather),
                         11, MUTED, Typeface.NORMAL));
             }
         }
@@ -446,7 +458,7 @@ public final class MainActivity extends Activity implements
         tripCopy.addView(text(tracking ? trackStore.points().size() + " track points" : "Record your route while Fiskentra is open", 13, TEXT, Typeface.NORMAL));
         WeatherSnapshot tripWeather = tracking ? trackStore.startWeather() : trackStore.endWeather();
         if (tripWeather != null) {
-            tripCopy.addView(text((tracking ? "Start · " : "Finish · ") + tripWeather.compactSummary(),
+            tripCopy.addView(text((tracking ? "Start · " : "Finish · ") + weatherSummary(tripWeather),
                     11, MUTED, Typeface.NORMAL));
         }
         tripRow.addView(tripCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -661,14 +673,14 @@ public final class MainActivity extends Activity implements
                         ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
             }
         } else {
-            weatherCard.addView(text("START · " + stats.firstWeather.compactSummary(),
+            weatherCard.addView(text("START · " + weatherSummary(stats.firstWeather),
                     14, TEXT, Typeface.BOLD));
             weatherCard.addView(text(weatherDetails(stats.firstWeather),
                     11, MUTED, Typeface.NORMAL));
             if (stats.lastWeather != null
                     && stats.lastWeather.observedAt != stats.firstWeather.observedAt) {
                 weatherCard.addView(spacer(10));
-                weatherCard.addView(text("LATEST · " + stats.lastWeather.compactSummary(),
+                weatherCard.addView(text("LATEST · " + weatherSummary(stats.lastWeather),
                         14, TEXT, Typeface.BOLD));
                 weatherCard.addView(text(weatherDetails(stats.lastWeather),
                         11, MUTED, Typeface.NORMAL));
@@ -692,11 +704,11 @@ public final class MainActivity extends Activity implements
                     session.effectiveEnd(System.currentTimeMillis()) - session.startedAt),
                     12, MUTED, Typeface.NORMAL));
             if (session.startWeather != null) {
-                sessionCard.addView(text("Start · " + session.startWeather.compactSummary(),
+                sessionCard.addView(text("Start · " + weatherSummary(session.startWeather),
                         11, MUTED, Typeface.NORMAL));
             }
             if (session.endWeather != null) {
-                sessionCard.addView(text("Finish · " + session.endWeather.compactSummary(),
+                sessionCard.addView(text("Finish · " + weatherSummary(session.endWeather),
                         11, MUTED, Typeface.NORMAL));
             }
             body.addView(sessionCard, cardMargins());
@@ -726,11 +738,11 @@ public final class MainActivity extends Activity implements
                 eventCopy.addView(text(formatTime(point.timestamp) + " · "
                         + formatCoords(point.latitude, point.longitude), 11, MUTED, Typeface.NORMAL));
                 if (point.catchDetails != null) {
-                    eventCopy.addView(text(point.catchDetails.summary(),
+                    eventCopy.addView(text(catchSummary(point.catchDetails),
                             11, SUCCESS, Typeface.BOLD));
                 }
                 if (point.weather != null) {
-                    eventCopy.addView(text(point.weather.compactSummary(),
+                    eventCopy.addView(text(weatherSummary(point.weather),
                             11, MUTED, Typeface.NORMAL));
                 }
                 LinearLayout.LayoutParams eventCopyLp = new LinearLayout.LayoutParams(
@@ -799,7 +811,7 @@ public final class MainActivity extends Activity implements
                 String cellLabel = String.valueOf(day);
                 if (dayWeather != null) {
                     cellLabel += "\n" + dayWeather.symbol() + " "
-                            + Math.round(dayWeather.temperatureC) + "°";
+                            + formatTemperature(dayWeather.temperatureC);
                 } else if (hasLog) {
                     cellLabel += " •";
                 }
@@ -1095,7 +1107,7 @@ public final class MainActivity extends Activity implements
             selectedCard.addView(text(formatDate(selected.timestamp), 12, MUTED, Typeface.NORMAL));
             if (selected.catchDetails != null) {
                 selectedCard.addView(spacer(8));
-                selectedCard.addView(text(selected.catchDetails.summary(), 13, SUCCESS, Typeface.BOLD));
+                selectedCard.addView(text(catchSummary(selected.catchDetails), 13, SUCCESS, Typeface.BOLD));
                 if (!selected.catchDetails.secondarySummary().isEmpty()) {
                     selectedCard.addView(text(selected.catchDetails.secondarySummary(),
                             11, MUTED, Typeface.NORMAL));
@@ -1103,7 +1115,7 @@ public final class MainActivity extends Activity implements
             }
             if (selected.weather != null) {
                 selectedCard.addView(spacer(8));
-                selectedCard.addView(text(selected.weather.compactSummary(), 13, TEXT, Typeface.BOLD));
+                selectedCard.addView(text(weatherSummary(selected.weather), 13, TEXT, Typeface.BOLD));
                 selectedCard.addView(text(weatherDetails(selected.weather), 11, MUTED, Typeface.NORMAL));
             }
             body.addView(selectedCard, cardMargins());
@@ -1190,11 +1202,11 @@ public final class MainActivity extends Activity implements
             header.setGravity(Gravity.CENTER_VERTICAL);
             header.addView(text("NOW · " + current.condition().toUpperCase(Locale.ROOT),
                     11, ACCENT, Typeface.BOLD), weighted());
-            header.addView(text(current.symbol() + "  " + Math.round(current.temperatureC) + "°C",
+            header.addView(text(current.symbol() + "  " + formatTemperature(current.temperatureC),
                     24, TEXT, Typeface.BOLD));
             now.addView(header);
             now.addView(spacer(8));
-            now.addView(text(current.compactSummary(), 13, TEXT, Typeface.BOLD));
+            now.addView(text(weatherSummary(current), 13, TEXT, Typeface.BOLD));
             now.addView(text(weatherDetails(current), 11, MUTED, Typeface.NORMAL));
             now.addView(text("Updated " + formatTime(weatherForecast.fetchedAt)
                     + " · " + weatherForecast.timezone, 10, MUTED, Typeface.NORMAL));
@@ -1271,11 +1283,11 @@ public final class MainActivity extends Activity implements
                 10, fishingScoreColor(assessment.score), Typeface.BOLD);
         header.addView(score);
         card.addView(header);
-        card.addView(text(day.condition() + " · " + Math.round(day.minTemperatureC) + "–"
-                + Math.round(day.maxTemperatureC) + "°C", 12, TEXT, Typeface.BOLD));
+        card.addView(text(day.condition() + " · " + formatTemperatureRange(
+                day.minTemperatureC, day.maxTemperatureC), 12, TEXT, Typeface.BOLD));
         card.addView(text("Rain " + day.precipitationProbabilityPercent + "% · "
-                + String.format(Locale.getDefault(), "%.1f mm", day.precipitationMm)
-                + " · Wind " + Math.round(day.maxWindSpeedKmh) + " km/h",
+                + formatPrecipitation(day.precipitationMm)
+                + " · Wind " + formatWind(day.maxWindSpeedKmh),
                 11, MUTED, Typeface.NORMAL));
         if (!day.sunrise.isEmpty() && !day.sunset.isEmpty()) {
             card.addView(text("Sunrise " + forecastClock(day.sunrise) + " · Sunset "
@@ -1432,12 +1444,18 @@ public final class MainActivity extends Activity implements
         TextView delete = text(deleting ? "DELETING" : "DELETE", 10, deleting ? WARNING : DANGER, Typeface.BOLD);
         delete.setPadding(dp(8), dp(4), 0, dp(4));
         if (!deleting) {
-            delete.setOnClickListener(v -> new AlertDialog.Builder(this)
-                    .setTitle("Delete this moment?")
-                    .setMessage("Fiskentra will remove this point from Supabase, then from this device.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Delete", (dialog, which) -> deletePoint(point))
-                    .show());
+            delete.setOnClickListener(v -> {
+                if (!userPreferences.confirmDelete()) {
+                    deletePoint(point);
+                    return;
+                }
+                new AlertDialog.Builder(this)
+                        .setTitle("Delete this moment?")
+                        .setMessage("Fiskentra will remove this point from Supabase, then from this device.")
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Delete", (dialog, which) -> deletePoint(point))
+                        .show();
+            });
         }
         header.addView(delete);
         card.addView(header);
@@ -1449,7 +1467,7 @@ public final class MainActivity extends Activity implements
             if (point.catchDetails == null) {
                 card.addView(text("○  Catch details not added", 12, MUTED, Typeface.BOLD));
             } else {
-                card.addView(text(point.catchDetails.summary(), 14, SUCCESS, Typeface.BOLD));
+                card.addView(text(catchSummary(point.catchDetails), 14, SUCCESS, Typeface.BOLD));
                 if (!point.catchDetails.secondarySummary().isEmpty()) {
                     card.addView(text(point.catchDetails.secondarySummary(),
                             11, MUTED, Typeface.NORMAL));
@@ -1467,7 +1485,7 @@ public final class MainActivity extends Activity implements
         if (point.weather == null) {
             card.addView(text("○  Weather not captured", 12, MUTED, Typeface.BOLD));
         } else {
-            card.addView(text(point.weather.compactSummary(), 13, TEXT, Typeface.BOLD));
+            card.addView(text(weatherSummary(point.weather), 13, TEXT, Typeface.BOLD));
             card.addView(text(weatherDetails(point.weather), 11, MUTED, Typeface.NORMAL));
             card.addView(text("Observed " + formatTime(point.weather.observedAt)
                     + " · " + point.weather.provider, 10, MUTED, Typeface.NORMAL));
@@ -1516,9 +1534,10 @@ public final class MainActivity extends Activity implements
 
         EditText species = catchField("Fish species", InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
-        EditText length = catchField("Length (cm)", InputType.TYPE_CLASS_NUMBER
+        boolean imperial = userPreferences.usesImperialUnits();
+        EditText length = catchField(imperial ? "Length (in)" : "Length (cm)", InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText weight = catchField("Weight (kg)", InputType.TYPE_CLASS_NUMBER
+        EditText weight = catchField(imperial ? "Weight (lb)" : "Weight (kg)", InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         EditText lure = catchField("Lure or bait", InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -1531,8 +1550,8 @@ public final class MainActivity extends Activity implements
 
         if (existing != null) {
             species.setText(existing.species);
-            if (existing.lengthCm > 0d) length.setText(decimalInput(existing.lengthCm));
-            if (existing.weightKg > 0d) weight.setText(decimalInput(existing.weightKg));
+            if (existing.lengthCm > 0d) length.setText(decimalInput(displayLength(existing.lengthCm)));
+            if (existing.weightKg > 0d) weight.setText(decimalInput(displayWeight(existing.weightKg)));
             lure.setText(existing.lure);
             notes.setText(existing.notes);
             released.setChecked(existing.released);
@@ -1554,8 +1573,8 @@ public final class MainActivity extends Activity implements
                     String photoPath = existing == null ? "" : existing.localPhotoPath;
                     CatchDetails details = new CatchDetails(
                             species.getText().toString(),
-                            positiveNumber(length.getText().toString()),
-                            positiveNumber(weight.getText().toString()),
+                            storedLength(positiveNumber(length.getText().toString())),
+                            storedWeight(positiveNumber(weight.getText().toString())),
                             lure.getText().toString(),
                             notes.getText().toString(),
                             released.isChecked(),
@@ -1733,6 +1752,7 @@ public final class MainActivity extends Activity implements
             privacy.addView(text("Passwords are sent directly to Supabase Auth and are never stored by Fiskentra. Session tokens are encrypted with Android Keystore on this phone.",
                     12, TEXT, Typeface.NORMAL));
             body.addView(privacy, cardMargins());
+            body.addView(settingsEntryCard(), cardMargins());
             return scroll;
         }
 
@@ -1776,6 +1796,12 @@ public final class MainActivity extends Activity implements
         actions.addView(edit, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
         actions.addView(spacer(10));
+        Button settings = smallButton("SETTINGS");
+        settings.setEnabled(!authBusy);
+        settings.setOnClickListener(v -> render("settings"));
+        actions.addView(settings, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        actions.addView(spacer(10));
         Button signOut = smallButton("SIGN OUT");
         signOut.setEnabled(!authBusy);
         signOut.setOnClickListener(v -> confirmSignOut());
@@ -1783,6 +1809,187 @@ public final class MainActivity extends Activity implements
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         body.addView(actions, cardMargins());
         return scroll;
+    }
+
+    private View settingsEntryCard() {
+        LinearLayout entry = card();
+        entry.addView(text("APP SETTINGS", 11, ACCENT, Typeface.BOLD));
+        entry.addView(text("Units, map start page, fishing outlook and field preferences.",
+                12, MUTED, Typeface.NORMAL));
+        entry.addView(spacer(12));
+        Button open = smallButton("OPEN SETTINGS");
+        open.setOnClickListener(v -> render("settings"));
+        entry.addView(open, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        return entry;
+    }
+
+    private View settingsScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(20), dp(20), dp(20), dp(28));
+        scroll.addView(body);
+
+        body.addView(pageTitle("Settings", "FISKENTRA · THIS PHONE"));
+        body.addView(spacer(18));
+
+        LinearLayout units = card();
+        units.addView(text("MEASUREMENT UNITS", 11, ACCENT, Typeface.BOLD));
+        units.addView(text("Saved values stay unchanged; only display and catch entry units change.",
+                12, MUTED, Typeface.NORMAL));
+        units.addView(spacer(12));
+        LinearLayout unitChoices = row();
+        boolean imperial = userPreferences.usesImperialUnits();
+        Button metric = settingsChoice("METRIC · °C / cm / kg", !imperial);
+        metric.setOnClickListener(v -> {
+            userPreferences.setUsesImperialUnits(false);
+            render("settings");
+        });
+        unitChoices.addView(metric, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        unitChoices.addView(spaceWide());
+        Button imperialChoice = settingsChoice("IMPERIAL · °F / in / lb", imperial);
+        imperialChoice.setOnClickListener(v -> {
+            userPreferences.setUsesImperialUnits(true);
+            render("settings");
+        });
+        unitChoices.addView(imperialChoice, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        units.addView(unitChoices);
+        body.addView(units, cardMargins());
+
+        LinearLayout explore = card();
+        explore.addView(text("EXPLORE START PAGE", 11, ACCENT, Typeface.BOLD));
+        explore.addView(text("Choose what opens when you enter Explore from another tab.",
+                12, MUTED, Typeface.NORMAL));
+        explore.addView(spacer(12));
+        LinearLayout pageChoices = row();
+        boolean weatherDefault = userPreferences.defaultWeatherPage();
+        Button mapChoice = settingsChoice("MAP", !weatherDefault);
+        mapChoice.setOnClickListener(v -> {
+            userPreferences.setDefaultWeatherPage(false);
+            render("settings");
+        });
+        pageChoices.addView(mapChoice, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        pageChoices.addView(spaceWide());
+        Button weatherChoice = settingsChoice("WEATHER", weatherDefault);
+        weatherChoice.setOnClickListener(v -> {
+            userPreferences.setDefaultWeatherPage(true);
+            render("settings");
+        });
+        pageChoices.addView(weatherChoice, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        explore.addView(pageChoices);
+        explore.addView(spacer(16));
+        explore.addView(text("DEFAULT MAP LAYER", 10, MUTED, Typeface.BOLD));
+        explore.addView(spacer(8));
+        addSettingsMapLayerRow(explore, new String[] {
+                MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID
+        }, new String[] {"OUTDOOR", "SATELLITE"});
+        explore.addView(spacer(8));
+        addSettingsMapLayerRow(explore, new String[] {
+                MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN
+        }, new String[] {"TOPOGRAPHIC", "OCEAN"});
+        body.addView(explore, cardMargins());
+
+        LinearLayout fish = card();
+        fish.addView(text("FISHING OUTLOOK", 11, ACCENT, Typeface.BOLD));
+        fish.addView(text("Default target fish for the seven-day weather outlook.",
+                12, MUTED, Typeface.NORMAL));
+        fish.addView(spacer(12));
+        for (int index = 0; index < FishingAdvisor.SPECIES.length; index += 2) {
+            LinearLayout fishRow = row();
+            addSpeciesSetting(fishRow, FishingAdvisor.SPECIES[index]);
+            if (index + 1 < FishingAdvisor.SPECIES.length) {
+                fishRow.addView(spaceWide());
+                addSpeciesSetting(fishRow, FishingAdvisor.SPECIES[index + 1]);
+            } else {
+                fishRow.addView(new View(this), new LinearLayout.LayoutParams(
+                        0, dp(44), 1f));
+            }
+            fish.addView(fishRow);
+            if (index + 2 < FishingAdvisor.SPECIES.length) fish.addView(spacer(8));
+        }
+        body.addView(fish, cardMargins());
+
+        LinearLayout safety = card();
+        safety.addView(text("SAFETY", 11, ACCENT, Typeface.BOLD));
+        CheckBox confirmDelete = new CheckBox(this);
+        confirmDelete.setText("Confirm before deleting a saved point");
+        confirmDelete.setTextColor(TEXT);
+        confirmDelete.setTextSize(13);
+        confirmDelete.setChecked(userPreferences.confirmDelete());
+        confirmDelete.setOnCheckedChangeListener((button, checked) ->
+                userPreferences.setConfirmDelete(checked));
+        safety.addView(confirmDelete, matchWrap());
+        safety.addView(text("Turning this off makes DELETE act immediately. Cloud deletion still keeps the point locally if it fails.",
+                11, MUTED, Typeface.NORMAL));
+        body.addView(safety, cardMargins());
+
+        List<SavedPoint> points = pointStore.all();
+        int pending = pendingSyncCount(points);
+        LinearLayout data = card();
+        data.addView(text("LOCAL DATA & SYNC", 11, ACCENT, Typeface.BOLD));
+        data.addView(spacer(7));
+        data.addView(text(points.size() + " saved moments on this phone", 18, TEXT, Typeface.BOLD));
+        data.addView(text(pending == 0 ? "All points are synced"
+                        : pending + (pending == 1 ? " point is waiting to sync" : " points are waiting to sync"),
+                12, pending == 0 ? SUCCESS : WARNING, Typeface.NORMAL));
+        data.addView(spacer(12));
+        Button sync = smallButton(pending == 0 ? "CHECK SYNC" : "SYNC NOW");
+        sync.setOnClickListener(v -> syncPendingPoints());
+        data.addView(sync, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        body.addView(data, cardMargins());
+
+        LinearLayout about = card();
+        about.addView(text("ABOUT", 11, MUTED, Typeface.BOLD));
+        about.addView(text("Fiskentra v" + BuildConfig.VERSION_NAME, 16, TEXT, Typeface.BOLD));
+        about.addView(text("Settings are stored only on this phone and work without an account or internet connection.",
+                12, MUTED, Typeface.NORMAL));
+        about.addView(spacer(12));
+        Button back = smallButton("BACK TO PROFILE");
+        back.setOnClickListener(v -> render("profile"));
+        about.addView(back, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        body.addView(about, cardMargins());
+        return scroll;
+    }
+
+    private Button settingsChoice(String label, boolean selected) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(10);
+        button.setAllCaps(false);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTextColor(selected ? Color.rgb(7, 22, 12) : TEXT);
+        button.setBackground(roundRect(selected ? ACCENT : SURFACE_2, 12));
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(8), 0, dp(8), 0);
+        return button;
+    }
+
+    private void addSettingsMapLayerRow(LinearLayout parent, String[] styles, String[] labels) {
+        LinearLayout choices = row();
+        for (int index = 0; index < styles.length; index++) {
+            if (index > 0) choices.addView(spaceWide());
+            String style = styles[index];
+            Button choice = settingsChoice(labels[index], style.equals(selectedMapStyle));
+            choice.setOnClickListener(v -> {
+                selectedMapStyle = style;
+                mapPrefs.edit().putString(MAP_STYLE, style).apply();
+                render("settings");
+            });
+            choices.addView(choice, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        }
+        parent.addView(choices);
+    }
+
+    private void addSpeciesSetting(LinearLayout row, String species) {
+        Button choice = settingsChoice(species.toUpperCase(Locale.ROOT), species.equals(selectedSpecies));
+        choice.setOnClickListener(v -> {
+            selectedSpecies = species;
+            weatherPrefs.edit().putString(WEATHER_SPECIES, species).apply();
+            render("settings");
+        });
+        row.addView(choice, new LinearLayout.LayoutParams(0, dp(44), 1f));
     }
 
     private View authFormCard() {
@@ -2242,7 +2449,7 @@ public final class MainActivity extends Activity implements
             }
             SavedPoint updated = pointStore.updateWeather(point.id, weather);
             runOnUiThread(() -> {
-                Toast.makeText(this, "Weather updated · " + weather.compactSummary(),
+                Toast.makeText(this, "Weather updated · " + weatherSummary(weather),
                         Toast.LENGTH_SHORT).show();
                 if (updated != null && shouldSync(updated.id)) syncPoint(updated);
                 render("saved");
@@ -2359,6 +2566,7 @@ public final class MainActivity extends Activity implements
 
     private void openPointOnMap(SavedPoint point) {
         selectedMapPointId = point.id;
+        showingWeatherPage = false;
         Toast.makeText(this, "Opening saved point on map", Toast.LENGTH_SHORT).show();
         render("map");
     }
@@ -2634,13 +2842,84 @@ public final class MainActivity extends Activity implements
         return String.format(Locale.US, "%.5f, %.5f", lat, lon);
     }
 
-    private static String weatherDetails(WeatherSnapshot weather) {
+    private String weatherSummary(WeatherSnapshot weather) {
+        return weather.condition() + " · " + formatTemperature(weather.temperatureC)
+                + " · " + weather.windDirection() + " " + formatWind(weather.windSpeedKmh);
+    }
+
+    private String weatherDetails(WeatherSnapshot weather) {
+        if (userPreferences.usesImperialUnits()) {
+            return String.format(Locale.getDefault(),
+                    "Feels %s · Humidity %d%% · Pressure %.2f inHg · Precipitation %.2f in",
+                    formatTemperature(weather.apparentTemperatureC),
+                    weather.humidityPercent,
+                    weather.pressureHpa * 0.0295299830714d,
+                    weather.precipitationMm / 25.4d);
+        }
         return String.format(Locale.getDefault(),
-                "Feels %.0f°C · Humidity %d%% · Pressure %.0f hPa · Precipitation %.1f mm",
-                weather.apparentTemperatureC,
+                "Feels %s · Humidity %d%% · Pressure %.0f hPa · Precipitation %.1f mm",
+                formatTemperature(weather.apparentTemperatureC),
                 weather.humidityPercent,
                 weather.pressureHpa,
                 weather.precipitationMm);
+    }
+
+    private String catchSummary(CatchDetails details) {
+        List<String> parts = new ArrayList<>();
+        parts.add(details.species.isEmpty() ? "Unidentified catch" : details.species);
+        if (details.lengthCm > 0d) {
+            parts.add(String.format(Locale.getDefault(), userPreferences.usesImperialUnits()
+                    ? "%.1f in" : "%.1f cm", displayLength(details.lengthCm)));
+        }
+        if (details.weightKg > 0d) {
+            parts.add(String.format(Locale.getDefault(), userPreferences.usesImperialUnits()
+                    ? "%.2f lb" : "%.2f kg", displayWeight(details.weightKg)));
+        }
+        parts.add(details.released ? "Released" : "Kept");
+        return String.join(" · ", parts);
+    }
+
+    private String formatTemperature(double celsius) {
+        double value = userPreferences.usesImperialUnits()
+                ? celsius * 9d / 5d + 32d : celsius;
+        return Math.round(value) + (userPreferences.usesImperialUnits() ? "°F" : "°C");
+    }
+
+    private String formatTemperatureRange(double minCelsius, double maxCelsius) {
+        boolean imperial = userPreferences.usesImperialUnits();
+        double min = imperial ? minCelsius * 9d / 5d + 32d : minCelsius;
+        double max = imperial ? maxCelsius * 9d / 5d + 32d : maxCelsius;
+        return Math.round(min) + "–" + Math.round(max) + (imperial ? "°F" : "°C");
+    }
+
+    private String formatWind(double kmh) {
+        if (userPreferences.usesImperialUnits()) {
+            return Math.round(kmh * 0.6213711922d) + " mph";
+        }
+        return Math.round(kmh) + " km/h";
+    }
+
+    private String formatPrecipitation(double millimetres) {
+        if (userPreferences.usesImperialUnits()) {
+            return String.format(Locale.getDefault(), "%.2f in", millimetres / 25.4d);
+        }
+        return String.format(Locale.getDefault(), "%.1f mm", millimetres);
+    }
+
+    private double displayLength(double centimetres) {
+        return userPreferences.usesImperialUnits() ? centimetres / 2.54d : centimetres;
+    }
+
+    private double displayWeight(double kilograms) {
+        return userPreferences.usesImperialUnits() ? kilograms * 2.2046226218d : kilograms;
+    }
+
+    private double storedLength(double displayedValue) {
+        return userPreferences.usesImperialUnits() ? displayedValue * 2.54d : displayedValue;
+    }
+
+    private double storedWeight(double displayedValue) {
+        return userPreferences.usesImperialUnits() ? displayedValue / 2.2046226218d : displayedValue;
     }
 
     private static String nowTime() {
