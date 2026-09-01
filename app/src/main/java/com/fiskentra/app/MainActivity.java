@@ -30,6 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.fiskentra.app.backend.SupabaseConnection;
+import com.fiskentra.app.backend.SupabaseAuthManager;
 import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
@@ -97,6 +98,7 @@ public final class MainActivity extends Activity implements
     private FiskentraLocationManager locationManager;
     private FiskentraFlic2Manager flicManager;
     private SupabaseConnection supabaseConnection;
+    private SupabaseAuthManager authManager;
     private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
     private SharedPreferences syncPrefs;
@@ -124,6 +126,12 @@ public final class MainActivity extends Activity implements
     private String forecastStatus = "Open Weather to load the forecast";
     private String selectedSpecies = FishingAdvisor.SPECIES[0];
     private String selectedMapStyle = MapTilerMapView.STYLE_OUTDOOR;
+    private boolean authBusy;
+    private String authStatus = "Local mode · sign in is optional";
+    private boolean authStatusError;
+    private String authFormMode = "landing";
+    private String authEmailDraft = "";
+    private String authNameDraft = "";
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
@@ -151,15 +159,14 @@ public final class MainActivity extends Activity implements
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            getWindow().getDecorView().setSystemUiVisibility(0);
-        }
+        getWindow().getDecorView().setSystemUiVisibility(0);
 
         pointStore = new PointStore(this);
         fishingDayStore = new FishingDayStore(this);
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
         supabaseConnection = new SupabaseConnection();
+        authManager = new SupabaseAuthManager(this);
         syncQueue = PointSyncQueue.get(this);
         weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
@@ -186,7 +193,24 @@ public final class MainActivity extends Activity implements
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(70)));
         setContentView(page);
 
+        page.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.setPadding(0, insets.getSystemWindowInsetTop(),
+                    0, insets.getSystemWindowInsetBottom());
+            return insets;
+        });
+        page.requestApplyInsets();
+
         render("home");
+        if (isAuthRedirect(getIntent())) {
+            handleAuthRedirect(getIntent());
+        } else {
+            authManager.restore((success, message) -> runOnUiThread(() -> {
+                if (destroyed) return;
+                authStatus = message;
+                authStatusError = !success;
+                if ("home".equals(screen) || "profile".equals(screen)) render(screen);
+            }));
+        }
         flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
         supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
@@ -194,6 +218,12 @@ public final class MainActivity extends Activity implements
             if ("home".equals(screen)) render("home");
         }));
         requestNeededPermissions();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (isAuthRedirect(intent)) handleAuthRedirect(intent);
     }
 
     @Override protected void onStart() {
@@ -230,6 +260,7 @@ public final class MainActivity extends Activity implements
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
         supabaseConnection.close();
+        authManager.close();
         weatherClient.close();
     }
 
@@ -292,6 +323,7 @@ public final class MainActivity extends Activity implements
             case "log": content.addView(fishingLogScreen()); break;
             case "saved": content.addView(savedScreen()); break;
             case "device": content.addView(deviceScreen()); break;
+            case "profile": content.addView(profileScreen()); break;
             default: content.addView(homeScreen()); break;
         }
         renderNav();
@@ -303,7 +335,7 @@ public final class MainActivity extends Activity implements
         addNav("⌖", "Map", "map");
         addNav("▦", "Log", "log");
         addNav("◆", "Saved", "saved");
-        addNav("◉", "Device", "device");
+        addNav("●", "Profile", "profile");
     }
 
     private void addNav(String icon, String label, String target) {
@@ -467,6 +499,21 @@ public final class MainActivity extends Activity implements
         cloudCard.addView(spacer(6));
         cloudCard.addView(text(cloudStatus, 13, TEXT, Typeface.NORMAL));
         cloudCard.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.NORMAL));
+        cloudCard.addView(spacer(12));
+        LinearLayout accountRow = row();
+        accountRow.setGravity(Gravity.CENTER_VERTICAL);
+        SupabaseAuthManager.Session account = authManager.session();
+        LinearLayout accountCopy = vertical();
+        accountCopy.addView(text(account == null ? "LOCAL MODE" : "FISKENTRA ACCOUNT", 10,
+                account == null ? MUTED : SUCCESS, Typeface.BOLD));
+        accountCopy.addView(text(account == null ? "Optional sign in" : account.displayName,
+                12, TEXT, Typeface.NORMAL));
+        accountRow.addView(accountCopy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button profile = smallButton(account == null ? "SIGN IN" : "PROFILE");
+        profile.setOnClickListener(v -> render("profile"));
+        accountRow.addView(profile, new LinearLayout.LayoutParams(dp(88), dp(40)));
+        cloudCard.addView(accountRow);
         body.addView(cloudCard, cardMargins());
 
         body.addView(sectionTitle("QUICK LOG"));
@@ -1637,6 +1684,430 @@ public final class MainActivity extends Activity implements
 
     private static String decimalInput(double value) {
         return String.format(Locale.US, "%s", value);
+    }
+
+    private View profileScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(20), dp(20), dp(20), dp(28));
+        scroll.addView(body);
+
+        body.addView(pageTitle("Profile", "FISKENTRA ACCOUNT"));
+        body.addView(spacer(18));
+        SupabaseAuthManager.Session account = authManager.session();
+
+        if (account == null) {
+            if ("landing".equals(authFormMode)) {
+                LinearLayout localCard = card();
+                localCard.addView(text("○  LOCAL MODE", 11, MUTED, Typeface.BOLD));
+                localCard.addView(spacer(8));
+                localCard.addView(text("Fiskentra works without an account", 20, TEXT, Typeface.BOLD));
+                localCard.addView(text("Flic 2, GPS, saved points and the fishing journal remain available offline. Sign in adds private account access without blocking field capture.",
+                        13, MUTED, Typeface.NORMAL));
+                body.addView(localCard, cardMargins());
+
+                LinearLayout choice = card();
+                choice.addView(text("YOUR FISKENTRA ACCOUNT", 11, ACCENT, Typeface.BOLD));
+                choice.addView(spacer(7));
+                choice.addView(text(authStatus, 12,
+                        authStatusError ? DANGER : MUTED, Typeface.NORMAL));
+                choice.addView(spacer(16));
+                Button signIn = primaryButton(authBusy ? "VERIFYING…" : "SIGN IN");
+                signIn.setEnabled(!authBusy);
+                signIn.setOnClickListener(v -> openAuthForm("signin"));
+                choice.addView(signIn, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+                choice.addView(spacer(10));
+                Button create = smallButton("CREATE ACCOUNT");
+                create.setEnabled(!authBusy);
+                create.setOnClickListener(v -> openAuthForm("signup"));
+                choice.addView(create, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+                body.addView(choice, cardMargins());
+            } else {
+                body.addView(authFormCard(), cardMargins());
+            }
+
+            LinearLayout privacy = card();
+            privacy.addView(text("PRIVACY", 11, MUTED, Typeface.BOLD));
+            privacy.addView(text("Passwords are sent directly to Supabase Auth and are never stored by Fiskentra. Session tokens are encrypted with Android Keystore on this phone.",
+                    12, TEXT, Typeface.NORMAL));
+            body.addView(privacy, cardMargins());
+            return scroll;
+        }
+
+        if ("reset".equals(authFormMode)) {
+            body.addView(passwordResetCard(), cardMargins());
+            return scroll;
+        }
+
+        LinearLayout identity = card();
+        LinearLayout identityRow = row();
+        identityRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView avatar = text(profileInitial(account.displayName), 24, Color.rgb(7, 22, 12), Typeface.BOLD);
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setBackground(roundRect(ACCENT, 28));
+        identityRow.addView(avatar, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        LinearLayout identityCopy = vertical();
+        identityCopy.setPadding(dp(14), 0, 0, 0);
+        identityCopy.addView(text(account.displayName, 20, TEXT, Typeface.BOLD));
+        identityCopy.addView(text(account.email, 12, MUTED, Typeface.NORMAL));
+        identityCopy.addView(text("●  SIGNED IN", 10, SUCCESS, Typeface.BOLD));
+        identityRow.addView(identityCopy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        identity.addView(identityRow);
+        identity.addView(spacer(14));
+        identity.addView(text(authStatus, 11,
+                authBusy ? WARNING : (authStatusError ? DANGER : MUTED), Typeface.NORMAL));
+        body.addView(identity, cardMargins());
+
+        LinearLayout fieldStats = card();
+        fieldStats.addView(text("THIS PHONE", 11, MUTED, Typeface.BOLD));
+        fieldStats.addView(spacer(7));
+        fieldStats.addView(text(pointStore.all().size() + " saved moments", 19, TEXT, Typeface.BOLD));
+        fieldStats.addView(text("Your existing local points and Flic pairing stay on this phone. Account sign-in does not delete or replace them.",
+                12, MUTED, Typeface.NORMAL));
+        body.addView(fieldStats, cardMargins());
+
+        LinearLayout actions = card();
+        Button edit = primaryButton(authBusy ? "PLEASE WAIT…" : "EDIT DISPLAY NAME");
+        edit.setEnabled(!authBusy);
+        edit.setOnClickListener(v -> showDisplayNameDialog(account.displayName));
+        actions.addView(edit, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        actions.addView(spacer(10));
+        Button signOut = smallButton("SIGN OUT");
+        signOut.setEnabled(!authBusy);
+        signOut.setOnClickListener(v -> confirmSignOut());
+        actions.addView(signOut, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        body.addView(actions, cardMargins());
+        return scroll;
+    }
+
+    private View authFormCard() {
+        boolean signup = "signup".equals(authFormMode);
+        boolean recover = "recover".equals(authFormMode);
+        LinearLayout form = card();
+        form.addView(text(recover ? "RESET PASSWORD" : (signup ? "CREATE ACCOUNT" : "WELCOME BACK"),
+                11, ACCENT, Typeface.BOLD));
+        form.addView(spacer(7));
+        form.addView(text(recover
+                        ? "We’ll send a secure reset link to your email."
+                        : (signup ? "Create a private account for your fishing history."
+                        : "Sign in with your Fiskentra email and password."),
+                13, TEXT, Typeface.NORMAL));
+        form.addView(spacer(14));
+
+        EditText name = null;
+        if (signup) {
+            name = authField("Display name", InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+            name.setText(authNameDraft);
+            form.addView(name, matchWrap());
+            form.addView(spacer(10));
+        }
+        EditText email = authField("Email address", InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        email.setText(authEmailDraft);
+        form.addView(email, matchWrap());
+
+        EditText password = null;
+        EditText confirm = null;
+        if (!recover) {
+            form.addView(spacer(10));
+            password = authField("Password · at least 8 characters", InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            form.addView(password, matchWrap());
+            if (signup) {
+                form.addView(spacer(10));
+                confirm = authField("Confirm password", InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                form.addView(confirm, matchWrap());
+            }
+            CheckBox showPassword = new CheckBox(this);
+            showPassword.setText("Show password");
+            showPassword.setTextColor(MUTED);
+            showPassword.setTextSize(12);
+            EditText finalPassword = password;
+            EditText finalConfirm = confirm;
+            showPassword.setOnCheckedChangeListener((button, checked) -> {
+                int type = InputType.TYPE_CLASS_TEXT | (checked
+                        ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        : InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                finalPassword.setInputType(type);
+                finalPassword.setSelection(finalPassword.length());
+                if (finalConfirm != null) {
+                    finalConfirm.setInputType(type);
+                    finalConfirm.setSelection(finalConfirm.length());
+                }
+            });
+            form.addView(showPassword, matchWrap());
+        } else {
+            form.addView(spacer(14));
+        }
+
+        if (!authStatus.isEmpty()) {
+            form.addView(text(authBusy ? "Please wait…" : authStatus, 12,
+                    authBusy ? WARNING : (authStatusError ? DANGER : MUTED), Typeface.NORMAL));
+            form.addView(spacer(12));
+        }
+
+        Button submit = primaryButton(authBusy ? "PLEASE WAIT…"
+                : (recover ? "SEND RESET LINK" : (signup ? "CREATE ACCOUNT" : "SIGN IN")));
+        submit.setEnabled(!authBusy);
+        EditText finalName = name;
+        EditText finalPassword = password;
+        EditText finalConfirm = confirm;
+        submit.setOnClickListener(v -> submitAuthForm(signup, recover,
+                finalName, email, finalPassword, finalConfirm));
+        form.addView(submit, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        if (!signup && !recover) {
+            form.addView(spacer(8));
+            Button forgot = smallButton("FORGOT PASSWORD?");
+            forgot.setEnabled(!authBusy);
+            forgot.setOnClickListener(v -> {
+                authEmailDraft = email.getText().toString().trim();
+                openAuthForm("recover");
+            });
+            form.addView(forgot, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+            form.addView(spacer(8));
+            Button resend = smallButton("RESEND CONFIRMATION EMAIL");
+            resend.setEnabled(!authBusy);
+            resend.setOnClickListener(v -> resendConfirmation(email));
+            form.addView(resend, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        }
+        form.addView(spacer(8));
+        Button back = smallButton(recover ? "BACK TO SIGN IN" : "BACK");
+        back.setEnabled(!authBusy);
+        back.setOnClickListener(v -> openAuthForm(recover ? "signin" : "landing"));
+        form.addView(back, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        return form;
+    }
+
+    private void submitAuthForm(boolean signup, boolean recover, EditText name,
+                                EditText email, EditText password, EditText confirm) {
+        String emailValue = email.getText().toString().trim();
+        authEmailDraft = emailValue;
+        if (!validEmail(emailValue)) {
+            email.setError("Enter a valid email address");
+            return;
+        }
+        if (recover) {
+            startAuthAction("Sending reset email…");
+            authManager.requestPasswordReset(emailValue, this::finishAuthAction);
+            return;
+        }
+        String passwordValue = password.getText().toString();
+        if (passwordValue.length() < 8) {
+            password.setError("Use at least 8 characters");
+            return;
+        }
+        String nameValue = name == null ? "" : name.getText().toString().trim();
+        authNameDraft = nameValue;
+        if (signup && (nameValue.isEmpty() || nameValue.length() > 50)) {
+            name.setError("Use 1–50 characters");
+            return;
+        }
+        if (signup && !passwordValue.equals(confirm.getText().toString())) {
+            confirm.setError("Passwords do not match");
+            return;
+        }
+        startAuthAction(signup ? "Creating account…" : "Signing in…");
+        if (signup) authManager.signUp(emailValue, passwordValue, nameValue, this::finishAuthAction);
+        else authManager.signIn(emailValue, passwordValue, this::finishAuthAction);
+    }
+
+    private void resendConfirmation(EditText email) {
+        String value = email.getText().toString().trim();
+        authEmailDraft = value;
+        if (!validEmail(value)) {
+            email.setError("Enter your account email first");
+            return;
+        }
+        startAuthAction("Sending confirmation email…");
+        authManager.resendConfirmation(value, this::finishAuthAction);
+    }
+
+    private View passwordResetCard() {
+        LinearLayout form = card();
+        form.addView(text("SET A NEW PASSWORD", 11, ACCENT, Typeface.BOLD));
+        form.addView(spacer(7));
+        form.addView(text("Your reset link is verified. Choose a new password for this account.",
+                13, TEXT, Typeface.NORMAL));
+        form.addView(spacer(14));
+        EditText password = authField("New password · at least 8 characters",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        EditText confirm = authField("Confirm new password",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(password, matchWrap());
+        form.addView(spacer(10));
+        form.addView(confirm, matchWrap());
+        form.addView(spacer(14));
+        Button save = primaryButton(authBusy ? "SAVING…" : "SAVE NEW PASSWORD");
+        save.setEnabled(!authBusy);
+        save.setOnClickListener(v -> {
+            String value = password.getText().toString();
+            if (value.length() < 8) {
+                password.setError("Use at least 8 characters");
+                return;
+            }
+            if (!value.equals(confirm.getText().toString())) {
+                confirm.setError("Passwords do not match");
+                return;
+            }
+            startAuthAction("Changing password…");
+            authManager.updatePassword(value, (success, message) -> {
+                if (success) authFormMode = "landing";
+                finishAuthAction(success, message);
+            });
+        });
+        form.addView(save, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        return form;
+    }
+
+    private void openAuthForm(String mode) {
+        authFormMode = mode;
+        authStatusError = false;
+        authStatus = "landing".equals(mode) ? "Local mode · sign in is optional" : "";
+        render("profile");
+    }
+
+    private void startAuthAction(String message) {
+        authBusy = true;
+        authStatusError = false;
+        authStatus = message;
+        render("profile");
+    }
+
+    private void showDisplayNameDialog(String currentName) {
+        EditText name = authField("Display name", InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        name.setText(currentName);
+        name.setSelection(name.length());
+        LinearLayout form = vertical();
+        form.setPadding(dp(20), dp(8), dp(20), 0);
+        form.addView(name, matchWrap());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Edit profile")
+                .setView(form)
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("SAVE", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String value = name.getText().toString().trim();
+                    if (value.isEmpty() || value.length() > 50) {
+                        name.setError("Use 1–50 characters");
+                        return;
+                    }
+                    dialog.dismiss();
+                    authBusy = true;
+                    authStatus = "Updating profile…";
+                    render("profile");
+                    authManager.updateDisplayName(value, this::finishAuthAction);
+                }));
+        dialog.show();
+    }
+
+    private void confirmSignOut() {
+        new AlertDialog.Builder(this)
+                .setTitle("Sign out?")
+                .setMessage("Local saved points, the journal and Flic pairing will remain on this phone.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("SIGN OUT", (dialog, which) -> {
+                    authBusy = true;
+                    authStatus = "Signing out…";
+                    render("profile");
+                    authManager.signOut(this::finishAuthAction);
+                })
+                .show();
+    }
+
+    private void finishAuthAction(boolean success, String message) {
+        runOnUiThread(() -> {
+            if (destroyed) return;
+            authBusy = false;
+            authStatus = message;
+            authStatusError = !success;
+            if (success && "signup".equals(authFormMode) && authManager.session() == null) {
+                authFormMode = "signin";
+            } else if (success && "reset".equals(authFormMode)) {
+                authFormMode = "landing";
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            render("profile");
+        });
+    }
+
+    private static boolean isAuthRedirect(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        return data != null && "com.fiskentra.app".equalsIgnoreCase(data.getScheme())
+                && "auth".equalsIgnoreCase(data.getHost());
+    }
+
+    private void handleAuthRedirect(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null) return;
+        Intent consumed = new Intent(intent);
+        consumed.setData(null);
+        setIntent(consumed);
+        boolean recovery = "recovery".equalsIgnoreCase(authLinkValue(data, "type"));
+        authFormMode = recovery ? "reset" : "landing";
+        authBusy = true;
+        authStatusError = false;
+        authStatus = recovery ? "Verifying reset link…" : "Verifying email…";
+        render("profile");
+        authManager.completeAuthRedirect(data, (success, message) -> runOnUiThread(() -> {
+            if (destroyed) return;
+            authBusy = false;
+            authStatus = message;
+            authStatusError = !success;
+            if (!success && recovery) authFormMode = "recover";
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            render("profile");
+        }));
+    }
+
+    private static String authLinkValue(Uri uri, String key) {
+        String query = uri.getQueryParameter(key);
+        if (query != null && !query.isEmpty()) return query;
+        String fragment = uri.getFragment();
+        if (fragment == null || fragment.isEmpty()) return "";
+        for (String part : fragment.split("&")) {
+            String[] pair = part.split("=", 2);
+            if (pair.length == 2 && key.equals(Uri.decode(pair[0]))) return Uri.decode(pair[1]);
+        }
+        return "";
+    }
+
+    private EditText authField(String hint, int inputType) {
+        EditText field = new EditText(this);
+        field.setHint(hint);
+        field.setHintTextColor(MUTED);
+        field.setTextColor(TEXT);
+        field.setTextSize(14);
+        field.setSingleLine(true);
+        field.setInputType(inputType);
+        field.setPadding(dp(13), dp(11), dp(13), dp(11));
+        field.setBackground(roundRect(SURFACE_2, 10));
+        return field;
+    }
+
+    private static boolean validEmail(String value) {
+        int at = value.indexOf('@');
+        return at > 0 && at < value.length() - 3 && value.indexOf('.', at) > at + 1;
+    }
+
+    private static String profileInitial(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? "F" : trimmed.substring(0, 1).toUpperCase(Locale.ROOT);
     }
 
     private View deviceScreen() {
