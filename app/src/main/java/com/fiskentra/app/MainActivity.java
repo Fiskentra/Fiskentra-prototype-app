@@ -47,6 +47,7 @@ import com.fiskentra.app.model.WeatherForecast;
 import com.fiskentra.app.model.WeatherSnapshot;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
+import com.fiskentra.app.ui.DesignScreens;
 import com.fiskentra.app.ui.SwipeSwitchLayout;
 import com.fiskentra.app.weather.FishingAdvisor;
 import com.fiskentra.app.weather.WeatherClient;
@@ -69,15 +70,16 @@ public final class MainActivity extends Activity implements
 
     private static final int REQUEST_PERMISSIONS = 1001;
     private static final int REQUEST_CATCH_PHOTO = 1002;
-    private static final int BG = Color.rgb(10, 18, 14);
-    private static final int SURFACE = Color.rgb(18, 30, 24);
-    private static final int SURFACE_2 = Color.rgb(24, 40, 32);
-    private static final int TEXT = Color.rgb(242, 247, 244);
-    private static final int MUTED = Color.rgb(156, 174, 163);
-    private static final int ACCENT = Color.rgb(0, 174, 213);
-    private static final int SUCCESS = Color.rgb(83, 214, 137);
-    private static final int WARNING = Color.rgb(244, 190, 85);
-    private static final int DANGER = Color.rgb(246, 114, 103);
+    private static final int BG = Color.rgb(0, 21, 34);
+    private static final int SURFACE = Color.rgb(6, 27, 43);
+    private static final int SURFACE_2 = Color.rgb(10, 34, 53);
+    private static final int BORDER = Color.rgb(52, 73, 88);
+    private static final int TEXT = Color.rgb(244, 238, 232);
+    private static final int MUTED = Color.rgb(184, 171, 166);
+    private static final int ACCENT = Color.rgb(13, 124, 255);
+    private static final int SUCCESS = Color.rgb(165, 214, 50);
+    private static final int WARNING = Color.rgb(255, 176, 0);
+    private static final int DANGER = Color.rgb(255, 69, 58);
     private static final String SYNC_PREFS = PointSyncQueue.PREFS;
     private static final String SYNC_SYNCING = PointSyncQueue.STATE_SYNCING;
     private static final String SYNC_SYNCED = PointSyncQueue.STATE_SYNCED;
@@ -93,6 +95,7 @@ public final class MainActivity extends Activity implements
     private static final String MAP_STYLE = "selected_map_style";
 
     private FrameLayout content;
+    private DesignScreens design;
     private LinearLayout nav;
     private PointStore pointStore;
     private FishingDayStore fishingDayStore;
@@ -120,6 +123,7 @@ public final class MainActivity extends Activity implements
     private String lastButtonEvent = "No button event yet";
     private long selectedMapPointId = -1L;
     private long selectedLogDateMillis;
+    private FishingDay designSummaryDay;
     private long calendarMonthMillis;
     private MapTilerMapView activeMapView;
     private boolean showingWeatherPage;
@@ -137,6 +141,11 @@ public final class MainActivity extends Activity implements
     private String authNameDraft = "";
     private int onboardingStep;
     private boolean onboardingReplay;
+    private int flicSetupStep;
+    private boolean flicSingleTested;
+    private boolean flicDoubleTested;
+    private boolean flicHoldTested;
+    private boolean resumedForTests;
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
@@ -154,7 +163,8 @@ public final class MainActivity extends Activity implements
             } else if (pointId < 0L && pending == 0) {
                 cloudSyncStatus = "All local points are synced to cloud";
             }
-            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) {
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)
+                    || "beta".equals(screen)) {
                 render(screen);
             }
         });
@@ -185,6 +195,7 @@ public final class MainActivity extends Activity implements
         showingWeatherPage = userPreferences.defaultWeatherPage();
         selectedLogDateMillis = System.currentTimeMillis();
         calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
+        design = new DesignScreens(this, new DesignHost());
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -195,10 +206,10 @@ public final class MainActivity extends Activity implements
         nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setGravity(Gravity.CENTER);
-        nav.setPadding(dp(8), dp(8), dp(8), dp(10));
-        nav.setBackgroundColor(Color.rgb(11, 21, 16));
+        nav.setPadding(0, 0, 0, 0);
+        nav.setBackground(roundRect(Color.rgb(3, 24, 38), BORDER, 1, 0));
         page.addView(nav, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(70)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
         setContentView(page);
 
         page.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -212,6 +223,7 @@ public final class MainActivity extends Activity implements
         boolean showOnboarding = !authRedirect && userPreferences.shouldShowOnboarding(
                 hasExistingLocalState());
         render(showOnboarding ? "onboarding" : "home");
+        applyDebugUiOptions(getIntent());
         if (authRedirect) {
             userPreferences.completeOnboarding();
             handleAuthRedirect(getIntent());
@@ -226,7 +238,7 @@ public final class MainActivity extends Activity implements
         supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
             cloudStatus = message;
-            if ("home".equals(screen)) render("home");
+            if ("home".equals(screen) || "beta".equals(screen)) render(screen);
         }));
         if (!showOnboarding) requestNeededPermissions();
     }
@@ -234,7 +246,17 @@ public final class MainActivity extends Activity implements
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        applyDebugUiOptions(intent);
         if (isAuthRedirect(intent)) handleAuthRedirect(intent);
+    }
+    private void applyDebugUiOptions(Intent intent) {
+        if(!BuildConfig.DEBUG||intent==null)return;
+        if(intent.hasExtra("qa_keep_awake")){
+            if(intent.getBooleanExtra("qa_keep_awake",false))getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+        String target=intent.getStringExtra("qa_route");
+        if(target!=null&&java.util.Arrays.asList("home","map","mapTools","saved","log","device","tripSetup","forecastDetail","species").contains(target))render(target);
     }
 
     @Override protected void onStart() {
@@ -247,14 +269,20 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onResume() {
         super.onResume();
+        resumedForTests=true;
+        updateFlicTestMode();
         if (activeMapView != null) activeMapView.resume();
         if (locationManager.hasPermission()) locationManager.start();
         ensureBackgroundService();
-        if ("saved".equals(screen) || "log".equals(screen)) render(screen);
+        if ("saved".equals(screen) || "log".equals(screen) || "beta".equals(screen)) {
+            render(screen);
+        }
     }
 
     @Override protected void onPause() {
         super.onPause();
+        resumedForTests=false;
+        flicManager.setTestListener(null);
         if (activeMapView != null) activeMapView.pause();
         locationManager.stop();
     }
@@ -301,6 +329,17 @@ public final class MainActivity extends Activity implements
             requestPermissions(permissions.toArray(new String[0]), REQUEST_PERMISSIONS);
         }
     }
+    @Override public void onBackPressed() {
+        switch(screen){
+            case "home":super.onBackPressed();break;
+            case "mapTools":case "tripActive":render("map");break;
+            case "catchEdit":render("saved");break;
+            case "tripSummary":render("log");break;
+            case "profile":if(!authManager.isSignedIn()&&!"landing".equals(authFormMode)){openAuthForm("landing");break;}
+            case "flicSetup":case "settings":case "beta":case "profileSetup":case "flicRequired":render("device");break;
+            default:render("home");break;
+        }
+    }
 
     private boolean hasExistingLocalState() {
         if (!pointStore.all().isEmpty() || !fishingDayStore.all().isEmpty()
@@ -333,49 +372,112 @@ public final class MainActivity extends Activity implements
 
     private void render(String next) {
         screen = next;
+        updateFlicTestMode();
         content.removeAllViews();
         deviceStatusText = null;
         buttonEventText = null;
         activeMapView = null;
-        switch (screen) {
-            case "onboarding": content.addView(onboardingScreen()); break;
-            case "map": content.addView(mapScreen()); break;
-            case "log": content.addView(fishingLogScreen()); break;
-            case "saved": content.addView(savedScreen()); break;
-            case "device": content.addView(deviceScreen()); break;
-            case "profile": content.addView(profileScreen()); break;
-            case "settings": content.addView(settingsScreen()); break;
-            default: content.addView(homeScreen()); break;
-        }
+        content.addView(design.create(screen));
         renderNav();
     }
 
     private void renderNav() {
         nav.removeAllViews();
-        if ("onboarding".equals(screen)) {
+        if ("onboarding".equals(screen) || "flicSetup".equals(screen) || "profileSetup".equals(screen) || "flicRequired".equals(screen)
+                || ("profile".equals(screen) && !authManager.isSignedIn())) {
             nav.setVisibility(View.GONE);
             return;
         }
         nav.setVisibility(View.VISIBLE);
-        addNav("⌂", "Home", "home");
-        addNav("⌖", "Map", "map");
-        addNav("▦", "Log", "log");
-        addNav("◆", "Saved", "saved");
-        addNav("●", "Profile", "profile");
+        nav.addView(design.navigation(screen), new LinearLayout.LayoutParams(-1, -1));
     }
 
-    private void addNav(String icon, String label, String target) {
+    private void updateFlicTestMode() {
+        if (flicManager != null) flicManager.setTestListener(resumedForTests && "flicSetup".equals(screen) && flicSetupStep == 2 ? this : null);
+    }
+    @Override public void onTestAction(FiskentraFlic2Manager.Action action) {
+        runOnUiThread(() -> {
+            if (action == FiskentraFlic2Manager.Action.CATCH) flicSingleTested = true;
+            if (action == FiskentraFlic2Manager.Action.WAYPOINT) flicDoubleTested = true;
+            if (action == FiskentraFlic2Manager.Action.TACKLE_CHANGE) flicHoldTested = true;
+            if ("flicSetup".equals(screen)) render(screen);
+        });
+    }
+    private final class DesignHost implements DesignScreens.Host {
+        public DesignScreens.State read() {
+            DesignScreens.State s = new DesignScreens.State();
+            s.points=pointStore.all();s.days=fishingDayStore.all();s.forecast=weatherForecast;
+            s.location=lastLocation;s.selected=selectedMapPoint();s.species=selectedSpecies;s.device=connectedDevice;
+            s.status=bleStatus;s.authMode=authFormMode;s.authStatus=authStatus;s.authError=authStatusError;s.busy=authBusy;
+            s.email=authManager.session()==null?authEmailDraft:authManager.session().email;
+            s.name=authManager.session()==null?authNameDraft:authManager.session().displayName;
+            s.signedIn=authManager.isSignedIn();s.connected=flicConnected;s.bluetooth=flicManager.hasPermissions();
+            s.gps=locationManager.hasPermission();s.notifications=Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+            android.location.LocationManager gpsManager=(android.location.LocationManager)getSystemService(LOCATION_SERVICE);
+            s.gpsEnabled=gpsManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)||gpsManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
+            s.active=trackStore.isActive();s.tripStarted=trackStore.startedAt();s.tripStopped=trackStore.stoppedAt();
+            if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
+            List<double[]> track=trackStore.points();float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if("tripSummary".equals(screen)&&(p[2]<s.tripStarted||(!s.active&&s.tripStopped>0&&q[2]>s.tripStopped)))continue;Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}
+            s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
+            s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
+        }
+        public void go(String target) {if(target.startsWith("auth:"))openAuthForm(target.substring(5));else render(target);}
+        public void species(String value){selectedSpecies=value;weatherPrefs.edit().putString(WEATHER_SPECIES,value).apply();render(screen);}
+        public void trip(FishingDay day){designSummaryDay=day;selectedLogDateMillis=day.startedAt;render("tripSummary");}
+        public MapTilerMapView map(){MapTilerMapView map=new MapTilerMapView(MainActivity.this,selectedMapStyle,null);activeMapView=map;List<SavedPoint> points=new ArrayList<>(pointStore.all());List<double[]> track=new ArrayList<>(trackStore.points());if("tripSummary".equals(screen)){DesignScreens.State s=read();points.removeIf(p->p.timestamp<s.tripStarted||(!s.active&&s.tripStopped>0&&p.timestamp>s.tripStopped));track.removeIf(p->p[2]<s.tripStarted||(!s.active&&s.tripStopped>0&&p[2]>s.tripStopped));map.setData(null,points,track,null);}else map.setData(lastLocation,points,track,selectedMapPoint());return map;}
+        public void command(String action){
+            if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
+            if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
+            switch(action){
+                case "refresh":loadForecast(true);break;
+                case "sync":syncPendingPoints();break;
+                case "startTrip":startPlannedTrip();break;
+                case "finishTrip":finishActiveTrip();break;
+                case "startDay":startFishingDay();break;
+                case "pair":requestNeededPermissions();flicManager.pairNewButton();break;
+                case "permissions":requestNeededPermissions();break;
+                case "recenter":selectedMapPointId=-1;if(lastLocation!=null&&activeMapView!=null)activeMapView.recenter();else Toast.makeText(MainActivity.this,"Turn on Location and wait for a GPS fix",Toast.LENGTH_LONG).show();break;
+                case "testFlic":flicSetupStep=2;flicSingleTested=false;flicDoubleTested=false;flicHoldTested=false;render("flicSetup");break;
+                case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("home");}break;
+                case "setupBack":flicSetupStep=Math.max(0,flicSetupStep-1);render("flicSetup");break;
+                case "continueLocal":userPreferences.completeOnboarding();render("home");break;
+                case "metric":case "imperial":userPreferences.setUsesImperialUnits(action.equals("imperial"));render(screen);break;
+                case "editName":showDisplayNameDialog(read().name);break;
+                case "signout":confirmSignOut();break;
+                case "resend":EditText email=new EditText(MainActivity.this);email.setText(authEmailDraft);resendConfirmation(email);break;
+                case "resendReset":authFormMode="recover";startAuthAction("Sending reset email…");authManager.requestPasswordReset(authEmailDraft,MainActivity.this::finishAuthAction);break;
+                case "openEmail":try{startActivity(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN,Intent.CATEGORY_APP_EMAIL));}catch(Exception e){Toast.makeText(MainActivity.this,"Open your email app to continue",Toast.LENGTH_LONG).show();}break;
+            }
+        }
+        public void point(SavedPoint p,String action){switch(action){case "open":case "map":openPointOnMap(p);break;case "edit":if(POINT_TYPE_CATCH.equals(p.type)){design.edit(p);render("catchEdit");}else comingSoon("Point editing");break;case "photo":if(POINT_TYPE_CATCH.equals(p.type))chooseCatchPhoto(p);else comingSoon("Photos for this point type");break;case "weather":refreshPointWeather(p);break;case "delete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete saved moment?").setMessage("This removes the point from this phone and queues its cloud deletion.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->deletePoint(p)).show();break;}}
+        public void saveCatch(SavedPoint p,CatchDetails details){SavedPoint updated=pointStore.updateCatchDetails(p.id,details);if(updated!=null)syncPoint(updated);render("saved");}
+        public String syncLabel(SavedPoint p){return MainActivity.this.syncLabel(p.id);}
+        public int syncColor(SavedPoint p){return MainActivity.this.syncColor(p.id);}
+        public void auth(boolean signup,boolean recover,EditText name,EditText email,EditText password,EditText confirm){submitAuthForm(signup,recover,name,email,password,confirm);}
+        public View legacy(String target){if(target.equals("reset"))return passwordResetCard();if(target.equals("beta"))return betaScreen();return settingsScreen();}
+    }
+
+    private void addNav(int icon, String label, String target) {
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
         item.setPadding(dp(4), 0, dp(4), 0);
-        boolean selected = screen.equals(target)
-                || ("profile".equals(target) && "settings".equals(screen));
-        TextView i = text(icon, 21, selected ? ACCENT : MUTED, Typeface.BOLD);
-        i.setGravity(Gravity.CENTER);
-        TextView l = text(label, 11, selected ? ACCENT : MUTED, Typeface.NORMAL);
+        boolean selected = ("map".equals(target) && ("map".equals(screen) || "home".equals(screen)
+                || "forecastDetail".equals(screen) || "species".equals(screen)
+                || "tripSetup".equals(screen) || "tripActive".equals(screen)
+                || "tripSummary".equals(screen) || "mapTools".equals(screen)))
+                || screen.equals(target)
+                || ("device".equals(target) && ("profile".equals(screen)
+                || "settings".equals(screen) || "beta".equals(screen)));
+        ImageView i = new ImageView(this);
+        i.setImageResource(icon);
+        i.setColorFilter(selected ? ACCENT : MUTED);
+        i.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        i.setContentDescription(label);
+        TextView l = text(label, 9, selected ? ACCENT : MUTED, Typeface.BOLD);
         l.setGravity(Gravity.CENTER);
-        item.addView(i);
+        item.addView(i, new LinearLayout.LayoutParams(dp(25), dp(25)));
+        item.addView(spacer(3));
         item.addView(l);
         item.setOnClickListener(v -> {
             if ("map".equals(target) && !"map".equals(screen)) {
@@ -386,11 +488,299 @@ public final class MainActivity extends Activity implements
         nav.addView(item, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
     }
 
+    private View todayForecastScreen() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+
+        body.addView(pageTitle("Today", "FISHING FORECAST · CURRENT LOCATION"));
+        body.addView(spacer(12));
+
+        LinearLayout tabs = row();
+        TextView forecast = weatherTab("FORECAST", true);
+        tabs.addView(forecast, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        TextView map = weatherTab("MAP", false);
+        map.setOnClickListener(v -> { showingWeatherPage = false; render("map"); });
+        tabs.addView(map, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        TextView toMap = weatherTab("TO MAP", false);
+        toMap.setOnClickListener(v -> { showingWeatherPage = false; render("map"); });
+        tabs.addView(toMap, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        body.addView(tabs, cardMargins());
+
+        WeatherSnapshot current = weatherForecast == null ? null : weatherForecast.current;
+        LinearLayout hero = card();
+        LinearLayout heroRow = row();
+        heroRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView pike = imageCard(R.drawable.pike_forecast_badge, "Pike forecast");
+        heroRow.addView(pike, new LinearLayout.LayoutParams(dp(68), dp(68)));
+        LinearLayout heroCopy = vertical();
+        heroCopy.setPadding(dp(12), 0, 0, 0);
+        heroCopy.addView(text(selectedSpecies, 22, TEXT, Typeface.BOLD));
+        heroCopy.addView(text("Bite 4 of 5", 13, SUCCESS, Typeface.BOLD));
+        heroCopy.addView(text("Excellent chance of a catch", 12, MUTED, Typeface.NORMAL));
+        heroRow.addView(heroCopy, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        heroRow.addView(text(current == null ? "12°C" : formatTemperature(current.temperatureC),
+                26, TEXT, Typeface.BOLD));
+        hero.addView(heroRow);
+        hero.addView(spacer(12));
+        LinearLayout metrics = row();
+        metrics.addView(miniMetric("PRESSURE", current == null ? "758 mmHg"
+                : Math.round(current.pressureHpa) + " hPa"), weighted());
+        metrics.addView(miniMetric("WIND", current == null ? "SW 3 m/s"
+                : current.windDirection() + " " + formatWind(current.windSpeedKmh)), weighted());
+        metrics.addView(miniMetric("HUMIDITY", current == null ? "62%"
+                : current.humidityPercent + "%"), weighted());
+        metrics.addView(miniMetric("MOON", "63% waxing"), weighted());
+        hero.addView(metrics);
+        body.addView(hero, cardMargins());
+
+        LinearLayout bite = card();
+        bite.addView(text("BITE FORECAST", 11, MUTED, Typeface.BOLD));
+        bite.addView(spacer(10));
+        LinearLayout windows = row();
+        windows.addView(biteWindow("09:00", "12°", "4 / 5", SUCCESS), weighted());
+        windows.addView(biteWindow("12:00", "14°", "5 / 5", SUCCESS), weighted());
+        windows.addView(biteWindow("15:00", "15°", "3 / 5", WARNING), weighted());
+        windows.addView(biteWindow("18:00", "13°", "2 / 5", DANGER), weighted());
+        bite.addView(windows);
+        body.addView(bite, cardMargins());
+
+        LinearLayout status = card();
+        LinearLayout statusRow = row();
+        statusRow.addView(statusPill(flicConnected ? "FLIC 2 CONNECTED" : "FLIC 2 OFFLINE",
+                flicConnected ? SUCCESS : MUTED), weighted());
+        statusRow.addView(statusPill(lastLocation == null ? "GPS WAITING" : "GPS ±"
+                + Math.round(lastLocation.getAccuracy()) + " m", lastLocation == null ? WARNING : TEXT), weighted());
+        statusRow.addView(statusPill("OFFLINE READY", ACCENT), weighted());
+        status.addView(statusRow);
+        body.addView(status, cardMargins());
+
+        LinearLayout activity = card();
+        LinearLayout activityHead = row();
+        activityHead.addView(text("BITE ACTIVITY", 11, MUTED, Typeface.BOLD), weighted());
+        activityHead.addView(text("NEXT 24 HOURS", 10, ACCENT, Typeface.BOLD));
+        activity.addView(activityHead);
+        activity.addView(spacer(12));
+        LinearLayout activityBars = row();
+        int[] values = {18, 26, 38, 62, 88, 72, 54, 76, 84, 60, 36, 24};
+        for (int value : values) {
+            LinearLayout column = vertical();
+            column.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            View bar = new View(this);
+            bar.setBackground(roundRect(value > 70 ? SUCCESS : ACCENT, 2));
+            column.addView(bar, new LinearLayout.LayoutParams(dp(8), dp(value / 2)));
+            activityBars.addView(column, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        }
+        activity.addView(activityBars);
+        activity.addView(text("NOW         06:00         12:00         18:00         00:00",
+                9, MUTED, Typeface.NORMAL));
+        body.addView(activity, cardMargins());
+
+        LinearLayout forecastActions = row();
+        Button details = smallButton("DETAILED FORECAST");
+        details.setOnClickListener(v -> render("forecastDetail"));
+        forecastActions.addView(details, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        forecastActions.addView(spaceWide());
+        Button species = smallButton("SPECIES FORECAST");
+        species.setOnClickListener(v -> render("species"));
+        forecastActions.addView(species, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        body.addView(forecastActions, cardMargins());
+
+        Button start = primaryButton(trackStore.isActive() ? "OPEN ACTIVE TRIP" : "START TRIP");
+        start.setOnClickListener(v -> render(trackStore.isActive() ? "tripActive" : "tripSetup"));
+        body.addView(start, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        if (weatherForecast == null && !forecastLoading && lastLocation != null) {
+            content.post(() -> loadForecast(false));
+        }
+        return scroll;
+    }
+
+    private View miniMetric(String label, String value) {
+        LinearLayout item = vertical();
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(4), dp(8), dp(4), dp(8));
+        item.addView(centerText(label, 8, MUTED, Typeface.BOLD));
+        item.addView(centerText(value, 10, TEXT, Typeface.BOLD));
+        return item;
+    }
+
+    private View biteWindow(String time, String temperature, String score, int color) {
+        LinearLayout item = vertical();
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(3), dp(8), dp(3), dp(8));
+        item.addView(centerText(time, 11, ACCENT, Typeface.BOLD));
+        item.addView(centerText(temperature, 13, TEXT, Typeface.BOLD));
+        item.addView(centerText("Bite " + score, 10, color, Typeface.BOLD));
+        return item;
+    }
+
+    private View statusPill(String label, int color) {
+        TextView pill = centerText(label, 8, color, Typeface.BOLD);
+        pill.setPadding(dp(3), dp(5), dp(3), dp(5));
+        return pill;
+    }
+
+    private View forecastDetailScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+        body.addView(pageTitle("Detailed forecast", "24 HOURS · CURRENT LOCATION"));
+        body.addView(spacer(12));
+
+        LinearLayout species = card();
+        LinearLayout speciesRow = row();
+        speciesRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView pike = imageCard(R.drawable.pike_forecast_badge, "Pike");
+        speciesRow.addView(pike, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(10), 0, 0, 0);
+        copy.addView(text(selectedSpecies, 19, TEXT, Typeface.BOLD));
+        copy.addView(text("Bite activity forecast", 11, MUTED, Typeface.NORMAL));
+        speciesRow.addView(copy, weighted());
+        speciesRow.addView(text("24 HOURS", 10, ACCENT, Typeface.BOLD));
+        species.addView(speciesRow);
+        body.addView(species, cardMargins());
+
+        LinearLayout chart = card();
+        chart.addView(text("BITE ACTIVITY · 24 HOURS", 11, MUTED, Typeface.BOLD));
+        chart.addView(spacer(12));
+        int[] hours = {22, 34, 48, 42, 70, 92, 86, 62, 50, 76, 88, 54};
+        LinearLayout bars = row();
+        for (int value : hours) {
+            LinearLayout column = vertical();
+            column.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            View bar = new View(this);
+            bar.setBackground(roundRect(value > 75 ? SUCCESS : ACCENT, 2));
+            column.addView(bar, new LinearLayout.LayoutParams(dp(10), dp(value)));
+            bars.addView(column, new LinearLayout.LayoutParams(0, dp(100), 1f));
+        }
+        chart.addView(bars);
+        chart.addView(text("00:00      06:00      12:00      18:00      00:00",
+                9, MUTED, Typeface.NORMAL));
+        body.addView(chart, cardMargins());
+
+        body.addView(sectionTitle("WEATHER BY HOUR"));
+        LinearLayout hourly = row();
+        String[] times = {"09:00", "12:00", "15:00", "18:00"};
+        String[] temps = {"12°C", "14°C", "15°C", "13°C"};
+        for (int i = 0; i < times.length; i++) {
+            LinearLayout cell = vertical();
+            cell.setGravity(Gravity.CENTER);
+            cell.setPadding(dp(4), dp(10), dp(4), dp(10));
+            cell.setBackground(roundRect(SURFACE, BORDER, 1, 7));
+            cell.addView(centerText(times[i], 10, ACCENT, Typeface.BOLD));
+            cell.addView(centerText(temps[i], 15, TEXT, Typeface.BOLD));
+            cell.addView(centerText("SW 3 m/s", 9, MUTED, Typeface.NORMAL));
+            if (i > 0) hourly.addView(spaceWide());
+            hourly.addView(cell, new LinearLayout.LayoutParams(0, dp(78), 1f));
+        }
+        body.addView(hourly, cardMargins());
+
+        body.addView(sectionTitle("5-DAY FORECAST"));
+        if (weatherForecast != null) {
+            for (ForecastDay day : weatherForecast.days) body.addView(forecastDayCard(day), cardMargins());
+        } else {
+            body.addView(infoCard("FORECAST PENDING", "Connect to the internet and refresh the Today screen."), cardMargins());
+        }
+        LinearLayout actions = row();
+        Button view = smallButton("SPECIES VIEW");
+        view.setOnClickListener(v -> render("species"));
+        actions.addView(view, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        actions.addView(spaceWide());
+        Button back = primaryButton("BACK TO TODAY");
+        back.setOnClickListener(v -> render("home"));
+        actions.addView(back, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        body.addView(actions);
+        return scroll;
+    }
+
+    private View speciesForecastScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+        body.addView(pageTitle("Species forecast", "FIND THE BEST BITE WINDOW"));
+        body.addView(spacer(12));
+        EditText search = authField("Search species", InputType.TYPE_CLASS_TEXT);
+        body.addView(search, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        body.addView(spacer(12));
+
+        LinearLayout selected = card();
+        LinearLayout selectedRow = row();
+        selectedRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView fish = imageCard(R.drawable.pike_forecast_badge, "Selected species Pike");
+        selectedRow.addView(fish, new LinearLayout.LayoutParams(dp(72), dp(72)));
+        LinearLayout copy = vertical();
+        copy.setPadding(dp(12), 0, 0, 0);
+        copy.addView(text(selectedSpecies, 22, SUCCESS, Typeface.BOLD));
+        copy.addView(text("Bite 4 of 5", 14, SUCCESS, Typeface.BOLD));
+        copy.addView(text("Excellent chance of a catch", 12, MUTED, Typeface.NORMAL));
+        selectedRow.addView(copy, weighted());
+        selected.addView(selectedRow);
+        body.addView(selected, cardMargins());
+
+        body.addView(sectionTitle("OTHER SPECIES"));
+        LinearLayout choices = row();
+        String[] names = {"Perch", "Zander", "Carp"};
+        int[] colors = {SUCCESS, WARNING, DANGER};
+        for (int i = 0; i < names.length; i++) {
+            TextView choice = centerText(names[i] + "\nBite " + (3 - i / 2) + " of 5",
+                    11, colors[i], Typeface.BOLD);
+            choice.setBackground(roundRect(SURFACE, BORDER, 1, 7));
+            final String name = names[i];
+            choice.setOnClickListener(v -> {
+                selectedSpecies = name;
+                weatherPrefs.edit().putString(WEATHER_SPECIES, name).apply();
+                render("species");
+            });
+            if (i > 0) choices.addView(spaceWide());
+            choices.addView(choice, new LinearLayout.LayoutParams(0, dp(62), 1f));
+        }
+        body.addView(choices, cardMargins());
+
+        LinearLayout score = card();
+        score.addView(text("BITE SCORE 4 OF 5", 11, SUCCESS, Typeface.BOLD));
+        score.addView(spacer(8));
+        score.addView(text("High activity", 21, TEXT, Typeface.BOLD));
+        score.addView(text("Good conditions and stable weather create strong chances for a successful fishing trip.",
+                13, MUTED, Typeface.NORMAL));
+        score.addView(spacer(12));
+        score.addView(text("BEST BITE WINDOWS", 10, MUTED, Typeface.BOLD));
+        score.addView(text("11:30–14:00     ·     22:40–00:20", 15, TEXT, Typeface.BOLD));
+        body.addView(score, cardMargins());
+
+        LinearLayout recommendations = card();
+        recommendations.addView(text("RECOMMENDATIONS", 11, MUTED, Typeface.BOLD));
+        recommendations.addView(settingLine("Depth", "2–4 m"));
+        recommendations.addView(settingLine("Lures", "Wobblers 10–14 cm, spoons"));
+        recommendations.addView(settingLine("Water", "Light chop · medium clarity"));
+        recommendations.addView(settingLine("Location", "Weed edges and depth changes"));
+        body.addView(recommendations, cardMargins());
+
+        Button add = primaryButton("ADD TO TRIP PLAN");
+        add.setOnClickListener(v -> render("tripSetup"));
+        body.addView(add, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        body.addView(spacer(10));
+        Button compare = smallButton("COMPARE SPECIES · COMING SOON");
+        compare.setOnClickListener(v -> comingSoon("Species comparison"));
+        body.addView(compare, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        return scroll;
+    }
+
     private View homeScreen() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout body = vertical();
-        body.setPadding(dp(20), dp(18), dp(20), dp(28));
+        body.setPadding(dp(20), dp(16), dp(20), dp(28));
         scroll.addView(body);
 
         LinearLayout brand = new LinearLayout(this);
@@ -406,9 +796,9 @@ public final class MainActivity extends Activity implements
         companionLp.setMargins(dp(10), 0, 0, 0);
         brand.addView(companion, companionLp);
         body.addView(brand);
-        body.addView(text("v" + BuildConfig.VERSION_NAME + " · INTERNAL PROTOTYPE", 10, ACCENT, Typeface.BOLD));
+        body.addView(text("v" + BuildConfig.VERSION_NAME + " · CLOSED BETA", 10, ACCENT, Typeface.BOLD));
 
-        TextView hello = text("Remember the moment.\nKeep moving.", 31, TEXT, Typeface.BOLD);
+        TextView hello = text("Plan the water.\nRemember the moment.", 31, TEXT, Typeface.BOLD);
         hello.setLineSpacing(0f, 1.05f);
         LinearLayout.LayoutParams helloLp = matchWrap(); helloLp.setMargins(0, dp(22), 0, dp(18));
         body.addView(hello, helloLp);
@@ -577,6 +967,376 @@ public final class MainActivity extends Activity implements
         return item;
     }
 
+    private View tripSetupScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+        body.addView(pageTitle("Trip setup", "PLAN · CHECK · GO OFFLINE"));
+        body.addView(spacer(14));
+
+        LinearLayout plan = card();
+        plan.addView(settingLine("Selected spot", "Current map area"));
+        plan.addView(settingLine("Planned time", "Today · 06:30–15:30"));
+        plan.addView(settingLine("Route", "32 km · 45 min"));
+        plan.addView(settingLine("Offline map", "Ready · 120 MB"));
+        plan.addView(settingLine("Forecast & risks", "Low risk · safe fishing conditions"));
+        plan.addView(settingLine("Gear checklist", "7 of 9 items ready"));
+        body.addView(plan, cardMargins());
+
+        LinearLayout ready = card();
+        ready.addView(text("FIELD READINESS", 11, MUTED, Typeface.BOLD));
+        ready.addView(checkRow(flicConnected, "Flic 2 connected"));
+        ready.addView(checkRow(lastLocation != null, "GPS and precise location"));
+        ready.addView(checkRow(true, "Offline local storage ready"));
+        ready.addView(checkRow(cloudConnected, "Cloud sync available"));
+        body.addView(ready, cardMargins());
+
+        LinearLayout options = card();
+        options.addView(toggleLine("Voice guidance", false, "Coming soon"));
+        options.addView(toggleLine("Automatic track recording", true, "Enabled"));
+        options.addView(toggleLine("Hide exact location when sharing", true, "Private"));
+        body.addView(options, cardMargins());
+
+        Button start = primaryButton("START TRIP");
+        start.setOnClickListener(v -> startPlannedTrip());
+        body.addView(start, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        body.addView(spacer(10));
+        Button route = smallButton("CHANGE ROUTE · COMING SOON");
+        route.setOnClickListener(v -> comingSoon("Route planning"));
+        body.addView(route, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        return scroll;
+    }
+
+    private void startPlannedTrip() {
+        if (!trackStore.isActive()) {
+            trackStore.start();
+            if (lastLocation != null) trackStore.add(lastLocation);
+            captureTripWeather(true, trackStore.startedAt());
+        }
+        if (fishingDayStore.active() == null) {
+            FishingDay day = fishingDayStore.start();
+            selectedLogDateMillis = day.startedAt;
+            calendarMonthMillis = firstDayOfMonth(day.startedAt);
+            captureFishingDayWeather(day, true);
+        }
+        Toast.makeText(this, "Trip started · offline capture is ready", Toast.LENGTH_SHORT).show();
+        render("tripActive");
+    }
+
+    private View tripActiveScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(12), dp(10), dp(12), dp(22));
+        scroll.addView(body);
+        body.addView(pageTitle("Trip active", "LIVE FIELD MODE"));
+        body.addView(spacer(10));
+
+        LinearLayout stats = card();
+        LinearLayout statsRow = row();
+        long started = trackStore.startedAt() > 0 ? trackStore.startedAt() : System.currentTimeMillis();
+        statsRow.addView(miniMetric("TRIP", formatDuration(System.currentTimeMillis() - started)), weighted());
+        statsRow.addView(miniMetric("DISTANCE", trackStore.points().size() + " points"), weighted());
+        statsRow.addView(miniMetric("FLIC 2", flicConnected ? "Connected" : "Offline"), weighted());
+        stats.addView(statsRow);
+        stats.addView(checkRow(lastLocation != null, lastLocation == null
+                ? "Waiting for GPS" : "GPS accuracy ±" + Math.round(lastLocation.getAccuracy()) + " m"));
+        body.addView(stats, cardMargins());
+
+        TextView mapStatus = text("Loading field map…", 10, MUTED, Typeface.NORMAL);
+        body.addView(mapStatus);
+        MapTilerMapView map = new MapTilerMapView(this, selectedMapStyle,
+                new MapTilerMapView.StyleListener() {
+                    @Override public void onStyleLoading(String styleId) { }
+                    @Override public void onStyleLoaded(String styleId) {
+                        mapStatus.post(() -> mapStatus.setText(layerReadyMessage(styleId)));
+                    }
+                    @Override public void onStyleError(String styleId) {
+                        mapStatus.post(() -> {
+                            mapStatus.setText("Map unavailable · field capture still works offline");
+                            mapStatus.setTextColor(WARNING);
+                        });
+                    }
+                });
+        activeMapView = map;
+        map.setData(lastLocation, pointStore.all(), trackStore.points(), null);
+        body.addView(map, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(290)));
+        body.addView(spacer(12));
+
+        Button catchButton = fieldAction("CATCH", "1 PRESS", SUCCESS);
+        catchButton.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_CATCH));
+        body.addView(catchButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+        body.addView(spacer(8));
+        Button waypoint = fieldAction("WAYPOINT", "2 PRESSES", WARNING);
+        waypoint.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_WAYPOINT));
+        body.addView(waypoint, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+        body.addView(spacer(8));
+        Button tackle = fieldAction("TACKLE CHANGE", "HOLD", Color.rgb(197, 155, 255));
+        tackle.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_TACKLE_CHANGE));
+        body.addView(tackle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+        body.addView(spacer(10));
+
+        LinearLayout controls = row();
+        Button pause = smallButton("PAUSE");
+        pause.setOnClickListener(v -> comingSoon("Trip pause"));
+        controls.addView(pause, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        controls.addView(spaceWide());
+        Button sos = dangerButton("SOS / SHARE");
+        sos.setOnClickListener(v -> comingSoon("Safety and SOS sharing"));
+        controls.addView(sos, new LinearLayout.LayoutParams(0, dp(50), 1.2f));
+        controls.addView(spaceWide());
+        Button finish = dangerButton("FINISH");
+        finish.setOnClickListener(v -> finishActiveTrip());
+        controls.addView(finish, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        body.addView(controls);
+        return scroll;
+    }
+
+    private void finishActiveTrip() {
+        designSummaryDay=null;
+        long tripId = trackStore.startedAt();
+        if (trackStore.isActive()) {
+            trackStore.stop();
+            captureTripWeather(false, tripId);
+        }
+        FishingDay day = fishingDayStore.active();
+        if (day != null) {
+            FishingDay finished = fishingDayStore.stop();
+            if (finished != null) {
+                selectedLogDateMillis = finished.startedAt;
+                calendarMonthMillis = firstDayOfMonth(finished.startedAt);
+                captureFishingDayWeather(finished, false);
+            }
+        }
+        Toast.makeText(this, "Trip saved to your journal", Toast.LENGTH_SHORT).show();
+        render("tripSummary");
+    }
+
+    private View tripSummaryScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+        body.addView(pageTitle("Trip summary", formatLogDay(selectedLogDateMillis).toUpperCase(Locale.ROOT)));
+        body.addView(spacer(12));
+
+        List<FishingDay> sessions = fishingDayStore.sessionsOnDate(selectedLogDateMillis);
+        DayStats day = buildDayStats(sessions);
+        LinearLayout metrics = row();
+        metrics.addView(miniMetric("DURATION", formatDuration(day.durationMs)), weighted());
+        metrics.addView(miniMetric("EVENTS", String.valueOf(day.points.size())), weighted());
+        metrics.addView(miniMetric("CATCHES", String.valueOf(day.catches)), weighted());
+        metrics.addView(miniMetric("BEST BITE", "12–14"), weighted());
+        body.addView(metrics, cardMargins());
+
+        if (!trackStore.points().isEmpty()) {
+            MapTilerMapView map = new MapTilerMapView(this, selectedMapStyle, null);
+            map.setData(lastLocation, day.points, trackStore.points(), null);
+            body.addView(map, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+            body.addView(spacer(12));
+        }
+
+        LinearLayout catchCard = card();
+        catchCard.addView(text("CATCHES (" + day.catches + ")", 11, MUTED, Typeface.BOLD));
+        if (day.catches == 0) {
+            catchCard.addView(text("No catches were logged during this trip.",
+                    13, TEXT, Typeface.NORMAL));
+        } else {
+            for (SavedPoint point : day.points) {
+                if (!POINT_TYPE_CATCH.equals(point.type)) continue;
+                catchCard.addView(settingLine(point.catchDetails == null
+                        ? "Catch" : catchSummary(point.catchDetails), formatTime(point.timestamp)));
+            }
+        }
+        body.addView(catchCard, cardMargins());
+
+        LinearLayout charts = card();
+        charts.addView(text("TRIP INSIGHTS", 11, MUTED, Typeface.BOLD));
+        charts.addView(settingLine("Most active window", "12:00–14:00"));
+        charts.addView(settingLine("Primary lure", "Not enough data"));
+        charts.addView(settingLine("Weather", day.lastWeather == null ? "Not captured"
+                : weatherSummary(day.lastWeather)));
+        body.addView(charts, cardMargins());
+
+        Button edit = primaryButton("OPEN JOURNAL");
+        edit.setOnClickListener(v -> render("log"));
+        body.addView(edit, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        body.addView(spacer(9));
+        Button share = smallButton("SHARE REPORT · COMING SOON");
+        share.setOnClickListener(v -> comingSoon("Trip report sharing"));
+        body.addView(share, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        body.addView(spacer(9));
+        Button export = smallButton("EXPORT GPX · COMING SOON");
+        export.setOnClickListener(v -> comingSoon("GPX export"));
+        body.addView(export, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        return scroll;
+    }
+
+    private View mapToolsScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(16), dp(12), dp(16), dp(26));
+        scroll.addView(body);
+        body.addView(pageTitle("Map & layers", "OFFLINE MAP · FIELD TOOLS"));
+        body.addView(spacer(12));
+        body.addView(mapLayerSelector(), cardMargins());
+
+        LinearLayout layers = card();
+        layers.addView(toggleLine("Offline map", true, "Ready"));
+        layers.addView(toggleLine("Depth overlay", false, "Coming soon"));
+        layers.addView(toggleLine("Fishing zones", false, "Coming soon"));
+        layers.addView(toggleLine("My saved points", true, pointStore.all().size() + " visible"));
+        layers.addView(toggleLine("Recorded track", true, trackStore.points().size() + " points"));
+        body.addView(layers, cardMargins());
+
+        body.addView(sectionTitle("TOOLS"));
+        LinearLayout tools1 = row();
+        tools1.addView(toolButton("RULER", "Distance measure"), weighted());
+        tools1.addView(spaceWide());
+        tools1.addView(toolButton("COORDINATES", lastLocation == null ? "Waiting for GPS"
+                : formatCoords(lastLocation.getLatitude(), lastLocation.getLongitude())), weighted());
+        tools1.addView(spaceWide());
+        tools1.addView(toolButton("IMPORT GPX", "Coming soon"), weighted());
+        body.addView(tools1);
+        body.addView(spacer(10));
+        LinearLayout tools2 = row();
+        tools2.addView(toolButton("EXPORT GPX", "Coming soon"), weighted());
+        tools2.addView(spaceWide());
+        tools2.addView(toolButton("DOWNLOAD AREA", "Coming soon"), weighted());
+        tools2.addView(spaceWide());
+        tools2.addView(toolButton("VOICE", "Coming soon"), weighted());
+        body.addView(tools2, cardMargins());
+
+        LinearLayout pack = card();
+        pack.addView(text("OFFLINE PACK · 120 MB", 11, ACCENT, Typeface.BOLD));
+        pack.addView(text("The app remains local-first. Downloadable MapTiler packs will be added later.",
+                12, MUTED, Typeface.NORMAL));
+        body.addView(pack, cardMargins());
+        Button done = primaryButton("DONE");
+        done.setOnClickListener(v -> { showingWeatherPage = false; render("map"); });
+        body.addView(done, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        return scroll;
+    }
+
+    private View flicSetupScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(18), dp(16), dp(18), dp(26));
+        scroll.addView(body);
+
+        LinearLayout header = row();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView back = text("BACK", 11, MUTED, Typeface.BOLD);
+        back.setPadding(0, dp(10), dp(14), dp(10));
+        back.setOnClickListener(v -> render("device"));
+        header.addView(back);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.fiskentra_wordmark);
+        logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        header.addView(logo, new LinearLayout.LayoutParams(dp(150), dp(48)));
+        body.addView(header);
+        body.addView(text("Flic 2 setup  ·  Step " + (flicSetupStep + 1) + " of 4",
+                12, TEXT, Typeface.BOLD));
+        body.addView(spacer(8));
+        body.addView(progressSegments(flicSetupStep, 4));
+        body.addView(spacer(24));
+
+        if (flicSetupStep == 0) {
+            body.addView(text("Allow device access", 28, TEXT, Typeface.BOLD));
+            body.addView(text("Fiskentra needs these permissions to save button presses with an accurate location.",
+                    14, MUTED, Typeface.NORMAL));
+            body.addView(spacer(18));
+            body.addView(permissionCard("Nearby devices", "Required for Flic 2", flicManager.hasPermissions()), cardMargins());
+            body.addView(permissionCard("Precise location", "Required for field events", locationManager.hasPermission()), cardMargins());
+            body.addView(permissionCard("Notifications", "Required for background status", notificationPermissionReady()), cardMargins());
+            Button allow = primaryButton("ALLOW REQUIRED ACCESS");
+            allow.setOnClickListener(v -> requestNeededPermissions());
+            body.addView(allow, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        } else if (flicSetupStep == 1) {
+            ImageView hero = imageCard(R.drawable.flic2_setup_hero, "Flic 2 button");
+            body.addView(hero, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(230)));
+            body.addView(spacer(18));
+            body.addView(text("Pair your Flic 2", 28, TEXT, Typeface.BOLD));
+            body.addView(text("1. Keep Bluetooth on\n2. Hold the button for 6 seconds until it glows\n3. Keep it close to your phone",
+                    14, MUTED, Typeface.NORMAL));
+            body.addView(spacer(16));
+            body.addView(infoCard(flicConnected ? "FLIC 2 CONNECTED" : "READY TO PAIR",
+                    flicConnected ? bleStatus : "Fiskentra will open Android's Pair & connect dialog."), cardMargins());
+            Button pair = primaryButton(flicConnected ? "CONTINUE" : "PAIR & CONNECT");
+            pair.setOnClickListener(v -> {
+                if (flicConnected) { flicSetupStep = 2; render("flicSetup"); }
+                else if (!flicManager.hasPermissions()) requestNeededPermissions();
+                else flicManager.pairNewButton();
+            });
+            body.addView(pair, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        } else if (flicSetupStep == 2) {
+            body.addView(text(flicConnected ? "Flic 2 connected" : "Use the on-screen test",
+                    13, flicConnected ? SUCCESS : WARNING, Typeface.BOLD));
+            body.addView(text("Test all three actions", 28, TEXT, Typeface.BOLD));
+            body.addView(text("Complete each action once. These on-screen tests do not create journal entries.",
+                    14, MUTED, Typeface.NORMAL));
+            body.addView(spacer(16));
+            body.addView(flicTestAction("PRESS ONCE", "Log a catch", SUCCESS, flicSingleTested,
+                    () -> { flicSingleTested = true; render("flicSetup"); }), cardMargins());
+            body.addView(flicTestAction("PRESS TWICE", "Save a waypoint", WARNING, flicDoubleTested,
+                    () -> { flicDoubleTested = true; render("flicSetup"); }), cardMargins());
+            body.addView(flicTestAction("PRESS AND HOLD", "Record a tackle change",
+                    Color.rgb(197, 155, 255), flicHoldTested,
+                    () -> { flicHoldTested = true; render("flicSetup"); }), cardMargins());
+            int passed = (flicSingleTested ? 1 : 0) + (flicDoubleTested ? 1 : 0) + (flicHoldTested ? 1 : 0);
+            body.addView(text(passed + " of 3 tests passed", 13, TEXT, Typeface.BOLD));
+        } else {
+            ImageView hero = imageCard(R.drawable.flic2_setup_hero, "Flic 2 ready");
+            body.addView(hero, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+            body.addView(spacer(16));
+            body.addView(text("Your field button is ready", 28, TEXT, Typeface.BOLD));
+            body.addView(text("Flic 2 is paired and every action is mapped for local-first capture.",
+                    14, MUTED, Typeface.NORMAL));
+            body.addView(spacer(12));
+            body.addView(checkRow(flicConnected, "Flic 2 connected"));
+            body.addView(checkRow(true, "Single press · Catch"));
+            body.addView(checkRow(true, "Double press · Waypoint"));
+            body.addView(checkRow(true, "Hold · Tackle change"));
+            body.addView(checkRow(lastLocation != null, "GPS accuracy ready"));
+            body.addView(checkRow(true, "Offline storage ready"));
+        }
+
+        body.addView(spacer(22));
+        LinearLayout actions = row();
+        if (flicSetupStep > 0) {
+            Button previous = smallButton("BACK");
+            previous.setOnClickListener(v -> { flicSetupStep--; render("flicSetup"); });
+            actions.addView(previous, new LinearLayout.LayoutParams(0, dp(50), 1f));
+            actions.addView(spaceWide());
+        }
+        boolean testsReady = flicSingleTested && flicDoubleTested && flicHoldTested;
+        Button next = primaryButton(flicSetupStep == 3 ? "ENTER FISKENTRA"
+                : (flicSetupStep == 2 ? (testsReady ? "CONTINUE" : "COMPLETE TESTS") : "CONTINUE"));
+        next.setEnabled(flicSetupStep != 2 || testsReady);
+        next.setOnClickListener(v -> {
+            if (flicSetupStep < 3) { flicSetupStep++; render("flicSetup"); }
+            else render("home");
+        });
+        actions.addView(next, new LinearLayout.LayoutParams(0, dp(50), flicSetupStep > 0 ? 1f : 2f));
+        body.addView(actions);
+        return scroll;
+    }
+
     private View fishingLogScreen() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = vertical();
@@ -732,6 +1492,14 @@ public final class MainActivity extends Activity implements
                 sessionCard.addView(text("Finish · " + weatherSummary(session.endWeather),
                         11, MUTED, Typeface.NORMAL));
             }
+            sessionCard.addView(spacer(10));
+            Button summary = smallButton(session.isActive() ? "OPEN ACTIVE TRIP" : "VIEW TRIP SUMMARY");
+            summary.setOnClickListener(v -> {
+                selectedLogDateMillis = session.startedAt;
+                render(session.isActive() ? "tripActive" : "tripSummary");
+            });
+            sessionCard.addView(summary, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
             body.addView(sessionCard, cardMargins());
         }
 
@@ -788,7 +1556,7 @@ public final class MainActivity extends Activity implements
         Button previous = smallButton("‹");
         previous.setOnClickListener(v -> shiftCalendarMonth(-1));
         monthHeader.addView(previous, new LinearLayout.LayoutParams(dp(42), dp(38)));
-        TextView monthTitle = text(new SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+        TextView monthTitle = text(new SimpleDateFormat("MMMM yyyy", Locale.US)
                 .format(month.getTime()), 17, TEXT, Typeface.BOLD);
         monthTitle.setGravity(Gravity.CENTER);
         monthHeader.addView(monthTitle, new LinearLayout.LayoutParams(
@@ -837,7 +1605,7 @@ public final class MainActivity extends Activity implements
                     cellLabel += " •";
                 }
                 TextView cell = text(cellLabel, dayWeather == null ? 12 : 10,
-                        selected ? Color.rgb(7, 22, 12) : (hasLog ? TEXT : MUTED),
+                        selected ? Color.WHITE : (hasLog ? TEXT : MUTED),
                         hasLog || selected ? Typeface.BOLD : Typeface.NORMAL);
                 cell.setGravity(Gravity.CENTER);
                 cell.setBackground(roundRect(selected ? ACCENT : (hasLog ? SURFACE_2 : SURFACE), 10));
@@ -1050,9 +1818,9 @@ public final class MainActivity extends Activity implements
     }
 
     private TextView weatherTab(String label, boolean selected) {
-        TextView tab = text(label, 11, selected ? Color.rgb(7, 22, 12) : MUTED, Typeface.BOLD);
+        TextView tab = text(label, 11, selected ? Color.WHITE : MUTED, Typeface.BOLD);
         tab.setGravity(Gravity.CENTER);
-        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, 11));
+        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, BORDER, 1, 7));
         return tab;
     }
 
@@ -1152,10 +1920,20 @@ public final class MainActivity extends Activity implements
         TextView count = text(points.size() + " saved", 12, ACCENT, Typeface.BOLD);
         notice.addView(count);
         body.addView(notice);
-        body.addView(spacer(14));
-        Button button = primaryButton("＋  SAVE HERE");
+        body.addView(spacer(12));
+        LinearLayout mapActions = row();
+        Button tools = smallButton("MAP & LAYERS");
+        tools.setOnClickListener(v -> render("mapTools"));
+        mapActions.addView(tools, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        mapActions.addView(spaceWide());
+        Button trip = primaryButton(trackStore.isActive() ? "ACTIVE TRIP" : "START TRIP");
+        trip.setOnClickListener(v -> render(trackStore.isActive() ? "tripActive" : "tripSetup"));
+        mapActions.addView(trip, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        body.addView(mapActions);
+        body.addView(spacer(9));
+        Button button = smallButton("SAVE POINT HERE");
         button.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_WAYPOINT));
-        body.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        body.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         TextView hint = text("Swipe left from the right edge for Weather  →", 10, MUTED, Typeface.NORMAL);
         hint.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams hintLp = matchWrap();
@@ -1181,9 +1959,9 @@ public final class MainActivity extends Activity implements
 
     private void addMapLayerTab(LinearLayout tabs, String label, String styleId) {
         boolean selected = styleId.equals(selectedMapStyle);
-        TextView tab = text(label, 9, selected ? Color.rgb(7, 22, 12) : MUTED, Typeface.BOLD);
+        TextView tab = text(label, 9, selected ? Color.WHITE : MUTED, Typeface.BOLD);
         tab.setGravity(Gravity.CENTER);
-        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, 10));
+        tab.setBackground(roundRect(selected ? ACCENT : SURFACE, BORDER, 1, 7));
         tab.setOnClickListener(v -> {
             if (styleId.equals(selectedMapStyle)) return;
             selectedMapStyle = styleId;
@@ -1325,20 +2103,23 @@ public final class MainActivity extends Activity implements
         Location location = lastLocation;
         if (location == null) {
             forecastStatus = "Waiting for GPS";
-            if ("map".equals(screen) && showingWeatherPage) render("map");
+            if (("map".equals(screen) && showingWeatherPage) || "home".equals(screen)
+                    || "forecastDetail".equals(screen) || "species".equals(screen)) render(screen);
             return;
         }
         forecastLoading = true;
         forecastAttempted = true;
         forecastStatus = forceRefresh ? "Refreshing forecast…" : "Loading forecast…";
-        if ("map".equals(screen) && showingWeatherPage) render("map");
+        if (("map".equals(screen) && showingWeatherPage) || "home".equals(screen)
+                || "forecastDetail".equals(screen) || "species".equals(screen)) render(screen);
         weatherClient.fetchForecast(location.getLatitude(), location.getLongitude(), forceRefresh,
                 (forecast, message) -> runOnUiThread(() -> {
                     if (destroyed) return;
                     forecastLoading = false;
                     if (forecast != null) weatherForecast = forecast;
                     forecastStatus = message;
-                    if ("map".equals(screen) && showingWeatherPage) render("map");
+                    if (("map".equals(screen) && showingWeatherPage) || "home".equals(screen)
+                            || "forecastDetail".equals(screen) || "species".equals(screen)) render(screen);
                 }));
     }
 
@@ -1420,7 +2201,21 @@ public final class MainActivity extends Activity implements
         List<SavedPoint> points = pointStore.all();
         recoverStaleSyncStates(points);
         body.addView(pageTitle("Saved", points.size() + (points.size() == 1 ? " MOMENT" : " MOMENTS")));
-        body.addView(spacer(18));
+        body.addView(spacer(12));
+        EditText savedSearch = authField("Search saved items", InputType.TYPE_CLASS_TEXT);
+        body.addView(savedSearch, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        body.addView(spacer(8));
+        LinearLayout filters = row();
+        String[] filterLabels = {"ALL", "CATCH", "WAYPOINT", "TACKLE"};
+        for (int index = 0; index < filterLabels.length; index++) {
+            String label = filterLabels[index];
+            TextView chip = weatherTab(label, index == 0);
+            chip.setOnClickListener(v -> comingSoon(label + " saved filter"));
+            if (index > 0) filters.addView(spaceWide());
+            filters.addView(chip, new LinearLayout.LayoutParams(0, dp(38), 1f));
+        }
+        body.addView(filters, cardMargins());
         if (shouldShowDeleteStatus()) {
             LinearLayout statusCard = card();
             statusCard.addView(text("DELETE STATUS", 11, cloudSyncColor(), Typeface.BOLD));
@@ -1622,9 +2417,8 @@ public final class MainActivity extends Activity implements
 
     private void chooseCatchPhoto(SavedPoint point) {
         if (point.catchDetails == null) {
-            Toast.makeText(this, "Save catch details before adding a photo", Toast.LENGTH_SHORT).show();
-            showCatchDetailsDialog(point);
-            return;
+            SavedPoint initialized=pointStore.updateCatchDetails(point.id,new CatchDetails("",0,0,"","",false,""));
+            if(initialized==null)return;
         }
         pendingCatchPhotoPointId = point.id;
         Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -1795,10 +2589,12 @@ public final class MainActivity extends Activity implements
     }
 
     private void addOnboardingWelcome(LinearLayout body) {
-        TextView symbol = text("⌖", 52, ACCENT, Typeface.BOLD);
-        symbol.setGravity(Gravity.CENTER);
-        body.addView(symbol, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(76)));
+        ImageView brand = new ImageView(this);
+        brand.setImageResource(R.drawable.fiskentra_wordmark);
+        brand.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        brand.setContentDescription("Fiskentra");
+        body.addView(brand, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(88)));
         body.addView(text("Remember every place and catch", 30, TEXT, Typeface.BOLD));
         body.addView(spacer(10));
         body.addView(text("Fiskentra combines your phone’s GPS, fishing journal, weather and Flic 2 button so a moment is never lost in the field.",
@@ -1844,6 +2640,10 @@ public final class MainActivity extends Activity implements
         body.addView(text("Pair your Flic 2 once. Fiskentra then reconnects it and can capture with the screen off.",
                 15, MUTED, Typeface.NORMAL));
         body.addView(spacer(22));
+        ImageView flicHero = imageCard(R.drawable.flic2_setup_hero, "Flic 2 button");
+        body.addView(flicHero, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(190)));
+        body.addView(spacer(14));
         LinearLayout mapping = card();
         mapping.addView(text("FLIC 2 ACTIONS", 11, ACCENT, Typeface.BOLD));
         mapping.addView(spacer(12));
@@ -1919,6 +2719,11 @@ public final class MainActivity extends Activity implements
         SupabaseAuthManager.Session account = authManager.session();
 
         if (account == null) {
+            ImageView lakeHero = imageCard(R.drawable.fiskentra_lake_hero,
+                    "Northern lake at blue hour");
+            body.addView(lakeHero, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(210)));
+            body.addView(spacer(12));
             if ("landing".equals(authFormMode)) {
                 LinearLayout localCard = card();
                 localCard.addView(text("○  LOCAL MODE", 11, MUTED, Typeface.BOLD));
@@ -1946,6 +2751,8 @@ public final class MainActivity extends Activity implements
                 choice.addView(create, new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
                 body.addView(choice, cardMargins());
+            } else if ("checkEmail".equals(authFormMode)) {
+                body.addView(checkEmailCard(), cardMargins());
             } else {
                 body.addView(authFormCard(), cardMargins());
             }
@@ -2126,6 +2933,28 @@ public final class MainActivity extends Activity implements
                 11, MUTED, Typeface.NORMAL));
         body.addView(safety, cardMargins());
 
+        LinearLayout future = card();
+        future.addView(text("FIELD SERVICES", 11, ACCENT, Typeface.BOLD));
+        future.addView(settingLine("Offline maps", "Map tools"));
+        future.addView(settingLine("GPS / Bluetooth permissions", locationManager.hasPermission()
+                && flicManager.hasPermissions() ? "Ready" : "Review"));
+        future.addView(settingLine("Forecast providers", "Open-Meteo"));
+        future.addView(settingLine("Barometer offset", "0 m"));
+        future.addView(settingLine("Safety & SOS", "Coming soon"));
+        future.addView(settingLine("News & offline library", "Coming soon"));
+        future.addView(settingLine("Help & tutorials", "Quick Start"));
+        future.addView(spacer(10));
+        LinearLayout fieldActions = row();
+        Button maps = smallButton("MAP TOOLS");
+        maps.setOnClickListener(v -> render("mapTools"));
+        fieldActions.addView(maps, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        fieldActions.addView(spaceWide());
+        Button permissions = smallButton("PERMISSIONS");
+        permissions.setOnClickListener(v -> requestNeededPermissions());
+        fieldActions.addView(permissions, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        future.addView(fieldActions);
+        body.addView(future, cardMargins());
+
         List<SavedPoint> points = pointStore.all();
         int pending = pendingSyncCount(points);
         LinearLayout data = card();
@@ -2141,6 +2970,18 @@ public final class MainActivity extends Activity implements
         data.addView(sync, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         body.addView(data, cardMargins());
+
+        LinearLayout beta = card();
+        beta.addView(text("CLOSED BETA", 11, WARNING, Typeface.BOLD));
+        beta.addView(spacer(7));
+        beta.addView(text("Check field readiness and share a privacy-safe support report.",
+                13, TEXT, Typeface.NORMAL));
+        beta.addView(spacer(12));
+        Button openBeta = smallButton("OPEN BETA CENTER");
+        openBeta.setOnClickListener(v -> render("beta"));
+        beta.addView(openBeta, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        body.addView(beta, cardMargins());
 
         LinearLayout about = card();
         about.addView(text("ABOUT", 11, MUTED, Typeface.BOLD));
@@ -2165,14 +3006,173 @@ public final class MainActivity extends Activity implements
         return scroll;
     }
 
+    private View betaScreen() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = vertical();
+        body.setPadding(dp(20), dp(20), dp(20), dp(28));
+        scroll.addView(body);
+
+        body.addView(pageTitle("Beta Center", "FISKENTRA · CLOSED BETA"));
+        body.addView(spacer(10));
+        body.addView(text("Use this page before a field test and attach its safe report when something does not work.",
+                13, MUTED, Typeface.NORMAL));
+        body.addView(spacer(18));
+
+        List<SavedPoint> points = pointStore.all();
+        int pending = pendingSyncCount(points);
+        boolean locationReady = locationManager.hasPermission();
+        boolean bluetoothReady = flicManager.hasPermissions();
+        boolean notificationsReady = notificationPermissionReady();
+        boolean buttonReady = flicManager.pairedButtonCount() > 0;
+        boolean backgroundReady = buttonReady && FiskentraFlicService.isRunning();
+        boolean syncReady = pending == 0;
+        boolean[] checks = new boolean[] {
+                locationReady, bluetoothReady, notificationsReady, buttonReady,
+                backgroundReady, cloudConnected, syncReady
+        };
+        int readyCount = 0;
+        for (boolean ready : checks) if (ready) readyCount++;
+
+        LinearLayout readiness = card();
+        readiness.addView(text("FIELD READINESS", 11, ACCENT, Typeface.BOLD));
+        readiness.addView(spacer(7));
+        readiness.addView(text(readyCount + " / " + checks.length + " checks ready", 21,
+                readyCount == checks.length ? SUCCESS : WARNING, Typeface.BOLD));
+        readiness.addView(spacer(8));
+        readiness.addView(checkRow(locationReady, "Precise location permission"));
+        readiness.addView(checkRow(bluetoothReady, "Nearby devices permission"));
+        readiness.addView(checkRow(notificationsReady, "Notification permission"));
+        readiness.addView(checkRow(buttonReady, "Flic 2 paired"));
+        readiness.addView(checkRow(backgroundReady, "Screen-off capture service active"));
+        readiness.addView(checkRow(cloudConnected, "Fiskentra cloud reachable"));
+        readiness.addView(checkRow(syncReady, pending == 0
+                ? "No points waiting to sync" : pending + " points waiting to sync"));
+        readiness.addView(spacer(14));
+        LinearLayout readinessActions = row();
+        Button recheck = smallButton("RECHECK NOW");
+        recheck.setOnClickListener(v -> runBetaChecks());
+        readinessActions.addView(recheck, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        readinessActions.addView(spaceWide());
+        Button device = smallButton("OPEN DEVICE");
+        device.setOnClickListener(v -> render("device"));
+        readinessActions.addView(device, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        readiness.addView(readinessActions);
+        body.addView(readiness, cardMargins());
+
+        LinearLayout report = card();
+        report.addView(text("SAFE SUPPORT REPORT", 11, ACCENT, Typeface.BOLD));
+        report.addView(spacer(7));
+        report.addView(text("Includes app/Android version, permission states, Flic status and item counts.",
+                13, TEXT, Typeface.NORMAL));
+        report.addView(spacer(7));
+        report.addView(text("Never includes coordinates, notes, catches, account email, passwords, tokens, API keys or the phone’s install ID.",
+                12, SUCCESS, Typeface.NORMAL));
+        report.addView(spacer(14));
+        Button share = primaryButton("SHARE BETA REPORT");
+        share.setOnClickListener(v -> shareBetaReport());
+        report.addView(share, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        body.addView(report, cardMargins());
+
+        LinearLayout expectations = card();
+        expectations.addView(text("BETA EXPECTATIONS", 11, WARNING, Typeface.BOLD));
+        expectations.addView(spacer(7));
+        expectations.addView(text("• Save test moments locally before relying on cloud sync.\n"
+                        + "• Do not clear app data if the journal has not been backed up.\n"
+                        + "• Open Fiskentra once after restarting the phone.\n"
+                        + "• Force Stop disables background Flic capture until the app is opened again.",
+                13, TEXT, Typeface.NORMAL));
+        body.addView(expectations, cardMargins());
+
+        LinearLayout privacy = card();
+        privacy.addView(text("PRIVACY", 11, MUTED, Typeface.BOLD));
+        privacy.addView(text("Fiskentra has no analytics or automatic diagnostic upload in this beta. Sharing a report always requires your action through Android’s share screen.",
+                12, MUTED, Typeface.NORMAL));
+        privacy.addView(spacer(12));
+        Button back = smallButton("BACK TO SETTINGS");
+        back.setOnClickListener(v -> render("settings"));
+        privacy.addView(back, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        body.addView(privacy, cardMargins());
+        return scroll;
+    }
+
+    private void runBetaChecks() {
+        cloudConnected = false;
+        cloudStatus = "Checking Fiskentra cloud…";
+        syncQueue.retryPending();
+        render("beta");
+        supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
+            if (destroyed) return;
+            cloudConnected = connected;
+            cloudStatus = message;
+            if ("beta".equals(screen)) render("beta");
+        }));
+    }
+
+    private void shareBetaReport() {
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_SUBJECT,
+                "Fiskentra v" + BuildConfig.VERSION_NAME + " beta report");
+        share.putExtra(Intent.EXTRA_TEXT, betaReport());
+        try {
+            startActivity(Intent.createChooser(share, "Share Fiskentra beta report"));
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "No app is available to share the report",
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String betaReport() {
+        List<SavedPoint> points = pointStore.all();
+        SimpleDateFormat time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss 'UTC'", Locale.US);
+        time.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        StringBuilder report = new StringBuilder();
+        report.append("Fiskentra closed beta report\n");
+        report.append("Generated: ").append(time.format(new Date())).append('\n');
+        report.append("App: ").append(BuildConfig.VERSION_NAME)
+                .append(" (").append(BuildConfig.VERSION_CODE).append(") ")
+                .append(BuildConfig.BUILD_TYPE).append('\n');
+        report.append("Android: ").append(Build.VERSION.SDK_INT).append('\n');
+        report.append("Device: ").append(safeDiagnostic(Build.MANUFACTURER)).append(' ')
+                .append(safeDiagnostic(Build.MODEL)).append('\n');
+        report.append("Locale: ").append(Locale.getDefault().toLanguageTag()).append("\n\n");
+        report.append("Location permission: ").append(locationManager.hasPermission()).append('\n');
+        report.append("Nearby devices permission: ").append(flicManager.hasPermissions()).append('\n');
+        report.append("Notification permission: ").append(notificationPermissionReady()).append('\n');
+        report.append("Flic paired: ").append(flicManager.pairedButtonCount() > 0).append('\n');
+        report.append("Flic connected: ").append(flicConnected).append('\n');
+        report.append("Background capture: ").append(FiskentraFlicService.isRunning()).append('\n');
+        report.append("Cloud reachable: ").append(cloudConnected).append('\n');
+        report.append("Signed in: ").append(authManager.isSignedIn()).append('\n');
+        report.append("Saved moments: ").append(points.size()).append('\n');
+        report.append("Pending sync: ").append(pendingSyncCount(points)).append('\n');
+        report.append("Fishing sessions: ").append(fishingDayStore.all().size()).append('\n');
+        report.append("Track active: ").append(trackStore.isActive()).append('\n');
+        report.append("Track points: ").append(trackStore.points().size()).append("\n\n");
+        report.append("Excluded: coordinates, notes, catch details, email, credentials, tokens, API keys and install ID.\n");
+        return report.toString();
+    }
+
+    private boolean notificationPermissionReady() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private static String safeDiagnostic(String value) {
+        return value == null ? "unknown" : value.replace('\n', ' ').replace('\r', ' ').trim();
+    }
+
     private Button settingsChoice(String label, boolean selected) {
         Button button = new Button(this);
         button.setText(label);
         button.setTextSize(10);
         button.setAllCaps(false);
-        button.setTypeface(Typeface.DEFAULT_BOLD);
-        button.setTextColor(selected ? Color.rgb(7, 22, 12) : TEXT);
-        button.setBackground(roundRect(selected ? ACCENT : SURFACE_2, 12));
+        button.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        button.setTextColor(selected ? Color.WHITE : TEXT);
+        button.setBackground(roundRect(selected ? ACCENT : SURFACE_2, BORDER, 1, 7));
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(8), 0, dp(8), 0);
         return button;
@@ -2283,6 +3283,17 @@ public final class MainActivity extends Activity implements
         form.addView(submit, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
+        if (!recover) {
+            form.addView(spacer(10));
+            TextView or = centerText("OR", 10, MUTED, Typeface.BOLD);
+            form.addView(or);
+            form.addView(spacer(10));
+            Button google = smallButton("CONTINUE WITH GOOGLE · COMING SOON");
+            google.setOnClickListener(v -> comingSoon("Google sign-in"));
+            form.addView(google, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        }
+
         if (!signup && !recover) {
             form.addView(spacer(8));
             Button forgot = smallButton("FORGOT PASSWORD?");
@@ -2307,6 +3318,41 @@ public final class MainActivity extends Activity implements
         form.addView(back, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         return form;
+    }
+
+    private View checkEmailCard() {
+        LinearLayout card = card();
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.fiskentra_wordmark);
+        logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        card.addView(logo, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        TextView title = centerText("Check your email", 27, TEXT, Typeface.BOLD);
+        card.addView(title);
+        card.addView(spacer(10));
+        TextView message = centerText("We sent a secure confirmation link to\n"
+                + (authEmailDraft.isEmpty() ? "your email address" : authEmailDraft)
+                + "\n\nOpen the newest message to continue account setup.",
+                14, MUTED, Typeface.NORMAL);
+        card.addView(message);
+        card.addView(spacer(14));
+        card.addView(centerText("EMAIL SENT", 12, SUCCESS, Typeface.BOLD));
+        card.addView(spacer(18));
+        Button resend = primaryButton("RESEND LINK");
+        resend.setOnClickListener(v -> {
+            EditText email = authField("Email address", InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            email.setText(authEmailDraft);
+            resendConfirmation(email);
+        });
+        card.addView(resend, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        card.addView(spacer(9));
+        Button change = smallButton("USE A DIFFERENT EMAIL");
+        change.setOnClickListener(v -> openAuthForm("signup"));
+        card.addView(change, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        return card;
     }
 
     private void submitAuthForm(boolean signup, boolean recover, EditText name,
@@ -2456,7 +3502,9 @@ public final class MainActivity extends Activity implements
             authStatus = message;
             authStatusError = !success;
             if (success && "signup".equals(authFormMode) && authManager.session() == null) {
-                authFormMode = "signin";
+                authFormMode = "checkEmail";
+            } else if (success && "recover".equals(authFormMode)) {
+                authFormMode = "resetSent";
             } else if (success && "reset".equals(authFormMode)) {
                 authFormMode = "landing";
             }
@@ -2515,7 +3563,7 @@ public final class MainActivity extends Activity implements
         field.setSingleLine(true);
         field.setInputType(inputType);
         field.setPadding(dp(13), dp(11), dp(13), dp(11));
-        field.setBackground(roundRect(SURFACE_2, 10));
+        field.setBackground(roundRect(SURFACE_2, BORDER, 1, 7));
         return field;
     }
 
@@ -2535,7 +3583,12 @@ public final class MainActivity extends Activity implements
         body.setPadding(dp(20), dp(20), dp(20), dp(28));
         scroll.addView(body);
         body.addView(pageTitle("Field button", "FLIC 2 · OFFICIAL SDK"));
-        body.addView(spacer(18));
+        body.addView(spacer(14));
+
+        ImageView flicHero = imageCard(R.drawable.flic2_setup_hero, "Flic 2 field button");
+        body.addView(flicHero, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(210)));
+        body.addView(spacer(14));
 
         LinearLayout status = card();
         status.addView(text(flicConnected ? "●  CONNECTED" : "○  NOT CONNECTED", 11,
@@ -2553,12 +3606,23 @@ public final class MainActivity extends Activity implements
                 12, FiskentraFlicService.isRunning() ? SUCCESS : WARNING, Typeface.BOLD));
         status.addView(spacer(16));
         Button scan = primaryButton(flicManager.pairedButtonCount() == 0
-                ? "⌁  PAIR FLIC 2" : "⌁  PAIR ANOTHER FLIC 2");
+                ? "PAIR FLIC 2" : "PAIR ANOTHER FLIC 2");
         scan.setOnClickListener(v -> {
             if (!flicManager.hasPermissions()) { requestNeededPermissions(); return; }
             flicManager.pairNewButton();
         });
         status.addView(scan, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        status.addView(spacer(9));
+        Button guided = smallButton("GUIDED FLIC 2 SETUP");
+        guided.setOnClickListener(v -> {
+            flicSetupStep = flicManager.pairedButtonCount() > 0 ? 2 : 0;
+            flicSingleTested = false;
+            flicDoubleTested = false;
+            flicHoldTested = false;
+            render("flicSetup");
+        });
+        status.addView(guided, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         body.addView(status);
 
         body.addView(sectionTitle("PAIRING GUIDE"));
@@ -2594,6 +3658,25 @@ public final class MainActivity extends Activity implements
         buttonEventText = text(lastButtonEvent, 12, MUTED, Typeface.NORMAL);
         testCard.addView(buttonEventText);
         body.addView(testCard);
+
+        body.addView(sectionTitle("ACCOUNT & APP"));
+        LinearLayout accountCard = card();
+        accountCard.addView(text(authManager.isSignedIn() ? "ACCOUNT CONNECTED" : "LOCAL MODE",
+                11, authManager.isSignedIn() ? SUCCESS : MUTED, Typeface.BOLD));
+        accountCard.addView(spacer(6));
+        accountCard.addView(text("Profile, privacy, units, map preferences and beta diagnostics.",
+                13, TEXT, Typeface.NORMAL));
+        accountCard.addView(spacer(12));
+        LinearLayout accountActions = row();
+        Button profile = smallButton(authManager.isSignedIn() ? "PROFILE" : "SIGN IN");
+        profile.setOnClickListener(v -> render("profile"));
+        accountActions.addView(profile, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        accountActions.addView(spaceWide());
+        Button settings = smallButton("SETTINGS");
+        settings.setOnClickListener(v -> render("settings"));
+        accountActions.addView(settings, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        accountCard.addView(accountActions);
+        body.addView(accountCard);
 
         body.addView(sectionTitle("PROTOTYPE STATUS"));
         body.addView(checkRow(true, "Official Flic 2 SDK pairing and reconnect"));
@@ -2871,9 +3954,10 @@ public final class MainActivity extends Activity implements
 
     @Override public void onLocation(Location location) {
         runOnUiThread(() -> {
+            boolean firstLocation = lastLocation == null;
             lastLocation = location;
             if (trackStore.isActive()) trackStore.add(location);
-            if ("map".equals(screen) && activeMapView != null) {
+            if (activeMapView != null && !"tripSummary".equals(screen)) {
                 activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
             } else if ("map".equals(screen) && showingWeatherPage && !forecastLoading) {
                 if (weatherForecast != null && !forecastCovers(location)) {
@@ -2882,7 +3966,8 @@ public final class MainActivity extends Activity implements
                 }
                 if (weatherForecast == null && !forecastAttempted) loadForecast(false);
             } else if ("home".equals(screen)) {
-                render("home");
+                if (weatherForecast == null && !forecastAttempted && !forecastLoading) loadForecast(false);
+                else if (firstLocation) render("home");
             }
         });
     }
@@ -2891,6 +3976,7 @@ public final class MainActivity extends Activity implements
         runOnUiThread(() -> {
             bleStatus = status;
             if (deviceStatusText != null) deviceStatusText.setText(status);
+            if("flicSetup".equals(screen)&&design!=null&&content!=null)render(screen);
         });
     }
 
@@ -2900,7 +3986,7 @@ public final class MainActivity extends Activity implements
             String suffix = address == null ? "" : address.substring(Math.max(0, address.length() - 5));
             connectedDevice = suffix.isEmpty() ? name : name + " · " + suffix;
             if (connected && content != null) content.post(this::ensureBackgroundService);
-            if ("device".equals(screen) || "home".equals(screen)) render(screen);
+            if ("device".equals(screen) || "home".equals(screen) || "flicSetup".equals(screen)) render(screen);
         });
     }
 
@@ -2949,9 +4035,143 @@ public final class MainActivity extends Activity implements
 
     private View pageTitle(String title, String eyebrow) {
         LinearLayout box = vertical();
+        LinearLayout brandRow = row();
+        brandRow.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView wordmark = new ImageView(this);
+        wordmark.setImageResource(R.drawable.fiskentra_wordmark);
+        wordmark.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        wordmark.setContentDescription("Fiskentra home");
+        wordmark.setOnClickListener(v -> render("home"));
+        brandRow.addView(wordmark, new LinearLayout.LayoutParams(dp(132), dp(42)));
+        TextView version = text("v" + BuildConfig.VERSION_NAME, 9, MUTED, Typeface.BOLD);
+        version.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        brandRow.addView(version, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        box.addView(brandRow);
+        box.addView(spacer(6));
         box.addView(text(eyebrow, 11, ACCENT, Typeface.BOLD));
-        box.addView(text(title, 31, TEXT, Typeface.BOLD));
+        box.addView(text(title, 30, TEXT, Typeface.BOLD));
         return box;
+    }
+
+    private TextView centerText(String value, int sp, int color, int style) {
+        TextView valueView = text(value, sp, color, style);
+        valueView.setGravity(Gravity.CENTER);
+        return valueView;
+    }
+
+    private View infoCard(String title, String description) {
+        LinearLayout info = card();
+        info.addView(text(title, 11, ACCENT, Typeface.BOLD));
+        info.addView(spacer(6));
+        info.addView(text(description, 13, TEXT, Typeface.NORMAL));
+        return info;
+    }
+
+    private View settingLine(String label, String value) {
+        LinearLayout line = row();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        line.setPadding(0, dp(11), 0, dp(11));
+        TextView labelView = text(label, 13, TEXT, Typeface.NORMAL);
+        line.addView(labelView, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView valueView = text(value, 12, MUTED, Typeface.BOLD);
+        valueView.setGravity(Gravity.END);
+        line.addView(valueView, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.15f));
+        return line;
+    }
+
+    private View toggleLine(String label, boolean enabled, String status) {
+        LinearLayout line = row();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        line.setPadding(0, dp(10), 0, dp(10));
+        line.addView(text(label, 13, TEXT, Typeface.NORMAL), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView statusView = text(status, 10, enabled ? SUCCESS : MUTED, Typeface.BOLD);
+        statusView.setGravity(Gravity.END);
+        line.addView(statusView);
+        return line;
+    }
+
+    private Button fieldAction(String title, String subtitle, int color) {
+        Button action = new Button(this);
+        action.setAllCaps(false);
+        action.setText(title + "\n" + subtitle);
+        action.setTextColor(color);
+        action.setTextSize(16);
+        action.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        action.setGravity(Gravity.CENTER);
+        action.setBackground(roundRect(Color.argb(85, Color.red(color),
+                Color.green(color), Color.blue(color)), color, 1, 7));
+        return action;
+    }
+
+    private Button dangerButton(String label) {
+        Button button = smallButton(label);
+        button.setTextColor(DANGER);
+        button.setBackground(roundRect(Color.rgb(52, 24, 24), DANGER, 1, 7));
+        return button;
+    }
+
+    private View toolButton(String title, String subtitle) {
+        LinearLayout tool = vertical();
+        tool.setGravity(Gravity.CENTER);
+        tool.setPadding(dp(5), dp(10), dp(5), dp(10));
+        tool.setBackground(roundRect(SURFACE, BORDER, 1, 7));
+        tool.addView(centerText(title, 10, ACCENT, Typeface.BOLD));
+        tool.addView(centerText(subtitle, 9, MUTED, Typeface.NORMAL));
+        tool.setOnClickListener(v -> comingSoon(title));
+        return tool;
+    }
+
+    private View permissionCard(String title, String description, boolean allowed) {
+        LinearLayout permission = card();
+        LinearLayout line = row();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout copy = vertical();
+        copy.addView(text(title, 16, TEXT, Typeface.BOLD));
+        copy.addView(text(description, 11, MUTED, Typeface.NORMAL));
+        line.addView(copy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView status = text(allowed ? "ALLOWED" : "NOT ALLOWED", 10,
+                allowed ? SUCCESS : WARNING, Typeface.BOLD);
+        line.addView(status);
+        permission.addView(line);
+        return permission;
+    }
+
+    private View progressSegments(int current, int count) {
+        LinearLayout progress = row();
+        for (int index = 0; index < count; index++) {
+            View segment = new View(this);
+            segment.setBackground(roundRect(index <= current ? ACCENT : BORDER, 2));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(4), 1f);
+            if (index > 0) params.setMargins(dp(5), 0, 0, 0);
+            progress.addView(segment, params);
+        }
+        return progress;
+    }
+
+    private View flicTestAction(String title, String subtitle, int color,
+                                boolean passed, Runnable action) {
+        LinearLayout card = card();
+        LinearLayout line = row();
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout copy = vertical();
+        copy.addView(text(title, 16, color, Typeface.BOLD));
+        copy.addView(text(subtitle, 12, TEXT, Typeface.NORMAL));
+        line.addView(copy, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        line.addView(text(passed ? "PASSED" : "TEST", 11,
+                passed ? SUCCESS : ACCENT, Typeface.BOLD));
+        card.addView(line);
+        card.setOnClickListener(v -> action.run());
+        return card;
+    }
+
+    private void comingSoon(String feature) {
+        Toast.makeText(this, feature + " · coming soon", Toast.LENGTH_SHORT).show();
     }
 
     private TextView sectionTitle(String title) {
@@ -2971,29 +4191,42 @@ public final class MainActivity extends Activity implements
 
     private LinearLayout card() {
         LinearLayout v = vertical();
-        v.setPadding(dp(17), dp(16), dp(17), dp(16));
-        v.setBackground(roundRect(SURFACE, 18));
+        v.setPadding(dp(16), dp(15), dp(16), dp(15));
+        v.setBackground(roundRect(SURFACE, BORDER, 1, 9));
         return v;
+    }
+
+    private ImageView imageCard(int resource, String description) {
+        ImageView image = new ImageView(this);
+        image.setImageResource(resource);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setContentDescription(description);
+        image.setBackground(roundRect(SURFACE_2, BORDER, 1, 9));
+        image.setClipToOutline(true);
+        return image;
     }
 
     private TextView text(String value, int sp, int color, int style) {
         TextView t = new TextView(this);
-        t.setText(value); t.setTextSize(sp); t.setTextColor(color); t.setTypeface(Typeface.create("sans", style));
+        t.setText(value); t.setTextSize(sp); t.setTextColor(color);
+        t.setTypeface(Typeface.create("sans-serif-condensed", style));
         t.setIncludeFontPadding(false); t.setLineSpacing(dp(2), 1.12f);
         return t;
     }
 
     private Button primaryButton(String label) {
         Button b = new Button(this);
-        b.setText(label); b.setTextColor(Color.rgb(7, 22, 12)); b.setTextSize(13); b.setAllCaps(false);
-        b.setTypeface(Typeface.DEFAULT_BOLD); b.setBackground(roundRect(ACCENT, 14)); b.setGravity(Gravity.CENTER);
+        b.setText(label); b.setTextColor(Color.WHITE); b.setTextSize(12); b.setAllCaps(false);
+        b.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        b.setBackground(roundRect(ACCENT, 7)); b.setGravity(Gravity.CENTER);
         return b;
     }
 
     private Button smallButton(String label) {
         Button b = new Button(this);
         b.setText(label); b.setTextColor(TEXT); b.setTextSize(10); b.setAllCaps(false);
-        b.setTypeface(Typeface.DEFAULT_BOLD); b.setBackground(roundRect(SURFACE_2, 12)); b.setGravity(Gravity.CENTER);
+        b.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        b.setBackground(roundRect(SURFACE_2, BORDER, 1, 7)); b.setGravity(Gravity.CENTER);
         b.setPadding(dp(8), 0, dp(8), 0);
         return b;
     }
@@ -3030,6 +4263,12 @@ public final class MainActivity extends Activity implements
         GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radiusDp)); return d;
     }
 
+    private GradientDrawable roundRect(int color, int strokeColor, int strokeDp, int radiusDp) {
+        GradientDrawable d = roundRect(color, radiusDp);
+        d.setStroke(dp(strokeDp), strokeColor);
+        return d;
+    }
+
     private View spacer(int height) {
         View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(height))); return v;
     }
@@ -3061,14 +4300,14 @@ public final class MainActivity extends Activity implements
 
     private String weatherDetails(WeatherSnapshot weather) {
         if (userPreferences.usesImperialUnits()) {
-            return String.format(Locale.getDefault(),
+            return String.format(Locale.US,
                     "Feels %s · Humidity %d%% · Pressure %.2f inHg · Precipitation %.2f in",
                     formatTemperature(weather.apparentTemperatureC),
                     weather.humidityPercent,
                     weather.pressureHpa * 0.0295299830714d,
                     weather.precipitationMm / 25.4d);
         }
-        return String.format(Locale.getDefault(),
+        return String.format(Locale.US,
                 "Feels %s · Humidity %d%% · Pressure %.0f hPa · Precipitation %.1f mm",
                 formatTemperature(weather.apparentTemperatureC),
                 weather.humidityPercent,
@@ -3080,11 +4319,11 @@ public final class MainActivity extends Activity implements
         List<String> parts = new ArrayList<>();
         parts.add(details.species.isEmpty() ? "Unidentified catch" : details.species);
         if (details.lengthCm > 0d) {
-            parts.add(String.format(Locale.getDefault(), userPreferences.usesImperialUnits()
+            parts.add(String.format(Locale.US, userPreferences.usesImperialUnits()
                     ? "%.1f in" : "%.1f cm", displayLength(details.lengthCm)));
         }
         if (details.weightKg > 0d) {
-            parts.add(String.format(Locale.getDefault(), userPreferences.usesImperialUnits()
+            parts.add(String.format(Locale.US, userPreferences.usesImperialUnits()
                     ? "%.2f lb" : "%.2f kg", displayWeight(details.weightKg)));
         }
         parts.add(details.released ? "Released" : "Kept");
@@ -3113,9 +4352,9 @@ public final class MainActivity extends Activity implements
 
     private String formatPrecipitation(double millimetres) {
         if (userPreferences.usesImperialUnits()) {
-            return String.format(Locale.getDefault(), "%.2f in", millimetres / 25.4d);
+            return String.format(Locale.US, "%.2f in", millimetres / 25.4d);
         }
-        return String.format(Locale.getDefault(), "%.1f mm", millimetres);
+        return String.format(Locale.US, "%.1f mm", millimetres);
     }
 
     private double displayLength(double centimetres) {
@@ -3135,18 +4374,18 @@ public final class MainActivity extends Activity implements
     }
 
     private static String nowTime() {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
+        return new SimpleDateFormat("HH:mm", Locale.US).format(new Date());
     }
 
     private static String formatDate(long time) {
-        return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(time));
+        return new SimpleDateFormat("EEE, d MMM · HH:mm", Locale.US).format(new Date(time));
     }
 
     private static String formatForecastDate(String isoDate) {
         try {
             Date parsed = new SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate);
             if (parsed != null) {
-                return new SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(parsed);
+                return new SimpleDateFormat("EEE, d MMM", Locale.US).format(parsed);
             }
         } catch (Exception ignored) { }
         return isoDate;
@@ -3169,11 +4408,11 @@ public final class MainActivity extends Activity implements
     }
 
     private static String formatTime(long time) {
-        return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(time));
+        return new SimpleDateFormat("HH:mm", Locale.US).format(new Date(time));
     }
 
     private static String formatLogDay(long time) {
-        return new SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(new Date(time));
+        return new SimpleDateFormat("EEEE, d MMMM", Locale.US).format(new Date(time));
     }
 
     private static String formatDuration(long durationMs) {

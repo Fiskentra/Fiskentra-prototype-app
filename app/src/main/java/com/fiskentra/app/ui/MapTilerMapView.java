@@ -10,11 +10,14 @@ import android.view.View;
 import android.widget.FrameLayout;
 
 import com.fiskentra.app.BuildConfig;
+import com.fiskentra.app.R;
+import android.graphics.drawable.Drawable;
 import com.fiskentra.app.model.SavedPoint;
 import org.maplibre.android.MapLibre;
 import org.maplibre.android.camera.CameraPosition;
 import org.maplibre.android.geometry.LatLng;
 import org.maplibre.android.maps.MapLibreMap;
+import org.maplibre.android.maps.MapLibreMapOptions;
 import org.maplibre.android.maps.MapView;
 
 import java.util.ArrayList;
@@ -38,6 +41,7 @@ public final class MapTilerMapView extends FrameLayout {
     private List<SavedPoint> points = Collections.emptyList();
     private SavedPoint selectedPoint;
     private boolean cameraMoved;
+    private boolean styleReady, showPoints = true, showTrack = true;
     private boolean started;
     private boolean resumed;
     private boolean destroyed;
@@ -57,7 +61,10 @@ public final class MapTilerMapView extends FrameLayout {
         styleId = normalizeStyleId(requestedStyleId);
         this.styleListener = styleListener;
         MapLibre.getInstance(context);
-        mapView = new MapView(context);
+        // The SurfaceView renderer can block the UI thread in onWindowResize on
+        // the physical OPPO during tab changes. TextureView avoids that surface
+        // resize wait and composes correctly with this screen's native overlays.
+        mapView = new MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true));
         mapView.onCreate(null);
         mapView.addOnDidFailLoadingMapListener(error -> {
             if (this.styleListener != null) this.styleListener.onStyleError(styleId);
@@ -71,11 +78,13 @@ public final class MapTilerMapView extends FrameLayout {
             mapLibreMap = map;
             if (this.styleListener != null) this.styleListener.onStyleLoading(styleId);
             mapLibreMap.setStyle(styleUrl(), style -> {
+                styleReady = true;
                 if (this.styleListener != null) this.styleListener.onStyleLoaded(styleId);
                 moveCameraIfReady();
                 overlay.invalidate();
             });
             mapLibreMap.addOnCameraIdleListener(overlay::invalidate);
+            mapLibreMap.addOnCameraMoveListener(overlay::invalidate);
             moveCameraIfReady();
             overlay.invalidate();
         });
@@ -103,6 +112,12 @@ public final class MapTilerMapView extends FrameLayout {
         overlay.setData(this.points, track);
         moveCameraIfReady();
     }
+
+    public void setOverlayVisibility(boolean points, boolean track) { showPoints=points;showTrack=track;overlay.invalidate(); }
+    public void recenter() { if(mapLibreMap==null||location==null)return;selectedPoint=null;mapLibreMap.setCameraPosition(new CameraPosition.Builder(mapLibreMap.getCameraPosition()).target(new LatLng(location.getLatitude(),location.getLongitude())).zoom(14).build());cameraMoved=true;overlay.invalidate(); }
+    public void northUp() { if(mapLibreMap!=null)mapLibreMap.setCameraPosition(new CameraPosition.Builder(mapLibreMap.getCameraPosition()).bearing(0).tilt(0).build()); }
+    public void zoomBy(double amount) { if(mapLibreMap!=null)mapLibreMap.setCameraPosition(new CameraPosition.Builder(mapLibreMap.getCameraPosition()).zoom(Math.max(1,Math.min(20,mapLibreMap.getCameraPosition().zoom+amount))).build()); }
+    @Override protected void onSizeChanged(int w,int h,int oldw,int oldh) { super.onSizeChanged(w,h,oldw,oldh);post(this::moveCameraIfReady); }
 
     public void start() {
         if (destroyed || started) return;
@@ -152,7 +167,7 @@ public final class MapTilerMapView extends FrameLayout {
     }
 
     private void moveCameraIfReady() {
-        if (mapLibreMap == null) return;
+        if (mapLibreMap == null || !styleReady || getWidth()==0 || getHeight()==0) return;
         double lat = DEFAULT_LAT;
         double lon = DEFAULT_LON;
         double zoom = 11.5;
@@ -160,11 +175,14 @@ public final class MapTilerMapView extends FrameLayout {
             lat = selectedPoint.latitude;
             lon = selectedPoint.longitude;
             zoom = 14.5;
+        } else if (location != null) {
+            lat=location.getLatitude();lon=location.getLongitude();zoom=14.0;
         } else if (!points.isEmpty()) {
-            CameraTarget target = savedPointsCameraTarget();
-            lat = target.latitude;
-            lon = target.longitude;
-            zoom = target.zoom;
+            // The bounding centre of widely separated historical points can be open sea.
+            // Open on the newest real moment; never present it as the live GPS position.
+            SavedPoint newest=points.get(0);
+            for(SavedPoint p:points)if(p.timestamp>newest.timestamp)newest=p;
+            lat=newest.latitude;lon=newest.longitude;zoom=14.0;
         } else if (location != null) {
             lat = location.getLatitude();
             lon = location.getLongitude();
@@ -178,7 +196,7 @@ public final class MapTilerMapView extends FrameLayout {
                 .target(new LatLng(lat, lon))
                 .zoom(zoom)
                 .build());
-        cameraMoved = true;
+        cameraMoved = location != null || !points.isEmpty() || selectedPoint != null;
         overlay.invalidate();
     }
 
@@ -242,8 +260,8 @@ public final class MapTilerMapView extends FrameLayout {
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             if (mapLibreMap == null) return;
-            drawTrack(canvas);
-            drawSavedPoints(canvas);
+            if(showTrack)drawTrack(canvas);
+            if(showPoints)drawSavedPoints(canvas);
             // Keep the live GPS position as the topmost map element. Saved points reserve
             // its screen position and spread around it, so neither layer hides the other.
             drawCurrentLocation(canvas);
@@ -251,7 +269,7 @@ public final class MapTilerMapView extends FrameLayout {
 
         private void drawTrack(Canvas canvas) {
             if (track.size() < 2) return;
-            paint.setColor(Color.rgb(99, 190, 116));
+            paint.setColor(DesignScreens.BLUE);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(6f);
             PointF previous = null;
@@ -301,29 +319,15 @@ public final class MapTilerMapView extends FrameLayout {
                 canvas.drawLine(origin.x, origin.y, screenPoint.x, screenPoint.y, paint);
             }
 
-            float radius = selected ? 18f : 13f;
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(colorFor(point.type));
-            canvas.drawCircle(screenPoint.x, screenPoint.y, radius, paint);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(selected ? 5f : 3f);
-            paint.setColor(selected ? Color.rgb(0, 174, 213) : Color.WHITE);
-            canvas.drawCircle(screenPoint.x, screenPoint.y, selected ? 28f : 19f, paint);
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.rgb(7, 22, 12));
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setFakeBoldText(true);
-            paint.setTextSize(selected ? 17f : 13f);
-            canvas.drawText(markerLetter(point.type), screenPoint.x,
-                    screenPoint.y + (selected ? 6f : 5f), paint);
-            paint.setFakeBoldText(false);
+            float density=getResources().getDisplayMetrics().density;
+            int size=Math.round((selected?30:23)*density);
+            paint.setStyle(Paint.Style.FILL);paint.setColor(Color.argb(215,0,17,30));canvas.drawCircle(screenPoint.x,screenPoint.y,size*.56f,paint);
+            int id="Catch".equals(point.type)?R.drawable.ic_fish:"Tackle change".equals(point.type)?R.drawable.ic_fish_hook:"Hazard".equals(point.type)?R.drawable.ic_alert_triangle:"Camp".equals(point.type)?R.drawable.ic_tent:R.drawable.ic_map_pin;
+            drawIcon(canvas,id,colorFor(point.type),screenPoint,size);
         }
 
         private PointF spreadOverlappingMarker(PointF origin, List<PointF> occupied) {
-            final float minimumDistance = 42f;
+            final float minimumDistance = 28f*getResources().getDisplayMetrics().density;
             if (isAvailable(origin, occupied, minimumDistance)) return origin;
 
             // Try stable rings around the true coordinate. This keeps several moments saved
@@ -357,7 +361,7 @@ public final class MapTilerMapView extends FrameLayout {
             PointF screenPoint = mapLibreMap.getProjection().toScreenLocation(
                     new LatLng(location.getLatitude(), location.getLongitude()));
 
-            paint.setColor(Color.argb(150, 7, 22, 12));
+            paint.setColor(Color.argb(170, 0, 17, 30));
             paint.setStyle(Paint.Style.FILL);
             canvas.drawCircle(screenPoint.x, screenPoint.y, 25f, paint);
 
@@ -366,17 +370,19 @@ public final class MapTilerMapView extends FrameLayout {
             canvas.drawCircle(screenPoint.x, screenPoint.y, 11f, paint);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(5f);
-            paint.setColor(Color.rgb(121, 227, 143));
+            paint.setColor(DesignScreens.BLUE);
             canvas.drawCircle(screenPoint.x, screenPoint.y, 21f, paint);
             paint.setStrokeWidth(2f);
             paint.setColor(Color.rgb(0, 174, 213));
             canvas.drawCircle(screenPoint.x, screenPoint.y, 14f, paint);
             paint.setStyle(Paint.Style.FILL);
+            drawIcon(canvas,R.drawable.ic_navigation,DesignScreens.BLUE,screenPoint,Math.round(28*getResources().getDisplayMetrics().density));
         }
+        private void drawIcon(Canvas canvas,int id,int color,PointF p,int size){Drawable icon=getContext().getDrawable(id).mutate();icon.setTint(color);icon.setBounds(Math.round(p.x-size/2f),Math.round(p.y-size/2f),Math.round(p.x+size/2f),Math.round(p.y+size/2f));icon.draw(canvas);}
 
         private int colorFor(String type) {
-            if ("Catch".equals(type)) return Color.rgb(83, 214, 137);
-            if ("Waypoint".equals(type)) return Color.rgb(244, 190, 85);
+            if ("Catch".equals(type)) return DesignScreens.LIME;
+            if ("Waypoint".equals(type)) return DesignScreens.AMBER;
             if ("Tackle change".equals(type)) return Color.rgb(197, 155, 255);
             if ("Sighting".equals(type)) return Color.rgb(255, 142, 89);
             if ("Camp".equals(type)) return Color.rgb(104, 196, 255);
