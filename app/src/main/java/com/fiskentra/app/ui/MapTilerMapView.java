@@ -237,9 +237,11 @@ public final class MapTilerMapView extends FrameLayout {
         return 8.0;
     }
 
-    private String styleUrl() {
-        return "https://api.maptiler.com/maps/" + styleId + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY;
+    public static String styleUrl(String requestedStyleId) {
+        return "https://api.maptiler.com/maps/" + normalizeStyleId(requestedStyleId) + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY;
     }
+
+    private String styleUrl() { return styleUrl(styleId); }
 
     private final class MarkerOverlay extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
