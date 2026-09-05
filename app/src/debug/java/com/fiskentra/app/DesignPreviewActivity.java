@@ -27,8 +27,11 @@ public final class DesignPreviewActivity extends Activity implements DesignScree
         state.device="Flic 2";state.email="alex@example.com";state.name="Alex";
         if(!getIntent().getBooleanExtra("empty",false))loadFixture();
         design=new DesignScreens(this,this);
-        design.edit(new SavedPoint(1,55.9421,37.5802,System.currentTimeMillis(),"Catch","",null,new CatchDetails("Pike",68,3.4,"Wobbler 110 mm","",true,"")));
-        go(getIntent().getStringExtra("screen")==null?"profile":getIntent().getStringExtra("screen"));
+        String requested=getIntent().getStringExtra("screen");
+        SavedPoint editorPoint=new SavedPoint(501,55.9421,37.5802,System.currentTimeMillis(),"Waypoint","Reeds begin near the drop-off",null,null,"North inlet");
+        if("catchEdit".equals(requested))editorPoint=new SavedPoint(1,55.9421,37.5802,System.currentTimeMillis(),"Catch","",null,new CatchDetails("Pike",68,3.4,"Wobbler 110 mm","",true,""));
+        design.edit(editorPoint);
+        go(requested==null?"profile":requested);
     }
     private void loadFixture(){
         long now=System.currentTimeMillis();
@@ -51,6 +54,7 @@ public final class DesignPreviewActivity extends Activity implements DesignScree
     public MapTilerMapView map(){MapTilerMapView map=new MapTilerMapView(this);map.setData(state.location,state.points,Collections.emptyList(),null);return map;}
     public void point(SavedPoint p,String action){}
     public void trip(FishingDay day){go("tripSummary");}
+    public void savePoint(SavedPoint p,String title,String type,String note){Toast.makeText(this,"Preview saved · no user data changed",Toast.LENGTH_SHORT).show();go("saved");}
     public void saveCatch(SavedPoint p,CatchDetails d){}
     public String syncLabel(SavedPoint p){return "Preview";}
     public int syncColor(SavedPoint p){return DesignScreens.MUTED;}

@@ -1,11 +1,11 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-04
+Last updated: 2026-09-05
 
 ## Current stage
 
-- Version: `v0.16.2` (versionCode 24)
-- Stage: Android-first design follow-up — installed; build/lint, scoped device comparisons and unit checks passed
+- Version: `v0.17` (versionCode 25)
+- Stage: Saved-point editing — implemented, installed and checked on the physical Android phone
 - Platform order: Android launch first, iPhone afterward. Watch OS / Wear OS is not in the current app scope.
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -30,6 +30,17 @@ Last updated: 2026-09-04
 - Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
 - Closed beta: in-app readiness checks and explicit privacy-safe diagnostic sharing implemented; tester validation pending
 - Full structure design: native screen renderer rebuilt around all six English reference boards. All 24 routes recaptured after restoring unobstructed phone access. Targeted post-fix comparisons and device navigation/toggle smoke checks completed; see `design-qa.md` for evidence and remaining fidelity limits.
+
+## v0.17 saved-point editing
+
+- Every saved point now opens a common editor for its custom name, type and general note; catch-specific measurements remain available from a separate action.
+- Type and note reuse the existing `public.saved_points` fields and enqueue an upsert of the same stable point ID, including when the edit is made offline.
+- Custom names are stored on this phone and are clearly labelled as device-only. A future Supabase migration is required before names can be restored on another device.
+- Catch points with attached catch details keep their type locked to avoid silently orphaning structured catch data. Other points can use Catch, Waypoint, Tackle change, Camp or Hazard.
+- Existing local JSON remains backward compatible because the optional `title` property defaults to an empty value.
+- `PointMetadata` has 10 passing pure-Java validation checks. Android `assembleDebug` and `lintDebug` pass.
+- Installed with `adb install -r` without clearing existing data. The isolated preview verified the editor layout, five-type selector and save navigation without modifying user records.
+- APK: `C:/Fiskentra/Fiskentra-v0.17-saved-point-editing.apk`; SHA-256 `622795120013A76F8287CF29D665C397E397F2D0696D2702EF6D821973BBDF04`.
 
 ## v0.16.2 Android-first follow-up
 
@@ -95,6 +106,7 @@ Last updated: 2026-09-04
 | `v0.14` | Add onboarding | Implemented · physical validation pending |
 | `v0.15` | Closed beta | Implemented · tester validation pending |
 | `v0.16` | Merge full-structure application design | Implemented · on-device visual validation pending |
+| `v0.17` | Edit saved point name, type and note | Implemented · installed and preview-validated; physical edit/sync test pending |
 | `v1.0` | Official public launch | Planned |
 
 ## v0.5 implementation
