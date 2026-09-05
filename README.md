@@ -4,11 +4,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.18` background trip tracking (versionCode 26).
+- Current version: `v0.19` offline map areas (versionCode 27).
 - Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: keep an active fishing route recording reliably when Fiskentra is backgrounded or the Android screen is locked. v0.18 moves route capture into the existing location foreground service, shares writes safely with the Activity and filters stale or implausible GPS fixes. See `PROJECT_STATUS.md` for verification and remaining field-test limits.
-- Current APK: `C:/Fiskentra/Fiskentra-v0.18-background-trip-tracking.apk`.
+- Current target: let the user prepare one MapLibre/MapTiler fishing area before leaving coverage. v0.19 adds 2/5/10 km downloads around current GPS with progress, pause/resume and safe deletion. See `PROJECT_STATUS.md` for verification and the remaining physical offline-map gate.
+- Current APK: `C:/Fiskentra/Fiskentra-v0.19-offline-maps.apk`.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -28,6 +28,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Normal Map prioritizes the selected point, then live GPS, then the newest saved point; it avoids opening between unrelated distant saved locations.
 - Selectable MapTiler Outdoor, Satellite/Hybrid, Topographic and Ocean maps powered by MapLibre Native Android.
 - The selected layer persists across app restarts, while Fiskentra overlays keep current position, track, saved points and selected point visible on every layer.
+- Explicit 2, 5 or 10 km offline-area download for the selected map style, with progress, pause/resume and delete controls.
 - Map loading and failure status is shown without exposing the MapTiler API key.
 - Optional Supabase email/password registration and sign-in; local Flic, GPS, map and journal features remain available without an account.
 - Full-page Sign Up and Sign In forms with confirmation-email resend, password visibility, safe inline validation and password recovery.
@@ -197,7 +198,18 @@ The current fishing map shows:
 - Automatic camera fit around all saved points when the Map tab is opened normally.
 - Selected saved point highlight when opened from the Saved screen.
 
-The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake depth, fishing zones and downloadable offline map packs are still future work.
+The Ocean layer provides MapTiler's marine bathymetry. v0.19 can cache the selected base style around the current GPS position; dedicated inland lake depth and fishing-zone overlays are still future work.
+
+### v0.19 offline-map test
+
+1. Open `Forecast / Map`, open Map & Layers, then choose `Download area`.
+2. Keep Location and internet enabled, select `2 km` for the first test and tap `DOWNLOAD CURRENT AREA` once.
+3. Confirm progress and downloaded size increase. Pause once, close and reopen the screen, then resume and wait for `Ready offline`.
+4. Enable airplane mode, then re-enable Location if Android disabled it. Open Map and pan/zoom inside the downloaded area; the base map, current GPS, saved points and recorded track must remain visible.
+5. Leave and reopen Fiskentra while still offline and confirm the same area remains available.
+6. Restore internet, open Offline maps and delete the test area. Confirm saved points, trips, Flic pairing and cloud records are unchanged.
+
+Map downloads use device storage, network data and the configured MapTiler account quota. Fiskentra therefore requires an explicit user tap and does not download an area in the background automatically.
 
 ### v0.11 map-layer test
 
@@ -443,7 +455,7 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 
 - Complete the physical offline edit/sync test for saved-point name, type and notes.
 - Complete physical Flic 2 validation and record the phone/Android version results.
-- Offline MapLibre/MapTiler map packs for low-signal fishing areas.
+- Complete the physical v0.19 download/airplane-mode/delete test for a small 2 km area.
 - Complete the physical screen-off route recording test and tune GPS filters from field evidence.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
 - Fishing-specific overlays: depth/bathymetry, bite forecast, species and catch log.

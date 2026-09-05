@@ -45,6 +45,7 @@ import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.WeatherForecast;
 import com.fiskentra.app.model.WeatherSnapshot;
+import com.fiskentra.app.offline.OfflineMapController;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
 import com.fiskentra.app.ui.DesignScreens;
@@ -106,6 +107,7 @@ public final class MainActivity extends Activity implements
     private SupabaseAuthManager authManager;
     private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
+    private OfflineMapController offlineMapController;
     private SharedPreferences syncPrefs;
     private SharedPreferences weatherPrefs;
     private SharedPreferences mapPrefs;
@@ -148,6 +150,10 @@ public final class MainActivity extends Activity implements
     private boolean resumedForTests;
     private long pendingCatchPhotoPointId = -1L;
     private volatile boolean destroyed;
+    private final OfflineMapController.Listener offlineMapListener = () -> runOnUiThread(() -> {
+        if (destroyed) return;
+        if ("offlineMaps".equals(screen) || "mapTools".equals(screen) || "device".equals(screen)) render(screen);
+    });
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
         if (destroyed) return;
         runOnUiThread(() -> {
@@ -189,6 +195,7 @@ public final class MainActivity extends Activity implements
         mapPrefs = getSharedPreferences(MAP_PREFS, MODE_PRIVATE);
         userPreferences = new UserPreferences(this);
         flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
+        offlineMapController = ((FiskentraApplication) getApplication()).getOfflineMapController();
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedMapStyle = MapTilerMapView.normalizeStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
@@ -256,13 +263,15 @@ public final class MainActivity extends Activity implements
             else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
         String target=intent.getStringExtra("qa_route");
-        if(target!=null&&java.util.Arrays.asList("home","map","mapTools","saved","log","device","tripSetup","forecastDetail","species").contains(target))render(target);
+        if(target!=null&&java.util.Arrays.asList("home","map","mapTools","offlineMaps","saved","log","device","tripSetup","forecastDetail","species").contains(target))render(target);
     }
 
     @Override protected void onStart() {
         super.onStart();
         flicManager.addListener(this);
         syncQueue.addObserver(syncObserver);
+        offlineMapController.addListener(offlineMapListener);
+        offlineMapController.refresh();
         syncQueue.retryPending();
         if (activeMapView != null) activeMapView.start();
     }
@@ -292,6 +301,7 @@ public final class MainActivity extends Activity implements
         if (activeMapView != null) activeMapView.stop();
         flicManager.removeListener(this);
         syncQueue.removeObserver(syncObserver);
+        offlineMapController.removeListener(offlineMapListener);
     }
 
     @Override protected void onDestroy() {
@@ -333,6 +343,7 @@ public final class MainActivity extends Activity implements
         switch(screen){
             case "home":super.onBackPressed();break;
             case "mapTools":case "tripActive":render("map");break;
+            case "offlineMaps":render("mapTools");break;
             case "pointEdit":case "catchEdit":render("saved");break;
             case "tripSummary":render("log");break;
             case "profile":if(!authManager.isSignedIn()&&!"landing".equals(authFormMode)){openAuthForm("landing");break;}
@@ -422,6 +433,7 @@ public final class MainActivity extends Activity implements
             if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
             List<double[]> track=trackStore.points();float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if("tripSummary".equals(screen)&&(p[2]<s.tripStarted||(!s.active&&s.tripStopped>0&&q[2]>s.tripStopped)))continue;Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}
             s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
+            OfflineMapController.Snapshot offline=offlineMapController.snapshot();s.offlinePacks=offline.packCount;s.offlineProgress=offline.progress;s.offlineBytes=offline.completedBytes;s.offlineDownloading=offline.downloading;s.offlineComplete=offline.complete;s.offlineAvailable=offline.available;s.offlineChecked=offline.checked;s.offlineStatus=offline.status;s.offlineStyle=offline.styleName;s.offlineLatitude=offline.centerLatitude;s.offlineLongitude=offline.centerLongitude;s.offlineRadiusKm=offline.radiusKm;
             s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
         }
         public void go(String target) {if(target.startsWith("auth:"))openAuthForm(target.substring(5));else render(target);}
@@ -431,6 +443,7 @@ public final class MainActivity extends Activity implements
         public void command(String action){
             if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
             if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
+            if(action.startsWith("offlineDownload:")){try{double radius=Double.parseDouble(action.substring(16));offlineMapController.download(lastLocation,selectedMapStyle,radius);}catch(Exception error){Toast.makeText(MainActivity.this,"Offline download could not start",Toast.LENGTH_LONG).show();}return;}
             switch(action){
                 case "refresh":loadForecast(true);break;
                 case "sync":syncPendingPoints();break;
@@ -440,6 +453,10 @@ public final class MainActivity extends Activity implements
                 case "pair":requestNeededPermissions();flicManager.pairNewButton();break;
                 case "permissions":requestNeededPermissions();break;
                 case "recenter":selectedMapPointId=-1;if(lastLocation!=null&&activeMapView!=null)activeMapView.recenter();else Toast.makeText(MainActivity.this,"Turn on Location and wait for a GPS fix",Toast.LENGTH_LONG).show();break;
+                case "offline":render("offlineMaps");break;
+                case "offlinePause":offlineMapController.pause();break;
+                case "offlineResume":offlineMapController.resume();break;
+                case "offlineDelete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete offline area?").setMessage("The online map and your saved points are not removed. Only downloaded map data is deleted.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(dialog,which)->offlineMapController.deleteAll()).show();break;
                 case "testFlic":flicSetupStep=2;flicSingleTested=false;flicDoubleTested=false;flicHoldTested=false;render("flicSetup");break;
                 case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("home");}break;
                 case "setupBack":flicSetupStep=Math.max(0,flicSetupStep-1);render("flicSetup");break;

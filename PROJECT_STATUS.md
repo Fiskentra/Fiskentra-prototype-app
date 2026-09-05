@@ -1,11 +1,11 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 ## Current stage
 
-- Version: `v0.18` (versionCode 26)
-- Stage: Background trip tracking — implemented; build/lint passed and installed service validation is pending
+- Version: `v0.19` (versionCode 27)
+- Stage: User-managed offline map areas — implemented, build/lint and installed UI validation passed; physical download/offline rendering test pending
 - Platform order: Android launch first, iPhone afterward. Watch OS / Wear OS is not in the current app scope.
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -25,11 +25,25 @@ Last updated: 2026-09-05
 - Supabase sync hotfix: v0.9.1 sends `X-Device-Id` on point upserts; live Data API verification returned HTTP 401 without the header and HTTP 201 with it
 - Offline sync recovery: one process-wide sequential queue now retries persisted local points when Android validates internet access
 - Fishing map layers: Outdoor, Satellite/Hybrid, Topographic and Ocean are selectable and persist locally; physical validation pending
+- Offline map areas: 2, 5 or 10 km around the current GPS position with progress, pause/resume and delete; physical download/offline rendering validation pending
 - Accounts and profiles: production-shaped email/password UI, encrypted sessions, email deep links, recovery and private owner-only profile RLS implemented; physical validation pending
 - Settings: device-local units, Explore start page, default map layer, target fish, delete confirmation and sync overview implemented; physical validation pending
 - Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
 - Closed beta: in-app readiness checks and explicit privacy-safe diagnostic sharing implemented; tester validation pending
 - Full structure design: native screen renderer rebuilt around all six English reference boards. All 24 routes recaptured after restoring unobstructed phone access. Targeted post-fix comparisons and device navigation/toggle smoke checks completed; see `design-qa.md` for evidence and remaining fidelity limits.
+
+## v0.19 offline map areas
+
+- Map & Layers and Devices now open a real Offline maps manager instead of a Coming soon message.
+- A user can explicitly download one managed area around the latest valid GPS position with a 2, 5 or 10 km radius. Fiskentra never starts a tile download automatically.
+- The area stores the currently selected Outdoor, Satellite, Topographic or Ocean style at zoom levels 8–16 and uses the device display density for map resources.
+- Download progress, downloaded bytes and connection state remain visible. Incomplete downloads can be paused and resumed; the saved area can be deleted without deleting points, trips or cloud data.
+- MapLibre's application-wide offline database is reused by the normal map when the requested style and viewport fall inside the downloaded region.
+- The controller checks existing Fiskentra-owned regions before creation, blocks duplicate rapid taps, rejects invalid GPS coordinates and keeps provider errors free of the MapTiler key.
+- Offline region metadata contains only the Fiskentra owner marker, creation time, centre, radius and style. It is device-local and is not sent to Supabase.
+- Nine pure-Java policy checks cover radius normalization, geographic bounds, coordinate rejection, provider latitude/longitude clamps and zoom ordering.
+- Android `assembleDebug` and `lintDebug` pass. The no-area, downloading and ready layouts were rendered on the physical OPPO device, and the real screen opened with the current GPS and persisted Satellite style. A real tile download was deliberately not triggered automatically; the user field test remains the final gate.
+- APK: `C:/Fiskentra/Fiskentra-v0.19-offline-maps.apk`; SHA-256 `1EE78AC3BEF9AB6CC2B6AB3E84CB92C9F7832A7764A1E23CC5C87EC1CB20CBE4`.
 
 ## v0.18 background trip tracking
 
@@ -120,6 +134,7 @@ Last updated: 2026-09-05
 | `v0.16` | Merge full-structure application design | Implemented · on-device visual validation pending |
 | `v0.17` | Edit saved point name, type and note | Implemented · installed and preview-validated; physical edit/sync test pending |
 | `v0.18` | Record active trip routes in the foreground service | Implemented · automated checks passed; screen-off field test pending |
+| `v0.19` | Download and manage MapLibre/MapTiler areas for offline use | Implemented · build/device UI checks passed; physical offline-map test pending |
 | `v1.0` | Official public launch | Planned |
 
 ## v0.5 implementation

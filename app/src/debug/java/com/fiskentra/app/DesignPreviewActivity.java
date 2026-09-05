@@ -23,6 +23,16 @@ public final class DesignPreviewActivity extends Activity implements DesignScree
         state.authMode=getIntent().getStringExtra("mode");if(state.authMode==null)state.authMode="signin";
         state.setupStep=getIntent().getIntExtra("step",0);
         state.gps=state.gpsEnabled=state.bluetooth=state.notifications=state.connected=true;
+        state.offlineChecked=true;
+        state.offlineStatus="No offline area saved";
+        String offlineFixture=getIntent().getStringExtra("offline");
+        if("ready".equals(offlineFixture)||"downloading".equals(offlineFixture)){
+            state.offlineAvailable=true;state.offlinePacks=1;state.offlineRadiusKm=5;
+            state.offlineLatitude=55.9421;state.offlineLongitude=37.5802;state.offlineStyle="Outdoor";
+            state.offlineComplete="ready".equals(offlineFixture);state.offlineDownloading=!state.offlineComplete;
+            state.offlineProgress=state.offlineComplete?100:46;state.offlineBytes=state.offlineComplete?104857600L:48234496L;
+            state.offlineStatus=state.offlineComplete?"Ready offline":"Downloading · 46%";
+        }
         state.singleTest=state.doubleTest=state.holdTest=state.setupStep==3;
         state.device="Flic 2";state.email="alex@example.com";state.name="Alex";
         if(!getIntent().getBooleanExtra("empty",false))loadFixture();
