@@ -4,8 +4,8 @@ Last updated: 2026-09-05
 
 ## Current stage
 
-- Version: `v0.17` (versionCode 25)
-- Stage: Saved-point editing — implemented, installed and checked on the physical Android phone
+- Version: `v0.18` (versionCode 26)
+- Stage: Background trip tracking — implemented; build/lint passed and installed service validation is pending
 - Platform order: Android launch first, iPhone afterward. Watch OS / Wear OS is not in the current app scope.
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
@@ -30,6 +30,18 @@ Last updated: 2026-09-05
 - Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
 - Closed beta: in-app readiness checks and explicit privacy-safe diagnostic sharing implemented; tester validation pending
 - Full structure design: native screen renderer rebuilt around all six English reference boards. All 24 routes recaptured after restoring unobstructed phone access. Targeted post-fix comparisons and device navigation/toggle smoke checks completed; see `design-qa.md` for evidence and remaining fidelity limits.
+
+## v0.18 background trip tracking
+
+- The existing location foreground service now records an active trip route while Fiskentra is backgrounded or the phone is locked; internet is not required.
+- Starting a trip starts the service even when no Flic 2 is paired. When a paired Flic is available, the same service continues to own both button capture and route recording.
+- `TrackStore` uses a process-wide lock so simultaneous Activity and service callbacks cannot append the same GPS fix twice or overwrite one another.
+- Route fixes must belong to the active trip, be no more than two minutes old, have at most 75 m reported accuracy, move at least 8 m and remain below an impossible 55 m/s jump threshold.
+- Stored route timestamps now come from the GPS fix instead of the callback processing time, preserving the real order of the track.
+- The persistent notification changes to `Fiskentra trip recording`, and the active trip UI explains that recording continues with the screen locked.
+- The service drops itself after a trip finishes only when no paired Flic still needs background capture.
+- Ten pure-Java policy checks cover inactive trips, coordinates, stale/cached fixes, accuracy, minimum movement, duplicates and GPS jumps.
+- Android `assembleDebug` and `lintDebug` pass. APK: `C:/Fiskentra/Fiskentra-v0.18-background-trip-tracking.apk`; SHA-256 `0BCE0C6D7FD2E4371BC8FF5364BE1FA2B6C2B91EFB330CAB50F0DA124C4987F9`.
 
 ## v0.17 saved-point editing
 
@@ -107,6 +119,7 @@ Last updated: 2026-09-05
 | `v0.15` | Closed beta | Implemented · tester validation pending |
 | `v0.16` | Merge full-structure application design | Implemented · on-device visual validation pending |
 | `v0.17` | Edit saved point name, type and note | Implemented · installed and preview-validated; physical edit/sync test pending |
+| `v0.18` | Record active trip routes in the foreground service | Implemented · automated checks passed; screen-off field test pending |
 | `v1.0` | Official public launch | Planned |
 
 ## v0.5 implementation

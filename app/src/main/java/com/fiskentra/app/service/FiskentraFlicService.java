@@ -20,6 +20,7 @@ import com.fiskentra.app.MainActivity;
 import com.fiskentra.app.R;
 import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.data.PointStore;
+import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
@@ -28,7 +29,7 @@ import com.fiskentra.app.weather.WeatherClient;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Keeps Flic 2, GPS and local point capture alive while the screen is off. */
+/** Keeps Flic 2, GPS, local point capture and active trip recording alive screen-off. */
 public final class FiskentraFlicService extends Service implements
         FiskentraFlic2Manager.Listener, FiskentraLocationManager.Listener {
 
@@ -46,6 +47,7 @@ public final class FiskentraFlicService extends Service implements
     private FiskentraFlic2Manager flicManager;
     private FiskentraLocationManager locationManager;
     private PointStore pointStore;
+    private TrackStore trackStore;
     private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
     private NotificationManager notificationManager;
@@ -65,6 +67,10 @@ public final class FiskentraFlicService extends Service implements
         context.startForegroundService(intent);
     }
 
+    public static void stop(Context context) {
+        context.stopService(new Intent(context, FiskentraFlicService.class));
+    }
+
     public static boolean isRunning() {
         return running;
     }
@@ -75,6 +81,7 @@ public final class FiskentraFlicService extends Service implements
         flicManager = application.getFlicManager();
         locationManager = new FiskentraLocationManager(this, this);
         pointStore = new PointStore(this);
+        trackStore = new TrackStore(this);
         syncQueue = PointSyncQueue.get(this);
         weatherClient = new WeatherClient(this);
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -92,7 +99,7 @@ public final class FiskentraFlicService extends Service implements
         flicManager.addListener(this);
         syncQueue.addObserver(syncObserver);
         running = true;
-        flicManager.attachAndConnectPairedButtons();
+        if (flicManager.hasPermissions()) flicManager.attachAndConnectPairedButtons();
         locationManager.start();
     }
 
@@ -117,6 +124,9 @@ public final class FiskentraFlicService extends Service implements
 
     @Override public void onLocation(Location location) {
         lastLocation = location;
+        if (trackStore != null && trackStore.add(location)) {
+            updateNotification("Trip recording in background · " + trackStore.points().size() + " route points");
+        }
         if (!isFresh(location) || pendingActions.isEmpty()) return;
         List<PendingAction> ready = new ArrayList<>(pendingActions);
         pendingActions.clear();
@@ -226,8 +236,8 @@ public final class FiskentraFlicService extends Service implements
 
     private void createNotificationChannel() {
         NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "Fiskentra field button", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Keeps Flic 2 and GPS capture available while the phone is locked");
+                CHANNEL_ID, "Fiskentra field activity", NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription("Keeps Flic 2 capture and active trip recording available while locked");
         channel.setShowBadge(false);
         notificationManager.createNotificationChannel(channel);
     }
@@ -235,8 +245,11 @@ public final class FiskentraFlicService extends Service implements
     private void enterForeground(String status) {
         Notification notification = notification(status);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            if (flicManager != null && flicManager.hasPermissions()
+                    && flicManager.pairedButtonCount() > 0) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
+            }
             startForeground(NOTIFICATION_ID, notification, types);
         } else {
             startForeground(NOTIFICATION_ID, notification);
@@ -255,7 +268,8 @@ public final class FiskentraFlicService extends Service implements
                 this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Fiskentra field button active")
+                .setContentTitle(trackStore != null && trackStore.isActive()
+                        ? "Fiskentra trip recording" : "Fiskentra field button active")
                 .setContentText(status)
                 .setContentIntent(contentIntent)
                 .setCategory(Notification.CATEGORY_SERVICE)
