@@ -15,3 +15,9 @@ local.properties
 # OS files
 .DS_Store
 Thumbs.db
+
+# Private device QA evidence and experimental artifacts stay local.
+# Keep only the reproducible capture/comparison scripts in version control.
+/qa/*
+!/qa/*.ps1
+!/qa/*.py

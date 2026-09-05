@@ -1,21 +1,22 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-01
+Last updated: 2026-09-04
 
 ## Current stage
 
-- Version: `v0.14`
-- Stage: Internal Prototype / Pre-Alpha
+- Version: `v0.16.2` (versionCode 24)
+- Stage: Android-first design follow-up — installed; build/lint, scoped device comparisons and unit checks passed
+- Platform order: Android launch first, iPhone afterward. Watch OS / Wear OS is not in the current app scope.
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
 - Product: https://flic.io/shop/flic-2-single-pack
 - Retired hardware plan: BlueUP SafeX Lite
 - Build status: Debug APK, Android Lint and signature verification pass
-- Physical Flic 2 validation: Foreground callbacks confirmed; locked-phone validation remains a field test
+- Physical Flic 2 validation: User confirmed single press, double press and hold save the correct points without missed events offline and with the screen locked on v0.16.1 (2026-09-04)
 - Physical Flic 2 callbacks: Confirmed working by user on 2026-08-18
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
 - Map marker follow-up: The live GPS position is reserved, rendered last and remains visible inside overlapping saved-point clusters
-- Background service: Implemented; locked-phone physical validation pending
+- Background service: Implemented; locked-screen Flic capture confirmed by user on v0.16.1 (2026-09-04)
 - Fishing day log: Implemented and physically validated with active-session recovery, event summaries and calendar history
 - Weather: Implemented with Open-Meteo capture, seven-day forecast, species outlook, local persistence and offline-safe cache; physical validation pending
 - Supabase weather storage: `public.saved_points.weather jsonb` migration applied and verified on project `dwlbefpmwzmhutlvqfmu` on 2026-08-30
@@ -27,6 +28,32 @@ Last updated: 2026-09-01
 - Accounts and profiles: production-shaped email/password UI, encrypted sessions, email deep links, recovery and private owner-only profile RLS implemented; physical validation pending
 - Settings: device-local units, Explore start page, default map layer, target fish, delete confirmation and sync overview implemented; physical validation pending
 - Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
+- Closed beta: in-app readiness checks and explicit privacy-safe diagnostic sharing implemented; tester validation pending
+- Full structure design: native screen renderer rebuilt around all six English reference boards. All 24 routes recaptured after restoring unobstructed phone access. Targeted post-fix comparisons and device navigation/toggle smoke checks completed; see `design-qa.md` for evidence and remaining fidelity limits.
+
+## v0.16.2 Android-first follow-up
+
+- Removed the Watch / Wear OS card, legacy watch action and watch navigation asset. Devices now uses a Bluetooth icon.
+- Detailed forecast now includes the reference's range row, five-day chart, hourly layout and grouped factors. Unsupported hourly, moon, wave and water-temperature data is explicitly unavailable.
+- Trip summary includes session-only catches, recorded heaviest catch, a gallery, four-hour histogram and lure distribution. Fourteen pure-Java checks cover boundaries, timezones, empty data and aggregation.
+- Profile setup now follows the reference's progress, avatar, fields, activities and units hierarchy. Unsupported avatar/region/activity features are marked Coming soon. Signed-out name editing routes to Sign In.
+- Debug-only loaded fixtures provide repeatable visual checks without reading or modifying real account data.
+- APK: `C:/Fiskentra/Fiskentra-v0.16.2-android-design.apk`; update install and signature verification passed. Four changed screens were compared with source boards; three layout defects were fixed and recaptured. Lower-scroll content and preview unit switching passed; see `design-qa.md` for scope and residual test gaps.
+- Final APK SHA-256: `40BEB261AB05839105CB92AEF45E01EE1BE8116C4F1CB8660BA55FC5150A7EAF`. Normal Home restored with debug keep-awake disabled.
+- No changes to Flic event capture or cloud services in this follow-up. The v0.16.1 physical field-test confirmation below remains the latest hardware evidence.
+
+## v0.16.1 design rebuild verification
+
+- Normal Gradle `assembleDebug` and `lintDebug` passed (0 errors, 36 warnings).
+- Installed using `adb install -r`, without clearing the real account, Flic pairing or 61 saved moments.
+- Compact four-tab navigation, full-height map, forecast/trip screens, calendar/feed, saved cards, catch editor, account and Flic setup rebuilt in English.
+- Physical Flic test events no longer create journal points while the visible setup test step is active.
+- Missing functions remain visible as Coming soon; this does not imply public-release readiness.
+- Live GPS and saved map markers were visible after fixing the OPPO MapLibre SurfaceView resize freeze with the supported TextureView renderer. Sustained map-performance and battery field tests remain pending.
+- User field-test confirmation (2026-09-04): single press, double press and hold saved the correct points without omissions offline and with the screen locked; after restoring internet, points synchronized without duplicates. This is user-reported physical validation, not an automated hardware test.
+- Sign-in spacing, password visibility, reset-email composition, map controls, Flic test labels and unavailable switches refined using combined source/device comparisons.
+- Latest APK: `C:/Fiskentra/Fiskentra-v0.16.1-design-rebuild.apk`. No GitHub commit/push performed for this rebuild.
+- Ordinary tap navigation and two repeated unavailable-toggle attempts passed. Home restored with the debug keep-awake flag cleared; global phone settings were not changed by the test.
 
 ## Selected hardware
 
@@ -66,7 +93,8 @@ Last updated: 2026-09-01
 | `v0.12.1` | Repair profiles and complete the real-user auth flow | Implemented · physical validation pending |
 | `v0.13` | Add settings | Implemented · physical validation pending |
 | `v0.14` | Add onboarding | Implemented · physical validation pending |
-| `v0.15` | Closed beta | Planned |
+| `v0.15` | Closed beta | Implemented · tester validation pending |
+| `v0.16` | Merge full-structure application design | Implemented · on-device visual validation pending |
 | `v1.0` | Official public launch | Planned |
 
 ## v0.5 implementation
@@ -310,3 +338,41 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 5. Finish on Home, reopen Quick Start, then finish on Device and confirm the existing button remains paired.
 6. Clear app data or use a clean test installation and confirm onboarding appears before system permission prompts.
 7. Complete or Skip, restart Fiskentra and confirm onboarding does not appear again automatically.
+
+## v0.15 implementation
+
+- Added a Closed Beta Center reachable from Profile → Settings without changing the five primary navigation tabs.
+- Readiness checks cover precise location, Nearby devices, notifications, Flic pairing, the screen-off foreground service, cloud reachability and pending sync.
+- Recheck runs the existing safe pending-point queue and performs a fresh lightweight Supabase health request.
+- The support report includes only app/build version, Android/device model, locale, boolean feature states and aggregate local counts.
+- Coordinates, notes, catch details, account email, credentials, session tokens, API keys and the per-install device identifier are explicitly excluded.
+- Reports are never uploaded automatically; the tester must tap Share Beta Report and choose a destination in Android's share sheet.
+- The page documents beta limitations, local-first safety and the Android Force Stop restriction for background Flic capture.
+- No analytics SDK, crash uploader, storage permission or new Supabase table was added.
+
+## v0.15 tester gate
+
+1. Install v0.15 over v0.14 without uninstalling or clearing data and verify all existing local/account/Flic state remains.
+2. Compare all seven Beta Center checks with the actual Android permission, Flic, service, cloud and sync state.
+3. Test Recheck with internet disabled and restored, including one point saved offline.
+4. Inspect the shared report before sending and verify no private field content, coordinates, account identity or secrets appear.
+5. Test single, double and hold with the screen locked, then confirm the service and point counts update after returning to Fiskentra.
+6. Verify Settings, Quick Start, local mode and signed-in Profile remain usable.
+
+## v0.16 implementation
+
+- Merged the visual direction from `design/fiskentra-full-structure` into the existing native Android application without replacing working field behavior.
+- Replaced the previous green theme with deep navy surfaces, electric-blue actions, thin slate borders, warm off-white text and the condensed display hierarchy used by the boards.
+- Consolidated bottom navigation into Forecast / Map, Journal, Saved and Devices using Android icon assets instead of text glyphs.
+- Kept Home accessible from the Fiskentra wordmark and exposed Profile/Sign in, Settings and beta tools through the Devices area.
+- Added production image assets for the Flic 2 setup flow, signed-out account lake hero and Pike forecast badge; existing MapLibre maps and private catch photos remain live data.
+- Added the complete English design flow: Today, detailed forecast, species forecast, trip setup, active trip, map tools, trip summary, Saved search/filter chrome, Devices/Settings, account confirmation and four-step Flic setup.
+- Real GPS, Flic 2, MapLibre, weather, journal, offline storage and Supabase actions remain functional. SOS, GPX, Wear OS, voice guidance, Google sign-in and downloadable map packs are present as clearly labelled `Coming soon` controls.
+
+## v0.16 physical and visual test gate
+
+1. Install v0.16 over v0.15 and verify the existing local/account/Flic state remains intact.
+2. Capture Today, detailed/species forecast, trip setup/active/summary, Map/Tools, Journal, Saved, Devices, Flic setup and account screens at the phone's native viewport.
+3. Compare those captures with the corresponding English full-structure boards for typography, spacing, palette, imagery, icon alignment and copy.
+4. Verify every bottom destination, the wordmark Home action, Devices → Profile/Settings, Map/Weather swipe and all primary forms.
+5. Repeat offline Flic single/double/hold capture and cloud recovery to confirm the visual refactor introduced no field regression.

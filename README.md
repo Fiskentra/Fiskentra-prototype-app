@@ -4,9 +4,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.14` Internal Prototype / Pre-Alpha.
+- Current version: `v0.16.2` Android-first design follow-up (versionCode 24).
+- Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: validate first-run onboarding while retaining v0.13 settings, v0.12.1 accounts, v0.11 map layers, v0.10 automatic offline sync, v0.9.1 catch details, v0.8 weather, the confirmed v0.7 journal and v0.6.2 Flic behavior.
+- Current target: refine the native rebuild against the English design boards while retaining existing local-first services. v0.16.2 removes watch UI and expands detailed weather, session statistics and profile setup. Build/lint, 14 calculation checks, update installation and scoped source/device comparisons passed. The earlier 24-route rebuild review belongs to v0.16.1. See `design-qa.md` for evidence and remaining fidelity/field-test limits; this is not a pixel-identical or production certification.
+- Current APK: `C:/Fiskentra/Fiskentra-v0.16.2-android-design.apk` (installed on the development phone without clearing app data).
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -22,7 +24,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - A process-wide sequential sync queue shared by the app and Flic service, preventing duplicate concurrent uploads.
 - Automatic retry when Android validates internet access again, including while the foreground Flic service is active.
 - Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the selected MapTiler layer.
-- Normal Map tab fits the camera around all saved points so different saved places appear on the map together.
+- Normal Map prioritizes the selected point, then live GPS, then the newest saved point; it avoids opening between unrelated distant saved locations.
 - Selectable MapTiler Outdoor, Satellite/Hybrid, Topographic and Ocean maps powered by MapLibre Native Android.
 - The selected layer persists across app restarts, while Fiskentra overlays keep current position, track, saved points and selected point visible on every layer.
 - Map loading and failure status is shown without exposing the MapTiler API key.
@@ -37,12 +39,15 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Settings reports saved and pending-sync counts and can start the existing safe retry queue.
 - New installs open a four-step quick start before Android permission prompts, explaining local-first capture, field permissions, Flic 2 actions and optional accounts.
 - Existing installations skip onboarding automatically, while `Profile → Settings → View Quick Start` can reopen it at any time.
+- Settings opens a Closed Beta Center with live checks for permissions, Flic pairing, screen-off service, cloud reachability and pending sync.
+- Testers can share an explicit privacy-safe support report containing app/device state and counts but never coordinates, notes, catches, email, credentials, tokens, API keys or install ID.
+- The beta build has no analytics or automatic diagnostic upload; Android's share sheet opens only after the tester taps Share Beta Report.
 - Type-colored map markers and legend, so `Catch`, `Waypoint`, `Tackle change` and other saved point types are visually different on the map.
 - Official `flic2lib-android` 2.0.1 pairing, persisted SDK pairing and foreground reconnect flow.
 - Real Flic 2 single-press, double-press and hold callbacks routed to the existing button/GPS action mapping.
 - Protection against stale queued Flic events older than 15 seconds after reconnect.
 - Collision-aware map markers that reserve the live GPS position, spread overlapping Flic-created points around it and keep both layers visible.
-- Device UI with both real pairing and manual single/double/hold test actions for end-to-end validation.
+- Device UI with real pairing and single/double/hold test status driven only by physical button callbacks; test-mode presses do not create saved points.
 - Foreground service with a persistent notification that keeps one Flic connection and GPS updates active while the screen is off.
 - Background capture that requires a GPS fix no older than 30 seconds, waits up to 20 seconds for a new fix and saves locally before cloud sync.
 - Local fishing-day sessions that can be started and finished from Home or the new Log tab.
@@ -233,6 +238,28 @@ The Ocean layer provides MapTiler's marine bathymetry. Dedicated inland lake dep
 5. Finish with `START FISKENTRA` and confirm the normal Home screen appears with existing data unchanged.
 6. Reopen Quick Start and finish with `START AND SET UP FLIC 2`; confirm Device opens without losing the existing pairing.
 7. On a clean installation, confirm Quick Start appears before Android permission dialogs and does not return after completion or Skip.
+
+### v0.15 closed-beta test
+
+1. Install v0.15 over v0.14 without clearing app data and confirm points, journal, settings, account session and Flic pairing remain.
+2. Open `Profile → Settings → Open Beta Center` and compare all seven readiness rows with Android and Device state.
+3. Disable internet, tap `RECHECK NOW` and confirm cloud is not reported ready; restore internet and repeat.
+4. Create one point offline and confirm Beta Center reports one pending item, then reconnect and recheck until the queue is clear.
+5. Tap `SHARE BETA REPORT`, inspect the text before sending and confirm it has no coordinates, notes, catch details, email, tokens, API keys or install ID.
+6. Lock the phone, use all three Flic actions, then reopen Beta Center and confirm background capture remains active.
+7. Return to Settings and Home and confirm the five-tab navigation remains unchanged.
+
+### v0.16 full-structure design test
+
+1. Install v0.16 over v0.15 without clearing app data and verify local points, journal, account session, preferences and Flic pairing remain.
+2. Confirm the app uses the navy/blue Fiskentra visual system, condensed typography, thin bordered cards and consistent compact buttons on every screen.
+3. Test the four bottom destinations: Forecast / Map, Journal, Saved and Devices. Tap the Fiskentra wordmark on an inner screen to return Home.
+4. Open Devices and verify Profile/Sign in and Settings remain reachable through Account & App.
+5. Replay Quick Start and verify the real Flic 2 hero, action mapping and permission states fit without clipping.
+6. Open Profile while signed out and verify the lake hero, sign-in, registration, password recovery and privacy copy remain usable.
+7. Test Map/Weather swipe, active fishing day, Saved point details, offline point capture and all three Flic actions for regressions.
+8. Open Detailed Forecast, Species Forecast, Trip Setup, Active Trip, Trip Summary and Map & Layers; verify every primary navigation path returns safely.
+9. Tap each future control (SOS, GPX, Wear OS, voice guidance, Google sign-in and offline packs) and confirm it reports `Coming soon` instead of failing silently.
 
 ## Supabase backend
 

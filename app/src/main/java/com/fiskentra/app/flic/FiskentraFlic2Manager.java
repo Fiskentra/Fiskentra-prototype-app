@@ -26,6 +26,7 @@ public final class FiskentraFlic2Manager {
         void onAction(Action action);
         void onStaleEventIgnored();
         default void onActionResult(Action action, boolean saved, String message) { }
+        default void onTestAction(Action action) { }
     }
 
     private static final long MAX_QUEUED_EVENT_AGE_MS = 15_000L;
@@ -38,6 +39,8 @@ public final class FiskentraFlic2Manager {
     private String lastButtonName = "Flic 2";
     private String lastButtonAddress = "";
     private boolean lastButtonConnected;
+    private volatile Listener testListener;
+    public void setTestListener(Listener listener) { testListener = listener; }
 
     public FiskentraFlic2Manager(Context context) {
         this.context = context.getApplicationContext();
@@ -192,6 +195,8 @@ public final class FiskentraFlic2Manager {
                     : isDoubleClick ? Action.WAYPOINT
                     : isSingleClick ? Action.CATCH : null;
             if (action != null) {
+                Listener testing = testListener;
+                if (testing != null) { testing.onTestAction(action); return; }
                 for (Listener listener : listeners) listener.onAction(action);
             }
         }

@@ -39,7 +39,7 @@ public final class SwipeSwitchLayout extends FrameLayout {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             downX = event.getX();
             downY = event.getY();
-            edgeStart = downX >= getWidth() - edgeWidth;
+            edgeStart = downX >= getWidth() - edgeWidth || downX <= edgeWidth;
             tracking = false;
             return false;
         }
@@ -47,7 +47,7 @@ public final class SwipeSwitchLayout extends FrameLayout {
             float dx = event.getX() - downX;
             float dy = event.getY() - downY;
             boolean horizontal = Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.25f;
-            boolean allowed = dx > 0f || !leftSwipeRequiresEdge || edgeStart;
+            boolean allowed = !leftSwipeRequiresEdge || edgeStart;
             if (horizontal && allowed) {
                 tracking = true;
                 return true;
