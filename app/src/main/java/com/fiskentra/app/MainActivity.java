@@ -350,8 +350,11 @@ public final class MainActivity extends Activity implements
     }
 
     private void ensureBackgroundService() {
-        if (flicManager == null || flicManager.pairedButtonCount() == 0) return;
-        if (!locationManager.hasPermission() || !flicManager.hasPermissions()) return;
+        boolean trackNeeded = trackStore != null && trackStore.isActive();
+        boolean buttonNeeded = flicManager != null && flicManager.pairedButtonCount() > 0;
+        if (!trackNeeded && !buttonNeeded) return;
+        if (!locationManager.hasPermission()) return;
+        if (!trackNeeded && !flicManager.hasPermissions()) return;
         if (FiskentraFlicService.isRunning()) return;
         try {
             FiskentraFlicService.start(this);
@@ -867,7 +870,7 @@ public final class MainActivity extends Activity implements
         LinearLayout tripCopy = vertical();
         boolean tracking = trackStore.isActive();
         tripCopy.addView(text(tracking ? "●  TRIP RECORDING" : "TRIP TRACK", 11, tracking ? ACCENT : MUTED, Typeface.BOLD));
-        tripCopy.addView(text(tracking ? trackStore.points().size() + " track points" : "Record your route while Fiskentra is open", 13, TEXT, Typeface.NORMAL));
+        tripCopy.addView(text(tracking ? trackStore.points().size() + " track points · screen-off active" : "Record your route with the screen locked", 13, TEXT, Typeface.NORMAL));
         WeatherSnapshot tripWeather = tracking ? trackStore.startWeather() : trackStore.endWeather();
         if (tripWeather != null) {
             tripCopy.addView(text((tracking ? "Start · " : "Finish · ") + weatherSummary(tripWeather),
@@ -879,11 +882,13 @@ public final class MainActivity extends Activity implements
             if (tracking) {
                 long tripId = trackStore.startedAt();
                 trackStore.stop();
+                stopBackgroundServiceIfIdle();
                 captureTripWeather(false, tripId);
             }
             else {
                 trackStore.start();
                 if (lastLocation != null) trackStore.add(lastLocation);
+                ensureBackgroundService();
                 captureTripWeather(true, trackStore.startedAt());
             }
             render("home");
@@ -1015,6 +1020,7 @@ public final class MainActivity extends Activity implements
         if (!trackStore.isActive()) {
             trackStore.start();
             if (lastLocation != null) trackStore.add(lastLocation);
+            ensureBackgroundService();
             captureTripWeather(true, trackStore.startedAt());
         }
         if (fishingDayStore.active() == null) {
@@ -1104,6 +1110,7 @@ public final class MainActivity extends Activity implements
         long tripId = trackStore.startedAt();
         if (trackStore.isActive()) {
             trackStore.stop();
+            stopBackgroundServiceIfIdle();
             captureTripWeather(false, tripId);
         }
         FishingDay day = fishingDayStore.active();
@@ -3123,6 +3130,12 @@ public final class MainActivity extends Activity implements
             Toast.makeText(this, "No app is available to share the report",
                     Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void stopBackgroundServiceIfIdle() {
+        if (trackStore != null && trackStore.isActive()) return;
+        if (flicManager != null && flicManager.pairedButtonCount() > 0) return;
+        FiskentraFlicService.stop(this);
     }
 
     private String betaReport() {

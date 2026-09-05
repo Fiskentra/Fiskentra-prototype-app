@@ -4,11 +4,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.17` saved-point editing (versionCode 25).
+- Current version: `v0.18` background trip tracking (versionCode 26).
 - Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: make the rebuilt Saved flow useful in the field while retaining the existing local-first services. v0.17 adds a shared name/type/note editor and keeps catch measurements in their dedicated editor. Build/lint, 10 metadata checks, update installation and an isolated on-device editor preview passed. See `PROJECT_STATUS.md` and `design-qa.md` for evidence and remaining field-test limits.
-- Current APK: `C:/Fiskentra/Fiskentra-v0.17-saved-point-editing.apk` (installed on the development phone without clearing app data).
+- Current target: keep an active fishing route recording reliably when Fiskentra is backgrounded or the Android screen is locked. v0.18 moves route capture into the existing location foreground service, shares writes safely with the Activity and filters stale or implausible GPS fixes. See `PROJECT_STATUS.md` for verification and remaining field-test limits.
+- Current APK: `C:/Fiskentra/Fiskentra-v0.18-background-trip-tracking.apk`.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -16,7 +16,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Native Android app, minimum Android 8.0 (API 26).
 - GPS permission + live location acquisition using Android `LocationManager` (no Google dependency).
 - Save a current outdoor "Moment" with latitude/longitude/time to local device storage.
-- Start/stop an in-app trip track; route points persist locally and render on the field map.
+- Start/stop a local-first trip track; the foreground service keeps recording with Fiskentra backgrounded or the screen locked, and the route renders on the field map.
 - Saved points list with delete confirmation that removes cloud-synced points from Supabase before removing them locally.
 - Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
@@ -441,10 +441,10 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 
 ## Suggested next integrations
 
-- Edit saved point type/name and notes.
+- Complete the physical offline edit/sync test for saved-point name, type and notes.
 - Complete physical Flic 2 validation and record the phone/Android version results.
 - Offline MapLibre/MapTiler map packs for low-signal fishing areas.
-- Track recording in a foreground service for background reliability.
+- Complete the physical screen-off route recording test and tune GPS filters from field evidence.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
 - Fishing-specific overlays: depth/bathymetry, bite forecast, species and catch log.
 - Hunting/adventure modes, SOS/share flows and cloud sync.
