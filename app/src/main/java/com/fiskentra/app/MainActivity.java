@@ -333,7 +333,7 @@ public final class MainActivity extends Activity implements
         switch(screen){
             case "home":super.onBackPressed();break;
             case "mapTools":case "tripActive":render("map");break;
-            case "catchEdit":render("saved");break;
+            case "pointEdit":case "catchEdit":render("saved");break;
             case "tripSummary":render("log");break;
             case "profile":if(!authManager.isSignedIn()&&!"landing".equals(authFormMode)){openAuthForm("landing");break;}
             case "flicSetup":case "settings":case "beta":case "profileSetup":case "flicRequired":render("device");break;
@@ -449,7 +449,8 @@ public final class MainActivity extends Activity implements
                 case "openEmail":try{startActivity(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN,Intent.CATEGORY_APP_EMAIL));}catch(Exception e){Toast.makeText(MainActivity.this,"Open your email app to continue",Toast.LENGTH_LONG).show();}break;
             }
         }
-        public void point(SavedPoint p,String action){switch(action){case "open":case "map":openPointOnMap(p);break;case "edit":if(POINT_TYPE_CATCH.equals(p.type)){design.edit(p);render("catchEdit");}else comingSoon("Point editing");break;case "photo":if(POINT_TYPE_CATCH.equals(p.type))chooseCatchPhoto(p);else comingSoon("Photos for this point type");break;case "weather":refreshPointWeather(p);break;case "delete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete saved moment?").setMessage("This removes the point from this phone and queues its cloud deletion.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->deletePoint(p)).show();break;}}
+        public void point(SavedPoint p,String action){switch(action){case "open":case "map":openPointOnMap(p);break;case "edit":design.edit(p);render("pointEdit");break;case "catchEdit":design.edit(p);render("catchEdit");break;case "photo":if(POINT_TYPE_CATCH.equals(p.type))chooseCatchPhoto(p);else comingSoon("Photos for this point type");break;case "weather":refreshPointWeather(p);break;case "delete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete saved moment?").setMessage("This removes the point from this phone and queues its cloud deletion.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->deletePoint(p)).show();break;}}
+        public void savePoint(SavedPoint p,String title,String type,String note){try{SavedPoint updated=pointStore.updateMetadata(p.id,title,type,note);if(updated!=null)syncPoint(updated);render("saved");}catch(IllegalArgumentException error){new AlertDialog.Builder(MainActivity.this).setTitle("Check point details").setMessage(error.getMessage()).setPositiveButton("OK",null).show();}}
         public void saveCatch(SavedPoint p,CatchDetails details){SavedPoint updated=pointStore.updateCatchDetails(p.id,details);if(updated!=null)syncPoint(updated);render("saved");}
         public String syncLabel(SavedPoint p){return MainActivity.this.syncLabel(p.id);}
         public int syncColor(SavedPoint p){return MainActivity.this.syncColor(p.id);}

@@ -43,7 +43,8 @@ public final class PointStore {
                         o.getLong("id"), o.getDouble("lat"), o.getDouble("lon"),
                         o.getLong("time"), o.optString("type", "Moment"), o.optString("note", ""),
                         WeatherSnapshot.fromJson(o.optJSONObject("weather")),
-                        CatchDetails.fromJson(o.optJSONObject("catch_details"))));
+                        CatchDetails.fromJson(o.optJSONObject("catch_details")),
+                        o.optString("title", "")));
             }
         } catch (Exception ignored) {
             // Corrupt local prototype data should not make the app unusable.
@@ -84,6 +85,23 @@ public final class PointStore {
         return updated;
     }
 
+    public synchronized SavedPoint updateMetadata(long id, String title, String type, String note) {
+        String error = com.fiskentra.app.model.PointMetadata.validate(title, type, note);
+        if (!error.isEmpty()) throw new IllegalArgumentException(error);
+        List<SavedPoint> points = new ArrayList<>(all());
+        SavedPoint updated = null;
+        for (int i = 0; i < points.size(); i++) {
+            if (points.get(i).id != id) continue;
+            updated = points.get(i).withMetadata(
+                    com.fiskentra.app.model.PointMetadata.clean(title), type,
+                    com.fiskentra.app.model.PointMetadata.clean(note));
+            points.set(i, updated);
+            break;
+        }
+        if (updated != null) write(points);
+        return updated;
+    }
+
     public synchronized SavedPoint find(long id) {
         for (SavedPoint point : all()) {
             if (point.id == id) return point;
@@ -102,6 +120,7 @@ public final class PointStore {
                 o.put("time", p.timestamp);
                 o.put("type", p.type);
                 o.put("note", p.note);
+                if (!p.title.isEmpty()) o.put("title", p.title);
                 if (p.weather != null) o.put("weather", p.weather.toJson());
                 if (p.catchDetails != null) o.put("catch_details", p.catchDetails.toJson());
                 array.put(o);

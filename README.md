@@ -4,11 +4,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.16.2` Android-first design follow-up (versionCode 24).
+- Current version: `v0.17` saved-point editing (versionCode 25).
 - Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: refine the native rebuild against the English design boards while retaining existing local-first services. v0.16.2 removes watch UI and expands detailed weather, session statistics and profile setup. Build/lint, 14 calculation checks, update installation and scoped source/device comparisons passed. The earlier 24-route rebuild review belongs to v0.16.1. See `design-qa.md` for evidence and remaining fidelity/field-test limits; this is not a pixel-identical or production certification.
-- Current APK: `C:/Fiskentra/Fiskentra-v0.16.2-android-design.apk` (installed on the development phone without clearing app data).
+- Current target: make the rebuilt Saved flow useful in the field while retaining the existing local-first services. v0.17 adds a shared name/type/note editor and keeps catch measurements in their dedicated editor. Build/lint, 10 metadata checks, update installation and an isolated on-device editor preview passed. See `PROJECT_STATUS.md` and `design-qa.md` for evidence and remaining field-test limits.
+- Current APK: `C:/Fiskentra/Fiskentra-v0.17-saved-point-editing.apk` (installed on the development phone without clearing app data).
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -20,6 +20,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Saved points list with delete confirmation that removes cloud-synced points from Supabase before removing them locally.
 - Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
+- Edit the name, marker type and general note of a saved point. Type and note are cloud-queued against the same point ID; custom names are explicitly device-only in v0.17.
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - A process-wide sequential sync queue shared by the app and Flic service, preventing duplicate concurrent uploads.
 - Automatic retry when Android validates internet access again, including while the foreground Flic service is active.
