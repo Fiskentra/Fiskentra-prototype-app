@@ -113,7 +113,7 @@ public final class MainActivity extends Activity implements
     private SharedPreferences mapPrefs;
     private UserPreferences userPreferences;
     private Location lastLocation;
-    private String screen = "home";
+    private String screen = "map";
     private String bleStatus = "No device connected";
     private String connectedDevice = "";
     private boolean flicConnected = false;
@@ -199,7 +199,7 @@ public final class MainActivity extends Activity implements
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedMapStyle = MapTilerMapView.normalizeStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
-        showingWeatherPage = userPreferences.defaultWeatherPage();
+        showingWeatherPage = false;
         selectedLogDateMillis = System.currentTimeMillis();
         calendarMonthMillis = firstDayOfMonth(selectedLogDateMillis);
         design = new DesignScreens(this, new DesignHost());
@@ -229,7 +229,7 @@ public final class MainActivity extends Activity implements
         boolean authRedirect = isAuthRedirect(getIntent());
         boolean showOnboarding = !authRedirect && userPreferences.shouldShowOnboarding(
                 hasExistingLocalState());
-        render(showOnboarding ? "onboarding" : "home");
+        render(showOnboarding ? "onboarding" : "map");
         applyDebugUiOptions(getIntent());
         if (authRedirect) {
             userPreferences.completeOnboarding();
@@ -411,8 +411,8 @@ public final class MainActivity extends Activity implements
     }
     @Override public void onTestAction(FiskentraFlic2Manager.Action action) {
         runOnUiThread(() -> {
-            if (action == FiskentraFlic2Manager.Action.CATCH) flicSingleTested = true;
-            if (action == FiskentraFlic2Manager.Action.WAYPOINT) flicDoubleTested = true;
+            if (action == FiskentraFlic2Manager.Action.WAYPOINT) flicSingleTested = true;
+            if (action == FiskentraFlic2Manager.Action.CATCH) flicDoubleTested = true;
             if (action == FiskentraFlic2Manager.Action.TACKLE_CHANGE) flicHoldTested = true;
             if ("flicSetup".equals(screen)) render(screen);
         });
@@ -458,9 +458,9 @@ public final class MainActivity extends Activity implements
                 case "offlineResume":offlineMapController.resume();break;
                 case "offlineDelete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete offline area?").setMessage("The online map and your saved points are not removed. Only downloaded map data is deleted.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(dialog,which)->offlineMapController.deleteAll()).show();break;
                 case "testFlic":flicSetupStep=2;flicSingleTested=false;flicDoubleTested=false;flicHoldTested=false;render("flicSetup");break;
-                case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("home");}break;
+                case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("map");}break;
                 case "setupBack":flicSetupStep=Math.max(0,flicSetupStep-1);render("flicSetup");break;
-                case "continueLocal":userPreferences.completeOnboarding();render("home");break;
+                case "continueLocal":userPreferences.completeOnboarding();render("map");break;
                 case "metric":case "imperial":userPreferences.setUsesImperialUnits(action.equals("imperial"));render(screen);break;
                 case "editName":showDisplayNameDialog(read().name);break;
                 case "signout":confirmSignOut();break;
@@ -1334,8 +1334,8 @@ public final class MainActivity extends Activity implements
                     14, MUTED, Typeface.NORMAL));
             body.addView(spacer(12));
             body.addView(checkRow(flicConnected, "Flic 2 connected"));
-            body.addView(checkRow(true, "Single press · Catch"));
-            body.addView(checkRow(true, "Double press · Waypoint"));
+            body.addView(checkRow(true, "Single press · Waypoint"));
+            body.addView(checkRow(true, "Double press · Catch"));
             body.addView(checkRow(true, "Hold · Tackle change"));
             body.addView(checkRow(lastLocation != null, "GPS accuracy ready"));
             body.addView(checkRow(true, "Offline storage ready"));
@@ -1355,7 +1355,7 @@ public final class MainActivity extends Activity implements
         next.setEnabled(flicSetupStep != 2 || testsReady);
         next.setOnClickListener(v -> {
             if (flicSetupStep < 3) { flicSetupStep++; render("flicSetup"); }
-            else render("home");
+            else render("map");
         });
         actions.addView(next, new LinearLayout.LayoutParams(0, dp(50), flicSetupStep > 0 ? 1f : 2f));
         body.addView(actions);
@@ -2558,7 +2558,7 @@ public final class MainActivity extends Activity implements
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView skip = text(onboardingReplay ? "CLOSE" : "SKIP", 11, MUTED, Typeface.BOLD);
         skip.setPadding(dp(12), dp(8), 0, dp(8));
-        skip.setOnClickListener(v -> finishOnboarding("home"));
+        skip.setOnClickListener(v -> finishOnboarding("map"));
         top.addView(skip);
         body.addView(top);
         body.addView(spacer(18));
@@ -2596,7 +2596,7 @@ public final class MainActivity extends Activity implements
                 onboardingStep++;
                 render("onboarding");
             } else {
-                finishOnboarding("home");
+                finishOnboarding("map");
             }
         });
         actions.addView(next, new LinearLayout.LayoutParams(0, dp(52),
@@ -2672,9 +2672,9 @@ public final class MainActivity extends Activity implements
         LinearLayout mapping = card();
         mapping.addView(text("FLIC 2 ACTIONS", 11, ACCENT, Typeface.BOLD));
         mapping.addView(spacer(12));
-        mapping.addView(onboardingMapping("1×", "Single press", "Register a catch", SUCCESS));
+        mapping.addView(onboardingMapping("1×", "Single press", "Save a waypoint", WARNING));
         mapping.addView(spacer(12));
-        mapping.addView(onboardingMapping("2×", "Double press", "Save a waypoint", WARNING));
+        mapping.addView(onboardingMapping("2×", "Double press", "Register a catch", SUCCESS));
         mapping.addView(spacer(12));
         mapping.addView(onboardingMapping("—", "Hold", "Record a tackle change",
                 Color.rgb(197, 155, 255)));
@@ -3670,15 +3670,15 @@ public final class MainActivity extends Activity implements
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
         testCard.addView(text("Test the Fiskentra action mapping", 17, TEXT, Typeface.BOLD));
-        testCard.addView(text("Single press registers a catch. Double press saves a waypoint. Hold marks a tackle change.", 13, MUTED, Typeface.NORMAL));
+        testCard.addView(text("Single press saves a waypoint. Double press registers a catch. Hold marks a tackle change.", 13, MUTED, Typeface.NORMAL));
         testCard.addView(spacer(14));
         LinearLayout testActions = row();
         Button single = smallButton("SINGLE PRESS");
-        single.setOnClickListener(v -> handleButtonPress(POINT_TYPE_CATCH, "Single press registered a catch"));
+        single.setOnClickListener(v -> handleButtonPress(POINT_TYPE_WAYPOINT, "Single press saved a waypoint"));
         testActions.addView(single, weighted());
         testActions.addView(spaceWide());
         Button doublePress = smallButton("DOUBLE PRESS");
-        doublePress.setOnClickListener(v -> handleButtonPress(POINT_TYPE_WAYPOINT, "Double press saved a waypoint"));
+        doublePress.setOnClickListener(v -> handleButtonPress(POINT_TYPE_CATCH, "Double press registered a catch"));
         testActions.addView(doublePress, weighted());
         testCard.addView(testActions);
         testCard.addView(spacer(10));
@@ -4027,11 +4027,11 @@ public final class MainActivity extends Activity implements
             switch (action) {
                 case CATCH:
                     handleButtonPress(POINT_TYPE_CATCH,
-                            "Single press registered a catch · foreground fallback");
+                            "Double press registered a catch · foreground fallback");
                     break;
                 case WAYPOINT:
                     handleButtonPress(POINT_TYPE_WAYPOINT,
-                            "Double press saved a waypoint · foreground fallback");
+                            "Single press saved a waypoint · foreground fallback");
                     break;
                 case TACKLE_CHANGE:
                     handleButtonPress(POINT_TYPE_TACKLE_CHANGE,

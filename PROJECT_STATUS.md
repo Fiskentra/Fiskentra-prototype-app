@@ -107,8 +107,8 @@ Last updated: 2026-09-06
 
 | Flic action | Fiskentra action | Saved point type |
 |---|---|---|
-| Single press | Register a catch | `Catch` |
-| Double press | Save a waypoint | `Waypoint` |
+| Single press | Save a waypoint | `Waypoint` |
+| Double press | Register a catch | `Catch` |
 | Hold | Record a tackle change | `Tackle change` |
 
 ## Roadmap to launch
@@ -363,19 +363,19 @@ The user confirmed the v0.10 offline queue and automatic recovery flow on a phys
 - A clean installation now opens a four-step quick start before Android permission dialogs.
 - The welcome step explains the GPS, journal, weather and local-first field workflow.
 - The permission step explains Location, Nearby devices and Notifications individually, shows their current Android state and requests only permissions that are still missing.
-- The Flic 2 step documents the production mapping: single press Catch, double press Waypoint and hold Tackle change, including offline queue behavior.
-- The final step keeps account creation optional and offers either Home or direct Device setup.
-- Existing installations with saved local state, an account, Flic pairing, track, journal or cloud identity are migrated as onboarding-complete and continue to Home normally.
+- The Flic 2 step documents the production mapping: single press Waypoint, double press Catch and hold Tackle change, including offline queue behavior.
+- The final step keeps account creation optional and offers either Map or direct Device setup.
+- Existing installations with saved local state, an account, Flic pairing, track, journal or cloud identity are migrated as onboarding-complete and open Map normally.
 - Quick Start can be replayed from Profile → Settings without resetting preferences, pairing, account session, journal or saved points.
 - Completing or skipping onboarding persists locally and does not depend on Supabase or internet access.
 
 ## v0.14 physical test gate
 
-1. Install v0.14 over v0.13 without uninstalling or clearing data; confirm Home opens normally and all existing data remains.
+1. Install over the previous version without uninstalling or clearing data; confirm Map opens normally and all existing data remains.
 2. Open Profile → Settings → View Quick Start and verify Back, Continue, Close and all four progress states.
 3. Open the permission step and confirm the three status rows match Android permissions; use Allow Field Access and deny one permission to confirm onboarding can still continue.
 4. Confirm the Flic action mapping and offline explanation are accurate.
-5. Finish on Home, reopen Quick Start, then finish on Device and confirm the existing button remains paired.
+5. Finish on Map, reopen Quick Start, then finish on Device and confirm the existing button remains paired.
 6. Clear app data or use a clean test installation and confirm onboarding appears before system permission prompts.
 7. Complete or Skip, restart Fiskentra and confirm onboarding does not appear again automatically.
 

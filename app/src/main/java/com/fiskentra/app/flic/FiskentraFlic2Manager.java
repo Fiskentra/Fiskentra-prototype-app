@@ -11,6 +11,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
 
+import com.fiskentra.app.model.FlicPressPolicy;
+
 import io.flic.flic2libandroid.Flic2Button;
 import io.flic.flic2libandroid.Flic2ButtonListener;
 import io.flic.flic2libandroid.Flic2Manager;
@@ -191,9 +193,11 @@ public final class FiskentraFlic2Manager {
                 for (Listener listener : listeners) listener.onStaleEventIgnored();
                 return;
             }
-            Action action = isHold ? Action.TACKLE_CHANGE
-                    : isDoubleClick ? Action.WAYPOINT
-                    : isSingleClick ? Action.CATCH : null;
+            FlicPressPolicy.Action resolved = FlicPressPolicy.resolve(
+                    isSingleClick, isDoubleClick, isHold);
+            Action action = resolved == FlicPressPolicy.Action.TACKLE_CHANGE ? Action.TACKLE_CHANGE
+                    : resolved == FlicPressPolicy.Action.CATCH ? Action.CATCH
+                    : resolved == FlicPressPolicy.Action.WAYPOINT ? Action.WAYPOINT : null;
             if (action != null) {
                 Listener testing = testListener;
                 if (testing != null) { testing.onTestAction(action); return; }
