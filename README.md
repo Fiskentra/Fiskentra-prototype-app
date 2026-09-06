@@ -83,12 +83,12 @@ Verified hardware details relevant to the prototype:
 - Range: advertised up to 50 m indoors.
 - Protection: IP44 splashproof, not waterproof or suitable for submersion.
 
-The Fiskentra action mapping remains:
+The Fiskentra action mapping is:
 
 | Flic action | Saved point type |
 |---|---|
-| Single press | `Catch` |
-| Double press | `Waypoint` |
+| Single press | `Waypoint` |
+| Double press | `Catch` |
 | Hold | `Tackle change` |
 
 The `v0.5` implementation state is:
@@ -244,11 +244,11 @@ Map downloads use device storage, network data and the configured MapTiler accou
 
 ### v0.14 onboarding test
 
-1. Install v0.14 over v0.13 without clearing app data and confirm it opens the normal Home screen rather than interrupting an existing user.
+1. Install over the previous version without clearing app data and confirm it opens Map rather than interrupting an existing user.
 2. Open `Profile → Settings → View Quick Start` and move through all four steps with Back and Continue.
 3. On the permission step, verify Location, Nearby devices and Notification statuses match Android settings and `ALLOW FIELD ACCESS` opens only missing permission requests.
-4. Confirm the Flic page shows single press = Catch, double press = Waypoint and hold = Tackle change.
-5. Finish with `START FISKENTRA` and confirm the normal Home screen appears with existing data unchanged.
+4. Confirm the Flic page shows single press = Waypoint, double press = Catch and hold = Tackle change.
+5. Finish with `START FISKENTRA` and confirm Map appears with existing data unchanged.
 6. Reopen Quick Start and finish with `START AND SET UP FLIC 2`; confirm Device opens without losing the existing pairing.
 7. On a clean installation, confirm Quick Start appears before Android permission dialogs and does not return after completion or Skip.
 
