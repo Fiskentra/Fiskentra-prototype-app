@@ -1,17 +1,17 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 ## Current stage
 
-- Version: `v0.19` (versionCode 27)
-- Stage: User-managed offline map areas — implemented, build/lint and installed UI validation passed; physical download/offline rendering test pending
+- Version: `v0.20` (versionCode 28)
+- Stage: Offline GPX trip export — implemented, built, installed and regression-tested; final document-picker test awaits a recorded trip on the phone
 - Platform order: Android launch first, iPhone afterward. Watch OS / Wear OS is not in the current app scope.
 - Launch readiness: Not ready for public users
 - Selected field button: Flic 2 Single Pack
 - Product: https://flic.io/shop/flic-2-single-pack
 - Retired hardware plan: BlueUP SafeX Lite
-- Build status: Debug APK, Android Lint and signature verification pass
+- Build status: v0.20 debug APK built in Android Studio and installed as an update; 59 focused pure-Java regression checks pass
 - Physical Flic 2 validation: User confirmed single press, double press and hold save the correct points without missed events offline and with the screen locked on v0.16.1 (2026-09-04)
 - Physical Flic 2 callbacks: Confirmed working by user on 2026-08-18
 - Map marker hotfix: Saved points now render above the live GPS dot and overlapping points spread visibly
@@ -31,6 +31,19 @@ Last updated: 2026-09-06
 - Onboarding: four-step first-run quick start with deferred permission requests, local-first/Flic education and safe existing-install migration implemented; physical validation pending
 - Closed beta: in-app readiness checks and explicit privacy-safe diagnostic sharing implemented; tester validation pending
 - Full structure design: native screen renderer rebuilt around all six English reference boards. All 24 routes recaptured after restoring unobstructed phone access. Targeted post-fix comparisons and device navigation/toggle smoke checks completed; see `design-qa.md` for evidence and remaining fidelity limits.
+
+## v0.20 GPX trip export
+
+- Map & Layers and Trip Summary now open a real Android document picker instead of showing `Coming soon`.
+- The exported GPX 1.1 document contains the recorded trip route as an ordered track and saved trip events as waypoints.
+- Waypoint names use the Fiskentra event type and preserve their timestamps; XML special characters are escaped safely.
+- Route points are validated, sorted and written with UTC timestamps. Invalid coordinates and timestamps are omitted rather than producing a broken GPX file.
+- Completed trip tracks are archived with their fishing-day record, so GPX export remains available after the active tracker is stopped or the app is restarted.
+- Existing fishing-day JSON remains backward compatible: older records without a `route` property load with an empty track.
+- Export uses Android's Storage Access Framework, needs no broad file-storage permission and works without internet.
+- Ten dedicated GPX checks plus the existing Flic, trip-statistics, tracking, point-metadata and offline-area policy suites pass (59 checks total).
+- Android Studio built and installed versionCode 28/versionName 0.20 over the existing app without clearing user data. The Export GPX control was reached and invoked on the connected phone; because that phone currently has no archived track, the final system save-dialog check remains part of the physical test below.
+- APK: `C:/Fiskentra/Fiskentra-v0.20-gpx-export.apk`; SHA-256 `03BDDB4ED67C7EB659CA4566BCFAA4972104CF265A3ED923B5373BC6FDEC9457`.
 
 ## v0.19 offline map areas
 
@@ -135,6 +148,7 @@ Last updated: 2026-09-06
 | `v0.17` | Edit saved point name, type and note | Implemented · installed and preview-validated; physical edit/sync test pending |
 | `v0.18` | Record active trip routes in the foreground service | Implemented · automated checks passed; screen-off field test pending |
 | `v0.19` | Download and manage MapLibre/MapTiler areas for offline use | Implemented · build/device UI checks passed; physical offline-map test pending |
+| `v0.20` | Export recorded trips and their saved events as GPX | Implemented · built/installed and automated checks passed; recorded-trip picker test pending |
 | `v1.0` | Official public launch | Planned |
 
 ## v0.5 implementation

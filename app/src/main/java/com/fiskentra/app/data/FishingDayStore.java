@@ -70,6 +70,20 @@ public final class FishingDayStore {
         return updateWeather(id, weather, false);
     }
 
+    public synchronized FishingDay updateRoute(long id, List<double[]> route) {
+        List<FishingDay> sessions = new ArrayList<>(all());
+        FishingDay updated = null;
+        for (int i = 0; i < sessions.size(); i++) {
+            FishingDay day = sessions.get(i);
+            if (day.id != id) continue;
+            updated = day.withRoute(route);
+            sessions.set(i, updated);
+            break;
+        }
+        if (updated != null) write(sessions);
+        return updated;
+    }
+
     public synchronized List<FishingDay> sessionsOnDate(long date) {
         ArrayList<FishingDay> out = new ArrayList<>();
         String target = dayKey(date);
@@ -90,7 +104,8 @@ public final class FishingDayStore {
                         value.getLong("started_at"),
                         value.optLong("ended_at", 0L),
                         WeatherSnapshot.fromJson(value.optJSONObject("start_weather")),
-                        WeatherSnapshot.fromJson(value.optJSONObject("end_weather"))));
+                        WeatherSnapshot.fromJson(value.optJSONObject("end_weather")),
+                        routeFromJson(value.optJSONArray("route"))));
             }
         } catch (Exception ignored) {
             // A malformed prototype entry must not prevent opening the log.
@@ -109,6 +124,17 @@ public final class FishingDayStore {
                 value.put("ended_at", day.endedAt);
                 if (day.startWeather != null) value.put("start_weather", day.startWeather.toJson());
                 if (day.endWeather != null) value.put("end_weather", day.endWeather.toJson());
+                if (!day.route.isEmpty()) {
+                    JSONArray route = new JSONArray();
+                    for (double[] point : day.route) {
+                        JSONObject coordinate = new JSONObject();
+                        coordinate.put("lat", point[0]);
+                        coordinate.put("lon", point[1]);
+                        coordinate.put("time", point[2]);
+                        route.put(coordinate);
+                    }
+                    value.put("route", route);
+                }
                 array.put(value);
             }
             prefs.edit().putString(KEY, array.toString()).apply();
@@ -133,5 +159,20 @@ public final class FishingDayStore {
         Calendar calendar = Calendar.getInstance();
         calendar.setTimeInMillis(time);
         return calendar.get(Calendar.YEAR) + "-" + calendar.get(Calendar.DAY_OF_YEAR);
+    }
+
+    private static List<double[]> routeFromJson(JSONArray array) {
+        ArrayList<double[]> route = new ArrayList<>();
+        if (array == null) return route;
+        try {
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject point = array.getJSONObject(i);
+                route.add(new double[]{point.getDouble("lat"), point.getDouble("lon"),
+                        point.optDouble("time", 0d)});
+            }
+        } catch (Exception ignored) {
+            route.clear();
+        }
+        return route;
     }
 }
