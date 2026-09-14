@@ -18,6 +18,16 @@ public final class FiskentraLocationManager implements LocationListener {
     private final LocationManager manager;
     private final Listener listener;
     private Location lastLocation;
+    private boolean started;
+
+    public static boolean isFresh(Location location) {
+        if (location == null || location.getElapsedRealtimeNanos() <= 0) return false;
+        long age = android.os.SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos();
+        return age >= 0 && age <= 30_000_000_000L;
+    }
+
+    public boolean isEnabled() { return manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER); }
 
     public FiskentraLocationManager(Context context, Listener listener) {
         this.context = context;
@@ -32,20 +42,23 @@ public final class FiskentraLocationManager implements LocationListener {
 
     @SuppressLint("MissingPermission")
     public void start() {
-        if (!hasPermission()) return;
-        Location cached = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-        if (cached == null) cached = manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-        if (cached != null) onLocationChanged(cached);
-        if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2500L, 3f, this);
-        }
-        if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 5000L, 10f, this);
+        if (!hasPermission() || started) return;
+        started = true;
+        try {
+            for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+                if (!manager.getAllProviders().contains(provider)) continue;
+                Location cached = manager.getLastKnownLocation(provider);
+                if (isFresh(cached)) onLocationChanged(cached);
+                manager.requestLocationUpdates(provider, 2500L, 0f, this);
+            }
+        } catch (SecurityException ignored) {
+            stop();
         }
     }
 
     public void stop() {
         manager.removeUpdates(this);
+        started = false;
     }
 
     public Location getLastLocation() {
@@ -53,6 +66,9 @@ public final class FiskentraLocationManager implements LocationListener {
     }
 
     @Override public void onLocationChanged(Location location) {
+        if (!isFresh(location)) return;
+        if (isFresh(lastLocation) && lastLocation.hasAccuracy() && location.hasAccuracy()
+                && location.getAccuracy() > Math.max(25, lastLocation.getAccuracy() * 2)) return;
         lastLocation = location;
         listener.onLocation(location);
     }

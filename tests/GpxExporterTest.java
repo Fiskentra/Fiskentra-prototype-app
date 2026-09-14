@@ -33,6 +33,11 @@ public final class GpxExporterTest {
         check(count(xml, "<wpt ") == 2, "invalid waypoint omitted");
         check(xml.indexOf("60.1000000") < xml.indexOf("60.2000000"), "track sorted by time");
         check(xml.contains("2023-11-14T22:13:21.000Z"), "UTC timestamp");
+        String segmented = GpxExporter.create("Paused trip", start, 0, Arrays.asList(
+                new double[]{60, 16, start}, new double[]{60.001, 16, start + 1000},
+                new double[]{61, 17, start + 2000, 1}, new double[]{61.001, 17, start + 3000}), null);
+        check(count(segmented, "<trkseg>") == 2, "Pause preserved as separate GPX segments");
+        check(count(segmented, "<trkpt ") == 4, "No valid track point lost at segment boundary");
         System.out.println("GpxExporterTest: " + passed + " checks passed");
     }
 

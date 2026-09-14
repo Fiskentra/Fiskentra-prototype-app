@@ -49,6 +49,8 @@ import com.fiskentra.app.model.WeatherSnapshot;
 import com.fiskentra.app.offline.OfflineMapController;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
+import com.fiskentra.app.ui.FieldMapPanel;
+import com.fiskentra.app.location.ConnectionAlerts;
 import com.fiskentra.app.ui.DesignScreens;
 import com.fiskentra.app.ui.SwipeSwitchLayout;
 import com.fiskentra.app.weather.FishingAdvisor;
@@ -132,6 +134,62 @@ public final class MainActivity extends Activity implements
     private FishingDay designSummaryDay;
     private long calendarMonthMillis;
     private MapTilerMapView activeMapView;
+    private FieldMapPanel fieldPanel;
+    private Location offlineMapCenter;
+    private boolean openDownloadedArea;
+    private ConnectionAlerts connectionAlerts;
+    private final android.os.Handler fieldHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable fieldTick = new Runnable() {
+        @Override public void run() { updateField(); fieldHandler.postDelayed(this, 3000); }
+    };
+    private void updateField() {
+        if (locationManager == null || flicManager == null) return;
+        boolean fresh = locationManager.hasPermission() && locationManager.isEnabled()
+                && FiskentraLocationManager.isFresh(lastLocation);
+        if (connectionAlerts == null) connectionAlerts = ConnectionAlerts.get(this);
+        String signals = FiskentraFlicService.isRunning() ? connectionAlerts.describe(fresh, flicConnected, flicManager.pairedButtonCount() > 0)
+                : connectionAlerts.update(fresh, flicConnected, flicManager.pairedButtonCount() > 0);
+        if (fieldPanel != null) fieldPanel.update(fresh ? lastLocation : null, signals);
+    }
+    private View fieldMapScreen() {
+        SharedPreferences fieldPrefs = getSharedPreferences("field_map", MODE_PRIVATE);
+        if (!fieldPrefs.getBoolean("blue_map_design", false)) {
+            fieldPrefs.edit().putString("style", openDownloadedArea ? selectedMapStyle : MapTilerMapView.STYLE_HYBRID).putBoolean("blue_map_design", true).apply();
+        }
+        fieldPanel = new FieldMapPanel(this, selectedMapPoint(), new FieldMapPanel.Actions() {
+            @Override public void saved(SavedPoint point) { syncPoint(point); }
+            @Override public void requestLocation() { requestNeededPermissions(); locationManager.start(); }
+            @Override public void toggleTrip() {
+                if (trackStore.isActive()) finishActiveTrip();
+                else if (!locationManager.hasPermission()) requestNeededPermissions();
+                else { startPlannedTrip(); render("map"); }
+            }
+            @Override public void history() { render("log"); }
+            @Override public void forecast() { render("home"); }
+            @Override public void offline() {
+                org.maplibre.android.geometry.LatLng center = fieldPanel.map().center();
+                if (center != null) { offlineMapCenter = new Location("map"); offlineMapCenter.setLatitude(center.getLatitude()); offlineMapCenter.setLongitude(center.getLongitude()); }
+                selectedMapStyle = fieldPanel.map().getBaseStyle();
+                mapPrefs.edit().putString(MAP_STYLE, selectedMapStyle).apply();
+                render("offlineMaps");
+            }
+            @Override public void export() { exportGpx(); }
+            @Override public void navigationChanged() { ensureBackgroundService(); stopBackgroundServiceIfIdle(); }
+        });
+        activeMapView = fieldPanel.map();
+        if (openDownloadedArea) {
+            OfflineMapController.Snapshot area = offlineMapController.snapshot();
+            activeMapView.lookAt(area.centerLatitude, area.centerLongitude); openDownloadedArea = false;
+        }
+        updateField();
+        SwipeSwitchLayout swipe = new SwipeSwitchLayout(this);
+        swipe.configure(true, new SwipeSwitchLayout.Listener() {
+            @Override public void onSwipeLeft() { render("home"); }
+            @Override public void onSwipeRight() { render("home"); }
+        });
+        swipe.addView(fieldPanel, new FrameLayout.LayoutParams(-1, -1));
+        return swipe;
+    }
     private boolean showingWeatherPage;
     private boolean forecastLoading;
     private boolean forecastAttempted;
@@ -286,6 +344,8 @@ public final class MainActivity extends Activity implements
         resumedForTests=true;
         updateFlicTestMode();
         if (activeMapView != null) activeMapView.resume();
+        if (fieldPanel != null) fieldPanel.resumeSensors();
+        fieldHandler.removeCallbacks(fieldTick); fieldHandler.post(fieldTick);
         if (locationManager.hasPermission()) locationManager.start();
         ensureBackgroundService();
         if ("saved".equals(screen) || "log".equals(screen) || "beta".equals(screen)) {
@@ -298,6 +358,8 @@ public final class MainActivity extends Activity implements
         resumedForTests=false;
         flicManager.setTestListener(null);
         if (activeMapView != null) activeMapView.pause();
+        if (fieldPanel != null) fieldPanel.pauseSensors();
+        fieldHandler.removeCallbacks(fieldTick);
         locationManager.stop();
     }
 
@@ -368,9 +430,10 @@ public final class MainActivity extends Activity implements
     private void ensureBackgroundService() {
         boolean trackNeeded = trackStore != null && trackStore.isActive();
         boolean buttonNeeded = flicManager != null && flicManager.pairedButtonCount() > 0;
-        if (!trackNeeded && !buttonNeeded) return;
+        boolean navigationNeeded = getSharedPreferences("field_map", MODE_PRIVATE).contains("nav_lat");
+        if (!trackNeeded && !buttonNeeded && !navigationNeeded) return;
         if (!locationManager.hasPermission()) return;
-        if (!trackNeeded && !flicManager.hasPermissions()) return;
+        if (!trackNeeded && !navigationNeeded && !flicManager.hasPermissions()) return;
         if (FiskentraFlicService.isRunning()) return;
         try {
             FiskentraFlicService.start(this);
@@ -390,13 +453,17 @@ public final class MainActivity extends Activity implements
     }
 
     private void render(String next) {
+        if (fieldPanel != null) { selectedMapStyle = fieldPanel.map().getBaseStyle(); mapPrefs.edit().putString(MAP_STYLE, selectedMapStyle).apply(); }
         screen = next;
+        getWindow().setStatusBarColor("map".equals(screen) ? 0xff001e2e : BG);
+        getWindow().setNavigationBarColor("map".equals(screen) ? 0xff001e2e : BG);
         updateFlicTestMode();
         content.removeAllViews();
         deviceStatusText = null;
         buttonEventText = null;
         activeMapView = null;
-        content.addView(design.create(screen));
+        fieldPanel = null;
+        content.addView("map".equals(screen) ? fieldMapScreen() : design.create(screen));
         renderNav();
     }
 
@@ -418,7 +485,7 @@ public final class MainActivity extends Activity implements
         runOnUiThread(() -> {
             if (action == FiskentraFlic2Manager.Action.WAYPOINT) flicSingleTested = true;
             if (action == FiskentraFlic2Manager.Action.CATCH) flicDoubleTested = true;
-            if (action == FiskentraFlic2Manager.Action.TACKLE_CHANGE) flicHoldTested = true;
+            if (action == FiskentraFlic2Manager.Action.TRACK_TOGGLE) flicHoldTested = true;
             if ("flicSetup".equals(screen)) render(screen);
         });
     }
@@ -426,7 +493,7 @@ public final class MainActivity extends Activity implements
         public DesignScreens.State read() {
             DesignScreens.State s = new DesignScreens.State();
             s.points=pointStore.all();s.days=fishingDayStore.all();s.forecast=weatherForecast;
-            s.location=lastLocation;s.selected=selectedMapPoint();s.species=selectedSpecies;s.device=connectedDevice;
+            s.location="offlineMaps".equals(screen) && offlineMapCenter != null ? offlineMapCenter : lastLocation;s.selected=selectedMapPoint();s.species=selectedSpecies;s.device=connectedDevice;
             s.status=bleStatus;s.authMode=authFormMode;s.authStatus=authStatus;s.authError=authStatusError;s.busy=authBusy;
             s.email=authManager.session()==null?authEmailDraft:authManager.session().email;
             s.name=authManager.session()==null?authNameDraft:authManager.session().displayName;
@@ -434,9 +501,9 @@ public final class MainActivity extends Activity implements
             s.gps=locationManager.hasPermission();s.notifications=Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
             android.location.LocationManager gpsManager=(android.location.LocationManager)getSystemService(LOCATION_SERVICE);
             s.gpsEnabled=gpsManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)||gpsManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
-            s.active=trackStore.isActive();s.tripStarted=trackStore.startedAt();s.tripStopped=trackStore.stoppedAt();
+            s.active=trackStore.isActive();s.paused=trackStore.isPaused();s.tripStarted=trackStore.startedAt();s.tripStopped=trackStore.stoppedAt();
             if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
-            FishingDay summaryDay="tripSummary".equals(screen)?designSummaryDay:null;List<double[]> track=routeFor(summaryDay,s.tripStarted,s.active?0L:s.tripStopped);s.tripTrack=track;float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}
+            FishingDay summaryDay="tripSummary".equals(screen)?designSummaryDay:null;List<double[]> track=routeFor(summaryDay,s.tripStarted,s.active?0L:s.tripStopped);s.tripTrack=track;float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if(!com.fiskentra.app.model.FieldNavigation.segmentBreak(p,q)){Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}}
             s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
             OfflineMapController.Snapshot offline=offlineMapController.snapshot();s.offlinePacks=offline.packCount;s.offlineProgress=offline.progress;s.offlineBytes=offline.completedBytes;s.offlineDownloading=offline.downloading;s.offlineComplete=offline.complete;s.offlineAvailable=offline.available;s.offlineChecked=offline.checked;s.offlineStatus=offline.status;s.offlineStyle=offline.styleName;s.offlineLatitude=offline.centerLatitude;s.offlineLongitude=offline.centerLongitude;s.offlineRadiusKm=offline.radiusKm;
             s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
@@ -448,17 +515,25 @@ public final class MainActivity extends Activity implements
         public void command(String action){
             if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
             if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
-            if(action.startsWith("offlineDownload:")){try{double radius=Double.parseDouble(action.substring(16));offlineMapController.download(lastLocation,selectedMapStyle,radius);}catch(Exception error){Toast.makeText(MainActivity.this,"Offline download could not start",Toast.LENGTH_LONG).show();}return;}
+            if(action.startsWith("offlineDownload:")){try{double radius=Double.parseDouble(action.substring(16));offlineMapController.download(offlineMapCenter != null ? offlineMapCenter : lastLocation,selectedMapStyle,radius);}catch(Exception error){Toast.makeText(MainActivity.this,"Offline download could not start",Toast.LENGTH_LONG).show();}return;}
             switch(action){
                 case "refresh":loadForecast(true);break;
                 case "sync":syncPendingPoints();break;
                 case "startTrip":startPlannedTrip();break;
+                case "toggleTrack":toggleTrackRecording();break;
                 case "finishTrip":finishActiveTrip();break;
                 case "startDay":startFishingDay();break;
                 case "pair":requestNeededPermissions();flicManager.pairNewButton();break;
                 case "permissions":requestNeededPermissions();break;
                 case "recenter":selectedMapPointId=-1;if(lastLocation!=null&&activeMapView!=null)activeMapView.recenter();else Toast.makeText(MainActivity.this,"Turn on Location and wait for a GPS fix",Toast.LENGTH_LONG).show();break;
                 case "offline":render("offlineMaps");break;
+                case "offlineOpen":
+                    OfflineMapController.Snapshot pack = offlineMapController.snapshot();
+                    if (!pack.complete) break;
+                    String packStyle = MapTilerMapView.STYLE_OUTDOOR;
+                    for (String style : new String[]{MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID, MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN}) if (MapTilerMapView.styleName(style).equals(pack.styleName)) packStyle = style;
+                    getSharedPreferences("field_map", MODE_PRIVATE).edit().putString("style", packStyle).apply();
+                    selectedMapPointId = -1; openDownloadedArea = true; render("map"); break;
                 case "offlinePause":offlineMapController.pause();break;
                 case "offlineResume":offlineMapController.resume();break;
                 case "offlineDelete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete offline area?").setMessage("The online map and your saved points are not removed. Only downloaded map data is deleted.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(dialog,which)->offlineMapController.deleteAll()).show();break;
@@ -1039,6 +1114,15 @@ public final class MainActivity extends Activity implements
         return scroll;
     }
 
+    private void toggleTrackRecording() {
+        boolean starting = !trackStore.isActive();
+        String status = trackStore.toggleRecording();
+        ensureBackgroundService();
+        if (starting) captureTripWeather(true, trackStore.startedAt());
+        onActionResult(FiskentraFlic2Manager.Action.TRACK_TOGGLE, true, status);
+        Toast.makeText(this, status, Toast.LENGTH_SHORT).show();
+    }
+
     private void startPlannedTrip() {
         if (!trackStore.isActive()) {
             trackStore.start();
@@ -1106,15 +1190,15 @@ public final class MainActivity extends Activity implements
         body.addView(waypoint, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
         body.addView(spacer(8));
-        Button tackle = fieldAction("TACKLE CHANGE", "HOLD", Color.rgb(197, 155, 255));
-        tackle.setOnClickListener(v -> saveCurrentMoment(POINT_TYPE_TACKLE_CHANGE));
+        Button tackle = fieldAction(trackStore.isPaused() ? "RESUME TRACK" : "PAUSE TRACK", "HOLD", Color.rgb(197, 155, 255));
+        tackle.setOnClickListener(v -> toggleTrackRecording());
         body.addView(tackle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
         body.addView(spacer(10));
 
         LinearLayout controls = row();
-        Button pause = smallButton("PAUSE");
-        pause.setOnClickListener(v -> comingSoon("Trip pause"));
+        Button pause = smallButton(trackStore.isPaused() ? "RESUME" : "PAUSE");
+        pause.setOnClickListener(v -> toggleTrackRecording());
         controls.addView(pause, new LinearLayout.LayoutParams(0, dp(50), 1f));
         controls.addView(spaceWide());
         Button sos = dangerButton("SOS / SHARE");
@@ -1335,7 +1419,7 @@ public final class MainActivity extends Activity implements
                     () -> { flicSingleTested = true; render("flicSetup"); }), cardMargins());
             body.addView(flicTestAction("PRESS TWICE", "Save a waypoint", WARNING, flicDoubleTested,
                     () -> { flicDoubleTested = true; render("flicSetup"); }), cardMargins());
-            body.addView(flicTestAction("PRESS AND HOLD", "Record a tackle change",
+            body.addView(flicTestAction("PRESS AND HOLD", "Start, pause or resume track recording",
                     Color.rgb(197, 155, 255), flicHoldTested,
                     () -> { flicHoldTested = true; render("flicSetup"); }), cardMargins());
             int passed = (flicSingleTested ? 1 : 0) + (flicDoubleTested ? 1 : 0) + (flicHoldTested ? 1 : 0);
@@ -1352,7 +1436,7 @@ public final class MainActivity extends Activity implements
             body.addView(checkRow(flicConnected, "Flic 2 connected"));
             body.addView(checkRow(true, "Single press · Waypoint"));
             body.addView(checkRow(true, "Double press · Catch"));
-            body.addView(checkRow(true, "Hold · Tackle change"));
+            body.addView(checkRow(true, "Hold · Start / pause / resume track"));
             body.addView(checkRow(lastLocation != null, "GPS accuracy ready"));
             body.addView(checkRow(true, "Offline storage ready"));
         }
@@ -1840,7 +1924,7 @@ public final class MainActivity extends Activity implements
         ArrayList<double[]> route = new ArrayList<>();
         for (double[] point : source) {
             if (point == null || point.length < 3 || point[2] < start || point[2] > effectiveEnd) continue;
-            route.add(new double[]{point[0], point[1], point[2]});
+            route.add(point.clone());
         }
         route.sort((left, right) -> Double.compare(left[2], right[2]));
         return route;
@@ -2788,7 +2872,7 @@ public final class MainActivity extends Activity implements
         mapping.addView(spacer(12));
         mapping.addView(onboardingMapping("2×", "Double press", "Register a catch", SUCCESS));
         mapping.addView(spacer(12));
-        mapping.addView(onboardingMapping("—", "Hold", "Record a tackle change",
+        mapping.addView(onboardingMapping("—", "Hold", "Start, pause or resume track recording",
                 Color.rgb(197, 155, 255)));
         body.addView(mapping, cardMargins());
         body.addView(onboardingInfoCard("OFFLINE IS OK",
@@ -3262,6 +3346,7 @@ public final class MainActivity extends Activity implements
     }
 
     private void stopBackgroundServiceIfIdle() {
+        if (getSharedPreferences("field_map", MODE_PRIVATE).contains("nav_lat")) return;
         if (trackStore != null && trackStore.isActive()) return;
         if (flicManager != null && flicManager.pairedButtonCount() > 0) return;
         FiskentraFlicService.stop(this);
@@ -3782,7 +3867,7 @@ public final class MainActivity extends Activity implements
         body.addView(sectionTitle("BUTTON FLOW TEST"));
         LinearLayout testCard = card();
         testCard.addView(text("Test the Fiskentra action mapping", 17, TEXT, Typeface.BOLD));
-        testCard.addView(text("Single press saves a waypoint. Double press registers a catch. Hold marks a tackle change.", 13, MUTED, Typeface.NORMAL));
+        testCard.addView(text("Single press saves a waypoint. Double press registers a catch. Hold starts, pauses or resumes track recording.", 13, MUTED, Typeface.NORMAL));
         testCard.addView(spacer(14));
         LinearLayout testActions = row();
         Button single = smallButton("SINGLE PRESS");
@@ -3795,7 +3880,7 @@ public final class MainActivity extends Activity implements
         testCard.addView(testActions);
         testCard.addView(spacer(10));
         Button hold = smallButton("HOLD");
-        hold.setOnClickListener(v -> handleButtonPress(POINT_TYPE_TACKLE_CHANGE, "Hold marked a tackle change"));
+        hold.setOnClickListener(v -> toggleTrackRecording());
         testCard.addView(hold, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         testCard.addView(spacer(12));
         buttonEventText = text(lastButtonEvent, 12, MUTED, Typeface.NORMAL);
@@ -3849,7 +3934,7 @@ public final class MainActivity extends Activity implements
             Toast.makeText(this, "Allow location first", Toast.LENGTH_SHORT).show();
             return false;
         }
-        if (location == null) {
+        if (!FiskentraLocationManager.isFresh(location) || !locationManager.isEnabled()) {
             Toast.makeText(this, "Waiting for GPS fix — try again in a moment", Toast.LENGTH_SHORT).show();
             locationManager.start();
             return false;
@@ -3857,7 +3942,7 @@ public final class MainActivity extends Activity implements
         SavedPoint point = pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
         Toast.makeText(this, "Moment saved · " + source, Toast.LENGTH_SHORT).show();
         enrichWeatherThenSync(point);
-        if ("map".equals(screen) || "saved".equals(screen) || "log".equals(screen)) render(screen);
+        if ("map".equals(screen)) updateField(); else if ("saved".equals(screen) || "log".equals(screen)) render(screen);
         return true;
     }
 
@@ -3869,6 +3954,7 @@ public final class MainActivity extends Activity implements
             SavedPoint ready = updated;
             runOnUiThread(() -> {
                 syncPoint(ready);
+                if (weather != null && "map".equals(screen)) { updateField(); return; }
                 if (weather != null && ("saved".equals(screen) || "map".equals(screen)
                         || "log".equals(screen) || "home".equals(screen))) {
                     render(screen);
@@ -4101,7 +4187,7 @@ public final class MainActivity extends Activity implements
             lastLocation = location;
             if (trackStore.isActive()) trackStore.add(location);
             if (activeMapView != null && !"tripSummary".equals(screen)) {
-                activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
+                if (fieldPanel != null) updateField(); else activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
             } else if ("map".equals(screen) && showingWeatherPage && !forecastLoading) {
                 if (weatherForecast != null && !forecastCovers(location)) {
                     weatherForecast = null;
@@ -4126,6 +4212,7 @@ public final class MainActivity extends Activity implements
     @Override public void onButtonChanged(String name, String address, boolean connected) {
         runOnUiThread(() -> {
             flicConnected = connected;
+            ConnectionAlerts.get(this).bluetooth(connected); updateField();
             String suffix = address == null ? "" : address.substring(Math.max(0, address.length() - 5));
             connectedDevice = suffix.isEmpty() ? name : name + " · " + suffix;
             if (connected && content != null) content.post(this::ensureBackgroundService);
@@ -4145,9 +4232,8 @@ public final class MainActivity extends Activity implements
                     handleButtonPress(POINT_TYPE_WAYPOINT,
                             "Single press saved a waypoint · foreground fallback");
                     break;
-                case TACKLE_CHANGE:
-                    handleButtonPress(POINT_TYPE_TACKLE_CHANGE,
-                            "Hold marked a tackle change · foreground fallback");
+                case TRACK_TOGGLE:
+                    toggleTrackRecording();
                     break;
             }
         });
@@ -4160,8 +4246,9 @@ public final class MainActivity extends Activity implements
             lastButtonEvent = message + " · " + nowTime();
             if (deviceStatusText != null) deviceStatusText.setText(bleStatus);
             if (buttonEventText != null) buttonEventText.setText(lastButtonEvent);
+            if (saved && "map".equals(screen)) { updateField(); return; }
             if (saved && ("home".equals(screen) || "map".equals(screen)
-                    || "log".equals(screen) || "saved".equals(screen))) {
+                    || "log".equals(screen) || "saved".equals(screen) || "tripActive".equals(screen))) {
                 render(screen);
             }
         });

@@ -40,7 +40,7 @@ public final class GpxExporter {
                 if (point != null && point.length >= 3
                         && validCoordinate(point[0], point[1])
                         && inRange((long) point[2], startedAt, endedAt)) {
-                    validTrack.add(new double[]{point[0], point[1], point[2]});
+                    validTrack.add(point.clone());
                 }
             }
         }
@@ -82,7 +82,10 @@ public final class GpxExporter {
 
         if (!validTrack.isEmpty()) {
             xml.append("  <trk><name>").append(escape(name)).append("</name><trkseg>\n");
+            boolean first = true;
             for (double[] point : validTrack) {
+                if (!first && point.length > 3 && point[3] == 1) xml.append("  </trkseg><trkseg>\n");
+                first = false;
                 xml.append("    <trkpt lat=\"").append(coordinate(point[0]))
                         .append("\" lon=\"").append(coordinate(point[1])).append("\">")
                         .append("<time>").append(time((long) point[2])).append("</time></trkpt>\n");

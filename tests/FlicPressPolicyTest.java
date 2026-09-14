@@ -13,11 +13,11 @@ public final class FlicPressPolicyTest {
                 "Single press must save a waypoint");
         check(FlicPressPolicy.resolve(false, true, false) == FlicPressPolicy.Action.CATCH,
                 "Double press must register a catch");
-        check(FlicPressPolicy.resolve(false, false, true) == FlicPressPolicy.Action.TACKLE_CHANGE,
-                "Hold must record a tackle change");
+        check(FlicPressPolicy.resolve(false, false, true) == FlicPressPolicy.Action.TRACK_TOGGLE,
+                "Hold must control track recording");
         check(FlicPressPolicy.resolve(false, false, false) == FlicPressPolicy.Action.NONE,
                 "No gesture must not create a point");
-        check(FlicPressPolicy.resolve(true, true, true) == FlicPressPolicy.Action.TACKLE_CHANGE,
+        check(FlicPressPolicy.resolve(true, true, true) == FlicPressPolicy.Action.TRACK_TOGGLE,
                 "Hold must take precedence over click flags");
         check(FlicPressPolicy.resolve(true, true, false) == FlicPressPolicy.Action.CATCH,
                 "Double press must take precedence over a single-click flag");

@@ -41,7 +41,7 @@ public final class FishingDay {
         if (route != null) {
             for (double[] point : route) {
                 if (point != null && point.length >= 3) {
-                    copy.add(new double[]{point[0], point[1], point[2]});
+                    copy.add(point.clone());
                 }
             }
         }

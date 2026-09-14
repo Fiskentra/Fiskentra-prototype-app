@@ -1,3 +1,21 @@
+# Fiskentra v0.24-navigation-design
+
+Navigation now follows the September 14 reference: large turn arrow, distance/action/street hierarchy, compact Walking/Driving/Steps/voice row, and time/distance/ETA summary. See [MAP_V024.md](MAP_V024.md) and [design-qa.md](design-qa.md). APK: `build/distributions/Fiskentra-v0.24-navigation-design.apk`.
+
+# Fiskentra v0.23.1-track-hold
+
+Built on v0.23-road-navigation, retaining road routes, turn instructions and the map redesign. Flic 2 hold now starts track recording when idle, pauses it when recording, and resumes the same track when paused. Pause preserves saved points and creates a segment break when recording resumes. Physical hold uses the foreground service; screen controls use the same TrackStore action. See [TRACK_HOLD.md](TRACK_HOLD.md).
+
+# Fiskentra v0.23-road-navigation
+
+Driving and Walking now build road/path routes with turn instructions, a Steps list, remaining distance, travel time and ETA. The last route is saved locally; new routes and recalculation require internet. ETA excludes live traffic. See [MAP_V023.md](MAP_V023.md) for service configuration, validation and limitations. APK: `build/distributions/Fiskentra-v0.23-road-navigation.apk`.
+
+The map header now uses the same Fiskentra symbol + wordmark asset, size and color as Forecast. Tapping it opens Forecast. APK: `build/distributions/Fiskentra-v0.22.2-map-logo.apk`.
+
+Weather is accessible from the cloud/sun button in the map header. Swipe either way across the header or from a map edge to switch to Forecast; swipe horizontally on Forecast to return. Map-body dragging and multi-touch remain map gestures. APK: `build/distributions/Fiskentra-v0.22.1-weather-swipe.apk`.
+
+Current map development builds on v0.20 and v0.21. See [MAP_V022.md](MAP_V022.md) for the reference-based map redesign, device validation and limitations; [MAP_V021.md](MAP_V021.md) covers the underlying map features. The following sections retain the v0.20 project history.
+
 # Fiskentra Android Prototype
 
 Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing, hunting, hiking, tourism and general adventures.

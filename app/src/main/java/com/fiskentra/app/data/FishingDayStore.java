@@ -131,6 +131,7 @@ public final class FishingDayStore {
                         coordinate.put("lat", point[0]);
                         coordinate.put("lon", point[1]);
                         coordinate.put("time", point[2]);
+                        coordinate.put("segment", point.length > 3 && point[3] == 1);
                         route.put(coordinate);
                     }
                     value.put("route", route);
@@ -168,7 +169,7 @@ public final class FishingDayStore {
             for (int i = 0; i < array.length(); i++) {
                 JSONObject point = array.getJSONObject(i);
                 route.add(new double[]{point.getDouble("lat"), point.getDouble("lon"),
-                        point.optDouble("time", 0d)});
+                        point.optDouble("time", 0d), point.optBoolean("segment") ? 1 : 0});
             }
         } catch (Exception ignored) {
             route.clear();
