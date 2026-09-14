@@ -36,8 +36,8 @@ public final class FiskentraFlicService extends Service implements
     private static final int NOTIFICATION_ID = 620;
     private static final String CHANNEL_ID = "fiskentra_field_button";
     private static final long MAX_LOCATION_AGE_MS = 30_000L;
-    private static final long MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS = 5L * 60L * 1_000L;
-    private static final long MAX_FALLBACK_LOCATION_AGE_MS = 30L * 60L * 1_000L;
+    private static final long MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS = 30_000L;
+    private static final long MAX_FALLBACK_LOCATION_AGE_MS = 30_000L;
     private static final long GPS_WAIT_TIMEOUT_MS = 20_000L;
     private static volatile boolean running;
 
@@ -52,6 +52,16 @@ public final class FiskentraFlicService extends Service implements
     private WeatherClient weatherClient;
     private NotificationManager notificationManager;
     private Location lastLocation;
+    private boolean buttonConnected;
+    private final Runnable signalTick = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            com.fiskentra.app.location.ConnectionAlerts.get(FiskentraFlicService.this).update(
+                    locationManager.hasPermission() && locationManager.isEnabled() && FiskentraLocationManager.isFresh(lastLocation),
+                    buttonConnected, flicManager.pairedButtonCount() > 0);
+            handler.postDelayed(this, 3000);
+        }
+    };
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
         if (PointSyncQueue.STATE_SYNCED.equals(state)) {
             updateNotification(pending == 0
@@ -99,6 +109,7 @@ public final class FiskentraFlicService extends Service implements
         flicManager.addListener(this);
         syncQueue.addObserver(syncObserver);
         running = true;
+        handler.post(signalTick);
         if (flicManager.hasPermissions()) flicManager.attachAndConnectPairedButtons();
         locationManager.start();
     }
@@ -138,6 +149,13 @@ public final class FiskentraFlicService extends Service implements
     }
 
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
+        if (action == FiskentraFlic2Manager.Action.TRACK_TOGGLE) {
+            String message = trackStore.toggleRecording();
+            // Handle hold immediately, even without GPS; never enqueue it as a point.
+            updateNotification(message);
+            flicManager.reportActionResult(action, true, message);
+            return;
+        }
         Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
         flicManager.reportActionResult(action, false,
                 pointType(action) + " press received · checking GPS");
@@ -161,6 +179,8 @@ public final class FiskentraFlicService extends Service implements
     }
 
     @Override public void onButtonChanged(String name, String address, boolean connected) {
+        buttonConnected = connected;
+        com.fiskentra.app.location.ConnectionAlerts.get(this).bluetooth(connected);
         updateNotification(connected
                 ? name + " connected · background capture active"
                 : name + " reconnecting…");
@@ -269,7 +289,7 @@ public final class FiskentraFlicService extends Service implements
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(trackStore != null && trackStore.isActive()
-                        ? "Fiskentra trip recording" : "Fiskentra field button active")
+                        ? (trackStore.isPaused() ? "Fiskentra trip paused" : "Fiskentra trip recording") : "Fiskentra field button active")
                 .setContentText(status)
                 .setContentIntent(contentIntent)
                 .setCategory(Notification.CATEGORY_SERVICE)

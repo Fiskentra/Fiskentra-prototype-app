@@ -29,8 +29,9 @@ android {
         applicationId = "com.fiskentra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "0.19"
+        versionCode = 35
+        versionName = "0.24-navigation-design"
+        buildConfigField("String", "ROUTING_URL", buildConfigString(localProperties.getProperty("ROUTING_URL", "https://valhalla1.openstreetmap.de/route")))
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(supabaseUrl))
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(supabasePublishableKey))

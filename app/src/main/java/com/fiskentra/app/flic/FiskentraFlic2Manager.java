@@ -20,7 +20,7 @@ import io.flic.flic2libandroid.Flic2ScanCallback;
 
 /** Owns foreground Flic 2 pairing, reconnect and event translation for Fiskentra v0.5. */
 public final class FiskentraFlic2Manager {
-    public enum Action { CATCH, WAYPOINT, TACKLE_CHANGE }
+    public enum Action { CATCH, WAYPOINT, TRACK_TOGGLE }
 
     public interface Listener {
         void onStatus(String status);
@@ -195,7 +195,7 @@ public final class FiskentraFlic2Manager {
             }
             FlicPressPolicy.Action resolved = FlicPressPolicy.resolve(
                     isSingleClick, isDoubleClick, isHold);
-            Action action = resolved == FlicPressPolicy.Action.TACKLE_CHANGE ? Action.TACKLE_CHANGE
+            Action action = resolved == FlicPressPolicy.Action.TRACK_TOGGLE ? Action.TRACK_TOGGLE
                     : resolved == FlicPressPolicy.Action.CATCH ? Action.CATCH
                     : resolved == FlicPressPolicy.Action.WAYPOINT ? Action.WAYPOINT : null;
             if (action != null) {

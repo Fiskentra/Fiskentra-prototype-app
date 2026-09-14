@@ -25,7 +25,11 @@ public final class TrackStore {
     private final SharedPreferences prefs;
 
     public TrackStore(Context context) {
-        prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+    }
+
+    TrackStore(SharedPreferences preferences) {
+        prefs = preferences;
     }
 
     public boolean isActive() { synchronized (LOCK) { return prefs.getBoolean(KEY_ACTIVE, false); } }
@@ -34,6 +38,7 @@ public final class TrackStore {
         synchronized (LOCK) {
             prefs.edit()
                     .putBoolean(KEY_ACTIVE, true)
+                    .putBoolean("paused", false).putBoolean("segment_pending", false).remove("last_fix")
                     .putString(KEY_POINTS, "[]")
                     .putLong(KEY_STARTED_AT, System.currentTimeMillis())
                     .remove(KEY_STOPPED_AT)
@@ -47,6 +52,7 @@ public final class TrackStore {
         synchronized (LOCK) {
             prefs.edit()
                     .putBoolean(KEY_ACTIVE, false)
+                    .putBoolean("paused", false)
                     .putLong(KEY_STOPPED_AT, System.currentTimeMillis())
                     .apply();
         }
@@ -55,6 +61,23 @@ public final class TrackStore {
     public long startedAt() { return prefs.getLong(KEY_STARTED_AT, 0L); }
 
     public long stoppedAt() { return prefs.getLong(KEY_STOPPED_AT, 0L); }
+    public boolean isPaused() { return prefs.getBoolean("paused", false); }
+    public void setPaused(boolean paused) {
+        synchronized (LOCK) { if (isActive()) prefs.edit().putBoolean("paused", paused).putBoolean("segment_pending", true).apply(); }
+    }
+
+    /** Toggle recording without finishing the trip or discarding its route. */
+    public String toggleRecording() {
+        synchronized (LOCK) {
+            if (!isActive()) {
+                start();
+                return "Track recording started";
+            }
+            boolean resume = isPaused();
+            setPaused(!resume);
+            return resume ? "Track recording resumed" : "Track recording paused";
+        }
+    }
 
     public WeatherSnapshot startWeather() { return weather(KEY_START_WEATHER); }
 
@@ -69,22 +92,33 @@ public final class TrackStore {
     }
 
     public boolean add(Location location) {
-        if (location == null) return false;
+        if (!com.fiskentra.app.location.FiskentraLocationManager.isFresh(location)) return false;
         synchronized (LOCK) {
+            if (!isActive()) return false;
+            if (!location.hasAccuracy() || location.getAccuracy() > TrackPointPolicy.MAX_ACCURACY_METERS) {
+                prefs.edit().putBoolean("segment_pending", true).apply();
+                return false;
+            }
+            long previousFix = prefs.getLong("last_fix", 0);
+            boolean gap = prefs.getBoolean("segment_pending", false)
+                    || (previousFix > 0 && location.getTime() - previousFix > 60_000);
+            prefs.edit().putLong("last_fix", location.getTime()).putBoolean("segment_pending", gap).apply();
+            if (isPaused()) return false;
             List<double[]> points = readPoints();
             long fixTime = location.getTime();
             if (!TrackPointPolicy.shouldRecord(points, prefs.getBoolean(KEY_ACTIVE, false),
                     prefs.getLong(KEY_STARTED_AT, 0L), location.getLatitude(), location.getLongitude(),
                     fixTime, location.hasAccuracy() ? location.getAccuracy() : 0f,
                     System.currentTimeMillis())) return false;
-            points.add(new double[]{location.getLatitude(), location.getLongitude(), fixTime});
+            points.add(new double[]{location.getLatitude(), location.getLongitude(), fixTime, gap ? 1 : 0});
             JSONArray array = new JSONArray();
             try {
                 for (double[] p : points) {
                     JSONObject o = new JSONObject();
-                    o.put("lat", p[0]); o.put("lon", p[1]); o.put("time", p[2]); array.put(o);
+                    o.put("lat", p[0]); o.put("lon", p[1]); o.put("time", p[2]);
+                    o.put("segment", p.length > 3 && p[3] == 1); array.put(o);
                 }
-                prefs.edit().putString(KEY_POINTS, array.toString()).apply();
+                prefs.edit().putString(KEY_POINTS, array.toString()).putBoolean("segment_pending", false).apply();
                 return true;
             } catch (Exception ignored) { return false; }
         }
@@ -100,7 +134,7 @@ public final class TrackStore {
             JSONArray array = new JSONArray(prefs.getString(KEY_POINTS, "[]"));
             for (int i = 0; i < array.length(); i++) {
                 JSONObject o = array.getJSONObject(i);
-                out.add(new double[]{o.getDouble("lat"), o.getDouble("lon"), o.optDouble("time", 0)});
+                out.add(new double[]{o.getDouble("lat"), o.getDouble("lon"), o.optDouble("time", 0), o.optBoolean("segment") ? 1 : 0});
             }
         } catch (Exception ignored) { }
         return out;

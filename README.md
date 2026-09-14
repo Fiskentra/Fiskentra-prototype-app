@@ -1,14 +1,32 @@
+# Fiskentra v0.24-navigation-design
+
+Navigation now follows the September 14 reference: large turn arrow, distance/action/street hierarchy, compact Walking/Driving/Steps/voice row, and time/distance/ETA summary. See [MAP_V024.md](MAP_V024.md) and [design-qa.md](design-qa.md). APK: `build/distributions/Fiskentra-v0.24-navigation-design.apk`.
+
+# Fiskentra v0.23.1-track-hold
+
+Built on v0.23-road-navigation, retaining road routes, turn instructions and the map redesign. Flic 2 hold now starts track recording when idle, pauses it when recording, and resumes the same track when paused. Pause preserves saved points and creates a segment break when recording resumes. Physical hold uses the foreground service; screen controls use the same TrackStore action. See [TRACK_HOLD.md](TRACK_HOLD.md).
+
+# Fiskentra v0.23-road-navigation
+
+Driving and Walking now build road/path routes with turn instructions, a Steps list, remaining distance, travel time and ETA. The last route is saved locally; new routes and recalculation require internet. ETA excludes live traffic. See [MAP_V023.md](MAP_V023.md) for service configuration, validation and limitations. APK: `build/distributions/Fiskentra-v0.23-road-navigation.apk`.
+
+The map header now uses the same Fiskentra symbol + wordmark asset, size and color as Forecast. Tapping it opens Forecast. APK: `build/distributions/Fiskentra-v0.22.2-map-logo.apk`.
+
+Weather is accessible from the cloud/sun button in the map header. Swipe either way across the header or from a map edge to switch to Forecast; swipe horizontally on Forecast to return. Map-body dragging and multi-touch remain map gestures. APK: `build/distributions/Fiskentra-v0.22.1-weather-swipe.apk`.
+
+Current map development builds on v0.20 and v0.21. See [MAP_V022.md](MAP_V022.md) for the reference-based map redesign, device validation and limitations; [MAP_V021.md](MAP_V021.md) covers the underlying map features. The following sections retain the v0.20 project history.
+
 # Fiskentra Android Prototype
 
 Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing, hunting, hiking, tourism and general adventures.
 
 ## Project stage
 
-- Current version: `v0.19` offline map areas (versionCode 27).
+- Current version: `v0.20` GPX trip export (versionCode 28).
 - Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: let the user prepare one MapLibre/MapTiler fishing area before leaving coverage. v0.19 adds 2/5/10 km downloads around current GPS with progress, pause/resume and safe deletion. See `PROJECT_STATUS.md` for verification and the remaining physical offline-map gate.
-- Current APK: `C:/Fiskentra/Fiskentra-v0.19-offline-maps.apk`.
+- Current target: let the user take recorded fishing trips into standard mapping tools. v0.20 exports the archived route and its saved events as an offline-safe GPX 1.1 file through Android's document picker. See `PROJECT_STATUS.md` for verification and the remaining physical picker gate.
+- Current APK: `C:/Fiskentra/Fiskentra-v0.20-gpx-export.apk`.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype
@@ -17,6 +35,7 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - GPS permission + live location acquisition using Android `LocationManager` (no Google dependency).
 - Save a current outdoor "Moment" with latitude/longitude/time to local device storage.
 - Start/stop a local-first trip track; the foreground service keeps recording with Fiskentra backgrounded or the screen locked, and the route renders on the field map.
+- Export a current or completed trip as GPX 1.1, including its ordered route and saved event waypoints, without internet or broad storage permission.
 - Saved points list with delete confirmation that removes cloud-synced points from Supabase before removing them locally.
 - Clear delete status in the Saved screen: deleting from cloud, deleted from cloud, or cloud delete failed.
 - Per-point cloud sync status in the Saved screen: saved locally, syncing, synced, deleting, or sync/delete pending.
@@ -210,6 +229,18 @@ The Ocean layer provides MapTiler's marine bathymetry. v0.19 can cache the selec
 6. Restore internet, open Offline maps and delete the test area. Confirm saved points, trips, Flic pairing and cloud records are unchanged.
 
 Map downloads use device storage, network data and the configured MapTiler account quota. Fiskentra therefore requires an explicit user tap and does not download an area in the background automatically.
+
+### v0.20 GPX export test
+
+1. Start a trip and move far enough for Fiskentra to record at least two valid route points.
+2. Save a Waypoint and a Catch during the trip, then finish the trip.
+3. Open the resulting Trip Summary and tap `EXPORT GPX`, or open Map & Layers and choose `Export GPX`.
+4. Confirm Android opens the document picker with a name beginning `Fiskentra-trip-` and ending `.gpx`.
+5. Save the file, open it in a GPX-compatible map application and confirm the route plus the Waypoint and Catch are visible at the expected positions.
+6. Repeat steps 3–5 in airplane mode. Export must still work because it uses the locally archived route and events.
+7. Restart Fiskentra, reopen the completed trip and export it again to confirm the archived route persists.
+
+GPX export does not upload the file or share it automatically. The user chooses its destination in Android's system document picker.
 
 ### v0.11 map-layer test
 
@@ -457,6 +488,7 @@ The source tree includes a `.gitignore` that excludes local SDK configuration, g
 - Complete physical Flic 2 validation and record the phone/Android version results.
 - Complete the physical v0.19 download/airplane-mode/delete test for a small 2 km area.
 - Complete the physical screen-off route recording test and tune GPS filters from field evidence.
+- Complete the physical v0.20 recorded-trip export and open the result in a second GPX-compatible app.
 - Weather provider abstraction (Open-Meteo, Tomorrow.io, Meteomatics, etc.) with user-selectable providers.
 - Fishing-specific overlays: depth/bathymetry, bite forecast, species and catch log.
 - Hunting/adventure modes, SOS/share flows and cloud sync.

@@ -15,10 +15,12 @@ public final class SwipeSwitchLayout extends FrameLayout {
     private final int touchSlop;
     private final int minimumDistance;
     private final int edgeWidth;
+    private final int headerHeight;
     private float downX;
     private float downY;
     private boolean edgeStart;
     private boolean tracking;
+    private boolean multiTouch;
     private boolean leftSwipeRequiresEdge;
     private Listener listener;
 
@@ -28,6 +30,7 @@ public final class SwipeSwitchLayout extends FrameLayout {
         touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         minimumDistance = Math.round(72f * density);
         edgeWidth = Math.round(48f * density);
+        headerHeight = Math.round(88f * density);
     }
 
     public void configure(boolean leftSwipeRequiresEdge, Listener listener) {
@@ -35,15 +38,26 @@ public final class SwipeSwitchLayout extends FrameLayout {
         this.listener = listener;
     }
 
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) multiTouch = false;
+        if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) { multiTouch = true; tracking = false; }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override public void requestDisallowInterceptTouchEvent(boolean disallow) {
+        // MapLibre owns gestures in the map body; reserve the header/edges for page switching.
+        super.requestDisallowInterceptTouchEvent(disallow && !(leftSwipeRequiresEdge && edgeStart && !multiTouch));
+    }
+
     @Override public boolean onInterceptTouchEvent(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
             downX = event.getX();
             downY = event.getY();
-            edgeStart = downX >= getWidth() - edgeWidth || downX <= edgeWidth;
+            edgeStart = downX >= getWidth() - edgeWidth || downX <= edgeWidth || downY <= headerHeight;
             tracking = false;
             return false;
         }
-        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE && !multiTouch) {
             float dx = event.getX() - downX;
             float dy = event.getY() - downY;
             boolean horizontal = Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.25f;
@@ -57,7 +71,7 @@ public final class SwipeSwitchLayout extends FrameLayout {
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if (!tracking) return true;
+        if (!tracking || multiTouch) return true;
         if (event.getActionMasked() == MotionEvent.ACTION_UP) {
             float dx = event.getX() - downX;
             if (Math.abs(dx) >= minimumDistance && listener != null) {
