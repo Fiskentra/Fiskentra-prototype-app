@@ -114,6 +114,8 @@ public final class MainActivity extends Activity implements
     private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
     private OfflineMapController offlineMapController;
+    private com.fiskentra.app.debug.MapFrameProfiler mapFrameProfiler;
+    private String debugMapDataset="off";
     private SharedPreferences syncPrefs;
     private SharedPreferences weatherPrefs;
     private SharedPreferences mapPrefs;
@@ -149,7 +151,7 @@ public final class MainActivity extends Activity implements
         if (connectionAlerts == null) connectionAlerts = ConnectionAlerts.get(this);
         String signals = FiskentraFlicService.isRunning() ? connectionAlerts.describe(fresh, flicConnected, flicManager.pairedButtonCount() > 0)
                 : connectionAlerts.update(fresh, flicConnected, flicManager.pairedButtonCount() > 0);
-        if (fieldPanel != null) fieldPanel.update(fresh ? lastLocation : null, signals);
+        if (fieldPanel != null) fieldPanel.update(lastLocation, signals);
     }
     private View fieldMapScreen() {
         SharedPreferences fieldPrefs = getSharedPreferences("field_map", MODE_PRIVATE);
@@ -158,6 +160,10 @@ public final class MainActivity extends Activity implements
         }
         fieldPanel = new FieldMapPanel(this, selectedMapPoint(), new FieldMapPanel.Actions() {
             @Override public void saved(SavedPoint point) { syncPoint(point); }
+            @Override public void details(SavedPoint point) { showPointDetails(point); }
+            @Override public void editDetails(SavedPoint point) { showCatchDetailsDialog(point); }
+            @Override public void delete(SavedPoint point) { deletePoint(point); }
+            @Override public void setLocation(SavedPoint point) { setPointLocation(point); }
             @Override public void requestLocation() { requestNeededPermissions(); locationManager.start(); }
             @Override public void toggleTrip() {
                 if (trackStore.isActive()) finishActiveTrip();
@@ -177,6 +183,7 @@ public final class MainActivity extends Activity implements
             @Override public void navigationChanged() { ensureBackgroundService(); stopBackgroundServiceIfIdle(); }
         });
         activeMapView = fieldPanel.map();
+        if(BuildConfig.DEBUG&&!"off".equals(debugMapDataset))fieldPanel.setDebugDataset(debugMapDataset);
         if (openDownloadedArea) {
             OfflineMapController.Snapshot area = offlineMapController.snapshot();
             activeMapView.lookAt(area.centerLatitude, area.centerLongitude); openDownloadedArea = false;
@@ -223,14 +230,14 @@ public final class MainActivity extends Activity implements
             if (destroyed) return;
             if (PointSyncQueue.STATE_SYNCED.equals(state)) {
                 cloudSyncStatus = pending == 0
-                        ? "All local points are synced to cloud"
+                        ? getString(R.string.data_no_cloud_operations)
                         : "Point synced · " + pending + " still queued";
             } else if (PointSyncQueue.STATE_SYNCING.equals(state)) {
                 cloudSyncStatus = "Automatic sync in progress…";
             } else if (PointSyncQueue.STATE_FAILED.equals(state)) {
                 cloudSyncStatus = "Saved locally · automatic retry queued";
             } else if (pointId < 0L && pending == 0) {
-                cloudSyncStatus = "All local points are synced to cloud";
+                cloudSyncStatus = getString(R.string.data_no_cloud_operations);
             }
             if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)
                     || "beta".equals(screen)) {
@@ -238,6 +245,10 @@ public final class MainActivity extends Activity implements
             }
         });
     };
+
+    @Override protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(AppLanguage.english(base));
+    }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -327,6 +338,11 @@ public final class MainActivity extends Activity implements
         }
         String target=intent.getStringExtra("qa_route");
         if(target!=null&&java.util.Arrays.asList("home","map","mapTools","offlineMaps","saved","log","device","tripSetup","forecastDetail","species").contains(target))render(target);
+        if(intent.hasExtra("qa_map_dataset")){debugMapDataset=intent.getStringExtra("qa_map_dataset");if(fieldPanel!=null)fieldPanel.setDebugDataset(debugMapDataset);}
+        if(intent.hasExtra("qa_point_id")&&fieldPanel!=null)fieldPanel.openPointForQa(intent.getLongExtra("qa_point_id",0));
+        if(intent.hasExtra("qa_map_zoom")&&fieldPanel!=null)fieldPanel.debugZoomBy(intent.getFloatExtra("qa_map_zoom",0));
+        String profile=intent.getStringExtra("qa_map_profile");
+        if(profile!=null){if(mapFrameProfiler==null)mapFrameProfiler=new com.fiskentra.app.debug.MapFrameProfiler(this);if("start".equals(profile))mapFrameProfiler.start(intent.hasExtra("qa_map_profile_label")?intent.getStringExtra("qa_map_profile_label"):debugMapDataset);else if("stop".equals(profile))mapFrameProfiler.stop();}
     }
 
     @Override protected void onStart() {
@@ -365,6 +381,7 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onStop() {
         super.onStop();
+        if(mapFrameProfiler!=null)mapFrameProfiler.stop();
         if (activeMapView != null) activeMapView.stop();
         flicManager.removeListener(this);
         syncQueue.removeObserver(syncObserver);
@@ -373,6 +390,7 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onDestroy() {
         destroyed = true;
+        if(mapFrameProfiler!=null)mapFrameProfiler.close();
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
         supabaseConnection.close();
@@ -407,6 +425,7 @@ public final class MainActivity extends Activity implements
         }
     }
     @Override public void onBackPressed() {
+        if ("map".equals(screen) && fieldPanel != null && fieldPanel.handleBack()) return;
         switch(screen){
             case "home":super.onBackPressed();break;
             case "mapTools":case "tripActive":render("map");break;
@@ -3182,7 +3201,7 @@ public final class MainActivity extends Activity implements
         data.addView(text("LOCAL DATA & SYNC", 11, ACCENT, Typeface.BOLD));
         data.addView(spacer(7));
         data.addView(text(points.size() + " saved moments on this phone", 18, TEXT, Typeface.BOLD));
-        data.addView(text(pending == 0 ? "All points are synced"
+        data.addView(text(pending == 0 ? getString(R.string.data_no_cloud_operations)
                         : pending + (pending == 1 ? " point is waiting to sync" : " points are waiting to sync"),
                 12, pending == 0 ? SUCCESS : WARNING, Typeface.NORMAL));
         data.addView(spacer(12));
@@ -3929,27 +3948,29 @@ public final class MainActivity extends Activity implements
 
     public boolean saveCurrentMoment(String source) {
         Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
-        if (!locationManager.hasPermission()) {
-            requestNeededPermissions();
-            Toast.makeText(this, "Allow location first", Toast.LENGTH_SHORT).show();
+        try {
+            SavedPoint point = pointStore.capture(java.util.UUID.randomUUID().toString(),
+                    System.currentTimeMillis(), pointStore.currentTripId(), source, "",
+                    locationManager.hasPermission() && locationManager.isEnabled() ? location : null);
+            Toast.makeText(this, getString(point.hasLocation() ? R.string.data_saved_device : R.string.data_no_location), Toast.LENGTH_SHORT).show();
+            syncPoint(point);
+            if (point.hasLocation()) try { enrichWeatherThenSync(point); }
+            catch (RuntimeException ignored) { /* Enrichment cannot change the successful capture result. */ }
+            if ("map".equals(screen)) updateField(); else if ("saved".equals(screen) || "log".equals(screen)) render(screen);
+            return true;
+        } catch (RuntimeException error) {
+            Toast.makeText(this, R.string.data_save_failed, Toast.LENGTH_LONG).show();
             return false;
         }
-        if (!FiskentraLocationManager.isFresh(location) || !locationManager.isEnabled()) {
-            Toast.makeText(this, "Waiting for GPS fix — try again in a moment", Toast.LENGTH_SHORT).show();
-            locationManager.start();
-            return false;
-        }
-        SavedPoint point = pointStore.add(location.getLatitude(), location.getLongitude(), source, "");
-        Toast.makeText(this, "Moment saved · " + source, Toast.LENGTH_SHORT).show();
-        enrichWeatherThenSync(point);
-        if ("map".equals(screen)) updateField(); else if ("saved".equals(screen) || "log".equals(screen)) render(screen);
-        return true;
     }
 
     private void enrichWeatherThenSync(SavedPoint point) {
+        if (point == null || !point.hasLocation()) return;
         weatherClient.fetch(point.latitude, point.longitude, (weather, weatherMessage) -> {
-            SavedPoint updated = weather == null ? point : pointStore.updateWeather(point.id, weather);
-            if (updated == null) updated = point;
+            SavedPoint updated;
+            try { updated = weather == null ? pointStore.find(point.id) : pointStore.updateWeather(point.id, weather); }
+            catch (RuntimeException failure) { return; }
+            if (updated == null) return;
             if (destroyed) return;
             SavedPoint ready = updated;
             runOnUiThread(() -> {
@@ -3964,6 +3985,7 @@ public final class MainActivity extends Activity implements
     }
 
     private void refreshPointWeather(SavedPoint point) {
+        if (!point.hasLocation()) { setPointLocation(point); return; }
         Toast.makeText(this, "Getting weather for this point…", Toast.LENGTH_SHORT).show();
         weatherClient.fetch(point.latitude, point.longitude, (weather, message) -> {
             if (destroyed) return;
@@ -4029,8 +4051,8 @@ public final class MainActivity extends Activity implements
         List<SavedPoint> points = pointStore.all();
         int pending = pendingSyncCount(points);
         if (pending == 0) {
-            cloudSyncStatus = "All local points are synced to cloud";
-            Toast.makeText(this, "All points are already synced", Toast.LENGTH_SHORT).show();
+            cloudSyncStatus = getString(R.string.data_no_cloud_operations);
+            Toast.makeText(this, R.string.data_no_cloud_operations, Toast.LENGTH_LONG).show();
             render("saved");
             return;
         }
@@ -4049,46 +4071,94 @@ public final class MainActivity extends Activity implements
     }
 
     private void deletePoint(SavedPoint point) {
-        setSyncState(point.id, SYNC_DELETING, "Deleting from cloud...");
-        cloudSyncStatus = "Deleting from cloud...";
-        Toast.makeText(this, "Deleting from cloud...", Toast.LENGTH_SHORT).show();
-        render("saved");
+        String requestedScreen = screen;
         syncQueue.delete(point, (deleted, message) -> runOnUiThread(() -> {
+            if (destroyed) return;
             if (deleted) {
-                if (point.catchDetails != null) {
-                    deleteLocalCatchPhoto(point.catchDetails.localPhotoPath);
-                }
-                pointStore.delete(point.id);
-                clearSyncState(point.id);
                 if (selectedMapPointId == point.id) selectedMapPointId = -1L;
-                cloudSyncStatus = "Deleted from cloud and this device";
-                Toast.makeText(this, "Deleted from cloud", Toast.LENGTH_SHORT).show();
-            } else {
-                setSyncState(point.id, SYNC_DELETE_FAILED, "Cloud delete failed · try again");
-                cloudSyncStatus = "Cloud delete failed · point kept locally";
-                Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+                cloudSyncStatus = getString(R.string.data_deleted_local);
             }
-            render("saved");
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            if ("map".equals(screen)) updateField(); else if (screen.equals(requestedScreen)) render(screen);
         }));
     }
 
-    private int pendingSyncCount(List<SavedPoint> points) {
-        int count = 0;
-        for (SavedPoint point : points) {
-            if (shouldSync(point.id)) count++;
-        }
-        return count;
+    private int pendingSyncCount(List<SavedPoint> points) { return syncQueue.pendingCount(); }
+    private boolean shouldSync(long pointId) {
+        String value = syncQueue.state(pointId);
+        return !"synced".equals(value) && !"local".equals(value);
     }
 
-    private boolean shouldSync(long pointId) {
-        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
-        return !SYNC_SYNCED.equals(state)
-                && !SYNC_SYNCING.equals(state)
-                && !SYNC_DELETING.equals(state)
-                && !SYNC_DELETE_FAILED.equals(state);
+    private void showPointDetails(SavedPoint point) {
+        SavedPoint latest = pointStore.find(point.id);
+        if (latest == null) return;
+        String location = latest.hasLocation() ? formatCoords(latest.latitude, latest.longitude)
+                + "\n" + latest.locationSource + " · " + new java.util.Date(latest.locatedAtUtc)
+                : getString(R.string.data_no_location);
+        String details = (latest.title.isEmpty() ? latest.type : latest.title) + "\n"
+                + new java.util.Date(latest.timestamp) + "\n" + location + "\n\n"
+                + (latest.note == null ? "" : latest.note) + "\n"
+                + (latest.catchDetails == null ? "" : latest.catchDetails.summary()) + "\n\n"
+                + syncQueue.pointStatus(latest);
+        new AlertDialog.Builder(this).setTitle(R.string.data_details).setMessage(details)
+                .setPositiveButton(R.string.data_edit, (d, w) -> new DesignHost().point(latest, "edit"))
+                .setNeutralButton(R.string.data_trip, (d, w) -> choosePointTrip(latest))
+                .setNegativeButton(R.string.data_cancel, null).show();
+    }
+
+    private void choosePointTrip(SavedPoint point) {
+        List<FishingDay> trips = fishingDayStore.all();
+        String[] labels = new String[trips.size() + 1]; labels[0] = getString(R.string.data_unassigned);
+        for (int i = 0; i < trips.size(); i++) labels[i + 1] = new java.util.Date(trips.get(i).startedAt).toString();
+        new AlertDialog.Builder(this).setTitle(R.string.data_trip).setItems(labels, (d, index) -> {
+            dataIo.execute(() -> {
+                try {
+                    pointStore.setTripId(point.id, index == 0 ? 0 : trips.get(index - 1).id);
+                    runOnUiThread(() -> { if (!destroyed) { if ("map".equals(screen)) updateField(); else render(screen); } });
+                } catch (RuntimeException error) { runOnUiThread(() -> Toast.makeText(this, R.string.data_save_failed, Toast.LENGTH_LONG).show()); }
+            });
+        }).setNegativeButton(R.string.data_cancel, null).show();
+    }
+
+    private void setPointLocation(SavedPoint point) {
+        EditText coordinates = new EditText(this);
+        coordinates.setHint("Latitude, longitude");
+        coordinates.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(R.string.data_set_location)
+                .setMessage(R.string.data_location_help).setView(coordinates)
+                .setPositiveButton(R.string.data_save, null)
+                .setNeutralButton(R.string.data_use_current_fix, (d, w) -> {
+                    Location fix = lastLocation == null ? null : new Location(lastLocation);
+                    if (!FiskentraLocationManager.isFresh(fix)) { Toast.makeText(this, R.string.data_no_location, Toast.LENGTH_LONG).show(); return; }
+                    new AlertDialog.Builder(this).setTitle(R.string.data_set_location).setMessage(R.string.data_late_fix_confirm)
+                            .setPositiveButton(R.string.data_save, (confirm, which) -> persistPointLocation(point,
+                                    fix.getLatitude(), fix.getLongitude(), fix.getTime(), fix.hasAccuracy() ? fix.getAccuracy() : Double.NaN, "confirmed_later_gps"))
+                            .setNegativeButton(R.string.data_cancel, null).show();
+                }).setNegativeButton(R.string.data_cancel, null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            try {
+                String[] values = coordinates.getText().toString().trim().split("[,;\\s]+");
+                if (values.length != 2) throw new IllegalArgumentException();
+                double lat = Double.parseDouble(values[0]), lon = Double.parseDouble(values[1]);
+                if (!com.fiskentra.app.model.FieldNavigation.validCoordinate(lat, lon)) throw new IllegalArgumentException();
+                persistPointLocation(point, lat, lon, System.currentTimeMillis(), Double.NaN, "manual"); dialog.dismiss();
+            } catch (RuntimeException error) { coordinates.setError(getString(R.string.data_invalid_coordinates)); }
+        }));
+        dialog.show();
+    }
+
+    private void persistPointLocation(SavedPoint point, double lat, double lon, long time, double accuracy, String source) {
+        dataIo.execute(() -> {
+            try {
+                SavedPoint updated = pointStore.setLocation(point.id, lat, lon, time, accuracy, source);
+                if (updated != null) syncQueue.enqueue(updated);
+                runOnUiThread(() -> { if (!destroyed) { if ("map".equals(screen)) updateField(); else render(screen); } });
+            } catch (RuntimeException error) { runOnUiThread(() -> Toast.makeText(this, R.string.data_save_failed, Toast.LENGTH_LONG).show()); }
+        });
     }
 
     private void openPointOnMap(SavedPoint point) {
+        if (!point.hasLocation()) { setPointLocation(point); return; }
         selectedMapPointId = point.id;
         showingWeatherPage = false;
         Toast.makeText(this, "Opening saved point on map", Toast.LENGTH_SHORT).show();
@@ -4131,26 +4201,13 @@ public final class MainActivity extends Activity implements
         }
     }
 
-    private String syncLabel(long pointId) {
-        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
-        if (SYNC_SYNCED.equals(state)) return "●  Synced to cloud";
-        if (SYNC_SYNCING.equals(state)) return "○  Syncing to Supabase…";
-        if (SYNC_DELETING.equals(state)) return "○  Deleting from cloud...";
-        if (SYNC_DELETE_FAILED.equals(state)) return "●  Cloud delete failed · try again";
-        if (SYNC_FAILED.equals(state)) {
-            String message = syncPrefs.getString(syncKey(pointId, "message"), "cloud sync pending");
-            return "●  Saved locally · " + message;
-        }
-        return "○  Saved locally";
-    }
+    private String syncLabel(long pointId) { return syncQueue.pointStatus(pointStore.find(pointId)); }
 
     private int syncColor(long pointId) {
-        String state = syncPrefs.getString(syncKey(pointId, "state"), "");
-        if (SYNC_SYNCED.equals(state)) return SUCCESS;
-        if (SYNC_SYNCING.equals(state)) return WARNING;
-        if (SYNC_DELETING.equals(state)) return WARNING;
-        if (SYNC_DELETE_FAILED.equals(state)) return DANGER;
-        if (SYNC_FAILED.equals(state)) return DANGER;
+        String value = syncQueue.state(pointId);
+        if ("synced".equals(value)) return SUCCESS;
+        if ("failed".equals(value) || "auth".equals(value) || "delete_failed".equals(value)) return DANGER;
+        if ("pending".equals(value) || "syncing".equals(value) || "deleting".equals(value)) return WARNING;
         return MUTED;
     }
 
@@ -4185,7 +4242,7 @@ public final class MainActivity extends Activity implements
         runOnUiThread(() -> {
             boolean firstLocation = lastLocation == null;
             lastLocation = location;
-            if (trackStore.isActive()) trackStore.add(location);
+            if (trackStore.isActive() && !FiskentraFlicService.isRunning()) dataIo.execute(() -> trackStore.add(new Location(location)));
             if (activeMapView != null && !"tripSummary".equals(screen)) {
                 if (fieldPanel != null) updateField(); else activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
             } else if ("map".equals(screen) && showingWeatherPage && !forecastLoading) {
@@ -4220,22 +4277,31 @@ public final class MainActivity extends Activity implements
         });
     }
 
+    private static final java.util.concurrent.ExecutorService dataIo = java.util.concurrent.Executors.newSingleThreadExecutor();
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
+        onCapture(action, java.util.UUID.randomUUID().toString(), System.currentTimeMillis());
+    }
+    @Override public void onCapture(FiskentraFlic2Manager.Action action, String eventId, long occurredAtUtc) {
         if (FiskentraFlicService.isRunning()) return;
-        runOnUiThread(() -> {
-            switch (action) {
-                case CATCH:
-                    handleButtonPress(POINT_TYPE_CATCH,
-                            "Double press registered a catch · foreground fallback");
-                    break;
-                case WAYPOINT:
-                    handleButtonPress(POINT_TYPE_WAYPOINT,
-                            "Single press saved a waypoint · foreground fallback");
-                    break;
-                case TRACK_TOGGLE:
-                    toggleTrackRecording();
-                    break;
-            }
+        if (action == FiskentraFlic2Manager.Action.TRACK_TOGGLE) {
+            dataIo.execute(() -> {
+                try { onActionResult(action, true, trackStore.toggleRecording(eventId, occurredAtUtc)); }
+                catch (RuntimeException error) { onActionResult(action, false, getString(R.string.data_save_failed)); }
+            }); return;
+        }
+        Location last = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        Location captured = last == null ? null : new Location(last);
+        dataIo.execute(() -> {
+            try {
+                SavedPoint point = pointStore.capture(eventId, occurredAtUtc, pointStore.tripIdAt(occurredAtUtc),
+                        action == FiskentraFlic2Manager.Action.CATCH ? POINT_TYPE_CATCH : POINT_TYPE_WAYPOINT,
+                        "Captured by Flic 2", captured);
+                if (point == null) return;
+                syncQueue.enqueue(point);
+                if (point.hasLocation()) try { enrichWeatherThenSync(point); }
+                catch (RuntimeException ignored) { /* Capture was persisted before optional weather. */ }
+                onActionResult(action, true, getString(point.hasLocation() ? R.string.data_saved_device : R.string.data_no_location));
+            } catch (RuntimeException error) { onActionResult(action, false, getString(R.string.data_save_failed)); }
         });
     }
 
@@ -4520,6 +4586,7 @@ public final class MainActivity extends Activity implements
     }
 
     private static String formatCoords(double lat, double lon) {
+        if (!Double.isFinite(lat) || !Double.isFinite(lon)) return "Saved without location";
         return String.format(Locale.US, "%.5f, %.5f", lat, lon);
     }
 

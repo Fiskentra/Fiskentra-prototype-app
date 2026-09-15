@@ -1,3 +1,13 @@
+# Fiskentra v0.25 — field map update
+
+Version **0.25** (versionCode **37**) keeps the app interface, dates and map SDK controls in English. The test phone uses 100% system font size; the app continues to respect Android font accessibility settings.
+
+This update adds point/catch sheets, shared map filters, camera follow modes, GPS quality states, offline-area management, recorded-track backtracking, place search and native map rendering. Driving/Walking routes, turn instructions, ETA, the Fiskentra logo and weather swipes are retained. Local data migration, capture deduplication and queued deletion protect existing records.
+
+See [v0.25 changes and validation](RELEASE_NOTES_0.25.md), [implementation](MAP_BETA_IMPLEMENTATION.md), [recheck](MAP_RECHECK.md) and [acceptance limits](MAP_BETA_ACCEPTANCE.md). Configure map/search credentials in ignored `local.properties` using `local.properties.example`; real keys and device backups are not shipped in Git. Local APK: `artifacts/Fiskentra-0.25-debug.apk`.
+
+The following version sections preserve development history.
+
 # Fiskentra v0.24-navigation-design
 
 Navigation now follows the September 14 reference: large turn arrow, distance/action/street hierarchy, compact Walking/Driving/Steps/voice row, and time/distance/ETA summary. See [MAP_V024.md](MAP_V024.md) and [design-qa.md](design-qa.md). APK: `build/distributions/Fiskentra-v0.24-navigation-design.apk`.
@@ -22,11 +32,11 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 
 ## Project stage
 
-- Current version: `v0.20` GPX trip export (versionCode 28).
+- Current version: `v0.25` field map update (versionCode 37).
 - Platform order: Android launch first; iPhone follows later. Watch OS / Wear OS UI is removed from the current scope.
 - Hardware decision: Fiskentra will use the **Flic 2 Single Pack**. BlueUP SafeX Lite is no longer planned.
-- Current target: let the user take recorded fishing trips into standard mapping tools. v0.20 exports the archived route and its saved events as an offline-safe GPX 1.1 file through Android's document picker. See `PROJECT_STATUS.md` for verification and the remaining physical picker gate.
-- Current APK: `C:/Fiskentra/Fiskentra-v0.20-gpx-export.apk`.
+- Current target: validate the improved field map and navigation for a closed beta. GPX export remains available. See `MAP_BETA_ACCEPTANCE.md` and `RELEASE_NOTES_0.25.md` for verification and remaining field tests.
+- Current local APK: `artifacts/Fiskentra-0.25-debug.apk`.
 - Launch readiness: not ready for public users.
 
 ## What works in this prototype

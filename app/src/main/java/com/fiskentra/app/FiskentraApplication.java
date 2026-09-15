@@ -14,6 +14,10 @@ public final class FiskentraApplication extends Application {
     private FiskentraFlic2Manager flicManager;
     private OfflineMapController offlineMapController;
 
+    @Override protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(AppLanguage.english(base));
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         Flic2Manager.initAndGetInstance(getApplicationContext(), new Handler(Looper.getMainLooper()));

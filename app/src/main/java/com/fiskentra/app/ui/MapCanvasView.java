@@ -22,7 +22,8 @@ public final class MapCanvasView extends View {
 
     public void setData(Location location, List<SavedPoint> points, List<double[]> track) {
         this.location = location;
-        this.points = points == null ? Collections.emptyList() : points;
+        this.points = new java.util.ArrayList<>();
+        if (points != null) for (SavedPoint point : points) if (point.hasLocation()) this.points.add(point);
         this.track = track == null ? Collections.emptyList() : track;
         invalidate();
     }

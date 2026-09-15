@@ -17,6 +17,7 @@ final class NavigationHud {
     private final Button walking, driving;
     private final ImageButton sound;
     private final View steps;
+    private boolean compact, hasManeuver;
     private static final int NAVY=0xff001e2e, INK=0xffeff4ff, MUTED=0xffb7c9e6, BLUE=0xff00a7ff, BUTTON=0xff0059e8, LINE=0xff53778f;
     private final Context context;
     NavigationHud(Context context,Actions actions) {
@@ -25,29 +26,29 @@ final class NavigationHud {
         arrow=icon(R.drawable.ic_nav_straight,BLUE); turnPanel.addView(arrow,new LinearLayout.LayoutParams(dp(48),dp(56)));
         LinearLayout copy=column(); copy.setPadding(dp(5),0,0,0);
         distance=text(11,false,MUTED); maneuver=text(18,true,INK); street=text(12,false,MUTED);
-        maneuver.setMaxLines(2); street.setMaxLines(2); street.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        maneuver.setMaxLines(5); street.setMaxLines(5);
         copy.addView(distance); copy.addView(maneuver); copy.addView(street); copy.setOnClickListener(v->actions.options());
         turnPanel.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
         ImageButton close=iconButton(R.drawable.ic_nav_close,"Stop navigation",actions::stop);
-        LinearLayout.LayoutParams closeLp=new LinearLayout.LayoutParams(dp(36),dp(40)); closeLp.gravity=Gravity.TOP; turnPanel.addView(close,closeLp);
+        LinearLayout.LayoutParams closeLp=new LinearLayout.LayoutParams(dp(48),dp(48)); closeLp.gravity=Gravity.TOP; turnPanel.addView(close,closeLp);
         turnPanel.setOnClickListener(v->actions.options());
 
         routePanel=column(); routePanel.setPadding(dp(10),dp(8),dp(10),dp(8)); routePanel.setBackground(surface(12,NAVY,LINE));
-        LinearLayout modes=row();
+        LinearLayout modes=row(); int modeWidth=dp(context.getResources().getConfiguration().fontScale>1.4f?126:80);
         walking=modeButton("Walking",R.drawable.ic_nav_directions_walk,()->actions.profile("pedestrian"));
         driving=modeButton("Driving",R.drawable.ic_nav_directions_car,()->actions.profile("auto"));
-        LinearLayout.LayoutParams choice=new LinearLayout.LayoutParams(0,dp(38),1); choice.rightMargin=dp(5); modes.addView(walking,choice);
-        LinearLayout.LayoutParams other=new LinearLayout.LayoutParams(0,dp(38),1); other.rightMargin=dp(5); modes.addView(driving,other);
+        LinearLayout.LayoutParams choice=new LinearLayout.LayoutParams(modeWidth,-2); choice.rightMargin=dp(5); modes.addView(walking,choice);
+        LinearLayout.LayoutParams other=new LinearLayout.LayoutParams(modeWidth,-2); other.rightMargin=dp(5); modes.addView(driving,other);
         modes.addView(separator(),new LinearLayout.LayoutParams(dp(1),dp(30)));
         Button list=modeButton("Steps",R.drawable.ic_list_check,actions::steps); list.setBackgroundColor(android.graphics.Color.TRANSPARENT); list.setContentDescription("Route steps");
-        modes.addView(list,new LinearLayout.LayoutParams(dp(68),dp(40))); steps=list;
+        modes.addView(list,new LinearLayout.LayoutParams(modeWidth,-2)); steps=list;
         modes.addView(separator(),new LinearLayout.LayoutParams(dp(1),dp(30)));
-        sound=iconButton(R.drawable.ic_nav_volume_off,"Enable voice guidance",actions::voice); modes.addView(sound,new LinearLayout.LayoutParams(dp(36),dp(40)));
-        routePanel.addView(modes);
+        sound=iconButton(R.drawable.ic_nav_volume_off,"Enable voice guidance",actions::voice); modes.addView(sound,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        HorizontalScrollView modeScroll=new HorizontalScrollView(context);modeScroll.setHorizontalScrollBarEnabled(false);modeScroll.addView(modes);routePanel.addView(modeScroll);
         LinearLayout.LayoutParams rule=new LinearLayout.LayoutParams(-1,dp(1)); rule.setMargins(0,dp(7),0,dp(6)); routePanel.addView(separator(),rule);
         LinearLayout info=row(); travel=icon(R.drawable.ic_nav_directions_car,INK); info.addView(travel,new LinearLayout.LayoutParams(dp(34),dp(40)));
-        LinearLayout values=column(); values.setPadding(dp(10),0,0,0); summary=text(20,true,INK); detail=text(12,false,MUTED); detail.setMaxLines(2);
-        values.addView(summary); values.addView(detail); info.addView(values,new LinearLayout.LayoutParams(0,-2,1)); info.setMinimumHeight(dp(46));
+        LinearLayout values=column(); values.setPadding(dp(10),0,0,0); summary=text(20,true,INK); detail=text(12,false,MUTED); detail.setMaxLines(5);
+        values.addView(summary); values.addView(detail); info.addView(values,new LinearLayout.LayoutParams(0,-2,1)); info.setMinimumHeight(dp(56));
         info.setContentDescription("Route summary and options"); info.setOnClickListener(v->{if(steps.isEnabled())actions.options();else actions.choose();}); routePanel.addView(info);
     }
     void profile(String profile,boolean hasDestination,boolean voice) {
@@ -57,13 +58,22 @@ final class NavigationHud {
         sound.setImageResource(voice?R.drawable.ic_volume:R.drawable.ic_nav_volume_off); sound.setContentDescription(voice?"Mute voice guidance":"Enable voice guidance");
     }
     void status(String message) {
+        hasManeuver=false; maneuver.setVisibility(View.VISIBLE); turnPanel.setContentDescription(message);
         String[] lines=message.split("\\n",2); distance.setVisibility(View.GONE); street.setVisibility(lines.length>1?View.VISIBLE:View.GONE);
         maneuver.setText(lines[0]); street.setText(lines.length>1?lines[1]:""); arrow.setImageResource(R.drawable.ic_navigation);
     }
     void maneuver(RoadRoute.Step step,String remaining,String profile) {
+        hasManeuver=true;
         distance.setVisibility(View.VISIBLE); distance.setText(remaining); maneuver.setText(step.maneuverTitle());
         street.setText(step.street.isEmpty()?("pedestrian".equals(profile)?"Unnamed path":"Unnamed road"):step.street); street.setVisibility(View.VISIBLE);
         arrow.setImageResource(maneuverIcon(step.type));
+        turnPanel.setContentDescription(remaining+" · "+maneuver.getText()+" · "+street.getText());
+        compact(compact);
+    }
+    /** Keep the actual turn and distance visible above an expanded map sheet. */
+    void compact(boolean value) {
+        compact=value;
+        if(hasManeuver){maneuver.setVisibility(value?View.GONE:View.VISIBLE);street.setVisibility(value?View.GONE:View.VISIBLE);}
     }
     void summary(String main,String secondary) { summary.setText(main); detail.setText(secondary); }
     private int maneuverIcon(int type) {
@@ -80,7 +90,7 @@ final class NavigationHud {
     }
     private void select(Button button,boolean selected) { button.setBackground(surface(20,selected?BUTTON:NAVY,BLUE)); button.setTextColor(selected?INK:BLUE); for(android.graphics.drawable.Drawable d:button.getCompoundDrawables())if(d!=null)d.setTint(selected?INK:BLUE); }
     private Button modeButton(String label,int resource,Runnable action) {
-        Button b=new Button(context); b.setText(label); b.setTextSize(11); b.setAllCaps(false); b.setTextColor(BLUE); b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(0); b.setMinimumHeight(0); b.setPadding(dp(6),0,dp(5),0);
+        Button b=new Button(context); b.setText(label); b.setTextSize(11); b.setAllCaps(false); b.setTextColor(BLUE); b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(dp(48)); b.setMinimumHeight(dp(48)); b.setPadding(dp(6),0,dp(5),0);
         android.graphics.drawable.Drawable d=context.getDrawable(resource).mutate(); d.setBounds(0,0,dp(20),dp(20)); d.setTint(BLUE); b.setCompoundDrawables(d,null,null,null); b.setCompoundDrawablePadding(dp(3)); b.setOnClickListener(v->action.run()); return b;
     }
     private ImageButton iconButton(int resource,String label,Runnable action) { ImageButton b=new ImageButton(context); b.setImageResource(resource); b.setColorFilter(INK); b.setBackgroundColor(android.graphics.Color.TRANSPARENT); b.setPadding(dp(7),dp(7),dp(7),dp(7)); b.setContentDescription(label); b.setOnClickListener(v->action.run()); return b; }

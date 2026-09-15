@@ -22,6 +22,7 @@ public final class TrackRecordingTest {
                     if (name.startsWith("put")) { values.put((String) arguments[0], arguments[1]); return proxy; }
                     if (name.equals("remove")) { values.remove(arguments[0]); return proxy; }
                     if (name.equals("apply")) return null;
+                    if (name.equals("commit")) return true;
                     throw new UnsupportedOperationException(name);
                 });
         SharedPreferences prefs = (SharedPreferences) Proxy.newProxyInstance(
@@ -53,6 +54,17 @@ public final class TrackRecordingTest {
         tracks.stop();
         check(!tracks.isActive() && !tracks.isPaused(), "Finish ends session");
         check(tracks.toggleRecording().equals("Track recording started"), "Hold starts a new session after finish");
+        tracks.stop();
+        tracks.toggleRecording("hold-a");
+        check(tracks.isActive() && !tracks.isPaused(), "Durable hold starts recording");
+        tracks = new TrackStore(prefs);
+        tracks.toggleRecording("hold-a");
+        check(!tracks.isPaused(), "Duplicate hold after recreation does not pause");
+        tracks.toggleRecording("hold-b");
+        check(tracks.isPaused(), "Distinct hold pauses");
+        tracks.toggleRecording("hold-c");
+        check(!tracks.isPaused(), "Distinct hold resumes");
+        check(tracks.points() == tracks.points(), "Repeated reads reuse cached geometry");
         System.out.println("TrackRecording: " + checks + " checks passed");
     }
 }

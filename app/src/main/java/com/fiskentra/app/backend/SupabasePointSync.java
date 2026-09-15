@@ -47,6 +47,7 @@ public final class SupabasePointSync {
     }
 
     public void sync(SavedPoint point, Listener listener) {
+        if (point == null || !point.hasLocation()) { listener.onResult(false, "Location required; details saved on device"); return; }
         if (!SupabaseConfig.isConfigured()) {
             listener.onResult(false, "Cloud sync skipped: Supabase is not configured");
             return;
@@ -71,10 +72,8 @@ public final class SupabasePointSync {
                     // Keep core sync compatible if the optional v0.8 column is unavailable.
                     result = post(point, false, false);
                 }
-                if (result.status >= 200 && result.status < 300) {
+                if (SyncResponsePolicy.uploaded(result.status)) {
                     listener.onResult(true, "Last point synced to Supabase");
-                } else if (result.status == 409) {
-                    listener.onResult(true, "Last point was already synced");
                 } else {
                     listener.onResult(false, result.userMessage());
                 }
@@ -89,6 +88,7 @@ public final class SupabasePointSync {
             listener.onResult(false, "Cloud delete skipped: Supabase is not configured");
             return;
         }
+        if (!hasValidatedInternet()) { listener.onResult(false, "offline"); return; }
 
         executor.execute(() -> {
             HttpURLConnection connection = null;
@@ -111,10 +111,12 @@ public final class SupabasePointSync {
                 int status = connection.getResponseCode();
                 if (status >= 200 && status < 300) {
                     String body = read(connection.getInputStream());
-                    if (deletedRowCount(body) > 0) {
+                    if (SyncResponsePolicy.deleted(status, deletedRowCount(body))) {
                         listener.onResult(true, "Point deleted from Supabase");
                     } else {
-                        listener.onResult(false, "No matching Supabase row deleted; check SELECT policy");
+                        // Zero visible rows cannot prove correct ownership/RLS. Retain the local
+                        // tombstone and an actionable error instead of declaring remote success.
+                        listener.onResult(false, "Access not confirmed: no matching row deleted; check SELECT policy");
                     }
                 } else {
                     listener.onResult(false, "Supabase point delete HTTP " + status);
@@ -260,8 +262,12 @@ public final class SupabasePointSync {
         String existing = prefs.getString(INSTALL_ID, "");
         if (existing != null && !existing.trim().isEmpty()) return existing;
         String created = UUID.randomUUID().toString();
-        prefs.edit().putString(INSTALL_ID, created).apply();
+        if (!prefs.edit().putString(INSTALL_ID, created).commit()) throw new IllegalStateException("Could not persist cloud installation identity");
         return created;
+    }
+
+    public static String errorCategory(String message) {
+        return SyncResponsePolicy.errorCategory(message);
     }
 
     private static String iso(long time) {

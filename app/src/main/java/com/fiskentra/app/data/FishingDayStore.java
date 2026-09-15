@@ -25,93 +25,109 @@ public final class FishingDayStore {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    public synchronized FishingDay start() {
-        FishingDay current = active();
-        if (current != null) return current;
+    public FishingDay start() {
+        synchronized (FishingDayStore.class) {
+            FishingDay current = active();
+            if (current != null) return current;
 
-        long now = System.currentTimeMillis();
-        FishingDay day = new FishingDay(now, now, 0L);
-        List<FishingDay> sessions = new ArrayList<>(all());
-        sessions.add(day);
-        write(sessions);
-        return day;
+            long now = System.currentTimeMillis();
+            FishingDay day = new FishingDay(now, now, 0L);
+            List<FishingDay> sessions = new ArrayList<>(all());
+            sessions.add(day);
+            write(sessions);
+            return day;
+        }
     }
 
-    public synchronized FishingDay stop() {
-        FishingDay current = active();
-        if (current == null) return null;
+    public FishingDay stop() {
+        synchronized (FishingDayStore.class) {
+            FishingDay current = active();
+            if (current == null) return null;
 
-        long now = System.currentTimeMillis();
-        FishingDay finished = new FishingDay(
-                current.id, current.startedAt, now, current.startWeather, current.endWeather);
-        List<FishingDay> sessions = new ArrayList<>(all());
-        for (int i = 0; i < sessions.size(); i++) {
-            if (sessions.get(i).id == current.id) {
-                sessions.set(i, finished);
+            long now = System.currentTimeMillis();
+            FishingDay finished = new FishingDay(
+                    current.id, current.startedAt, now, current.startWeather, current.endWeather, current.route);
+            List<FishingDay> sessions = new ArrayList<>(all());
+            for (int i = 0; i < sessions.size(); i++) {
+                if (sessions.get(i).id == current.id) {
+                    sessions.set(i, finished);
+                    break;
+                }
+            }
+            write(sessions);
+            return finished;
+        }
+    }
+
+    public FishingDay active() {
+        synchronized (FishingDayStore.class) {
+            for (FishingDay day : all()) {
+                if (day.isActive()) return day;
+            }
+            return null;
+        }
+    }
+
+    public FishingDay updateStartWeather(long id, WeatherSnapshot weather) {
+        synchronized (FishingDayStore.class) {
+            return updateWeather(id, weather, true);
+        }
+    }
+
+    public FishingDay updateEndWeather(long id, WeatherSnapshot weather) {
+        synchronized (FishingDayStore.class) {
+            return updateWeather(id, weather, false);
+        }
+    }
+
+    public FishingDay updateRoute(long id, List<double[]> route) {
+        synchronized (FishingDayStore.class) {
+            List<FishingDay> sessions = new ArrayList<>(all());
+            FishingDay updated = null;
+            for (int i = 0; i < sessions.size(); i++) {
+                FishingDay day = sessions.get(i);
+                if (day.id != id) continue;
+                updated = day.withRoute(route);
+                sessions.set(i, updated);
                 break;
             }
+            if (updated != null) write(sessions);
+            return updated;
         }
-        write(sessions);
-        return finished;
     }
 
-    public synchronized FishingDay active() {
-        for (FishingDay day : all()) {
-            if (day.isActive()) return day;
-        }
-        return null;
-    }
-
-    public synchronized FishingDay updateStartWeather(long id, WeatherSnapshot weather) {
-        return updateWeather(id, weather, true);
-    }
-
-    public synchronized FishingDay updateEndWeather(long id, WeatherSnapshot weather) {
-        return updateWeather(id, weather, false);
-    }
-
-    public synchronized FishingDay updateRoute(long id, List<double[]> route) {
-        List<FishingDay> sessions = new ArrayList<>(all());
-        FishingDay updated = null;
-        for (int i = 0; i < sessions.size(); i++) {
-            FishingDay day = sessions.get(i);
-            if (day.id != id) continue;
-            updated = day.withRoute(route);
-            sessions.set(i, updated);
-            break;
-        }
-        if (updated != null) write(sessions);
-        return updated;
-    }
-
-    public synchronized List<FishingDay> sessionsOnDate(long date) {
-        ArrayList<FishingDay> out = new ArrayList<>();
-        String target = dayKey(date);
-        for (FishingDay day : all()) {
-            if (target.equals(dayKey(day.startedAt))) out.add(day);
-        }
-        return out;
-    }
-
-    public synchronized List<FishingDay> all() {
-        ArrayList<FishingDay> out = new ArrayList<>();
-        try {
-            JSONArray array = new JSONArray(prefs.getString(KEY, "[]"));
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject value = array.getJSONObject(i);
-                out.add(new FishingDay(
-                        value.getLong("id"),
-                        value.getLong("started_at"),
-                        value.optLong("ended_at", 0L),
-                        WeatherSnapshot.fromJson(value.optJSONObject("start_weather")),
-                        WeatherSnapshot.fromJson(value.optJSONObject("end_weather")),
-                        routeFromJson(value.optJSONArray("route"))));
+    public List<FishingDay> sessionsOnDate(long date) {
+        synchronized (FishingDayStore.class) {
+            ArrayList<FishingDay> out = new ArrayList<>();
+            String target = dayKey(date);
+            for (FishingDay day : all()) {
+                if (target.equals(dayKey(day.startedAt))) out.add(day);
             }
-        } catch (Exception ignored) {
-            // A malformed prototype entry must not prevent opening the log.
+            return out;
         }
-        Collections.sort(out, (a, b) -> Long.compare(b.startedAt, a.startedAt));
-        return out;
+    }
+
+    public List<FishingDay> all() {
+        synchronized (FishingDayStore.class) {
+            ArrayList<FishingDay> out = new ArrayList<>();
+            try {
+                JSONArray array = new JSONArray(prefs.getString(KEY, "[]"));
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject value = array.getJSONObject(i);
+                    out.add(new FishingDay(
+                            value.getLong("id"),
+                            value.getLong("started_at"),
+                            value.optLong("ended_at", 0L),
+                            WeatherSnapshot.fromJson(value.optJSONObject("start_weather")),
+                            WeatherSnapshot.fromJson(value.optJSONObject("end_weather")),
+                            routeFromJson(value.optJSONArray("route"))));
+                }
+            } catch (Exception ignored) {
+                // A malformed prototype entry must not prevent opening the log.
+            }
+            Collections.sort(out, (a, b) -> Long.compare(b.startedAt, a.startedAt));
+            return out;
+        }
     }
 
     private void write(List<FishingDay> sessions) {
@@ -138,8 +154,8 @@ public final class FishingDayStore {
                 }
                 array.put(value);
             }
-            prefs.edit().putString(KEY, array.toString()).apply();
-        } catch (Exception ignored) { }
+            if (!prefs.edit().putString(KEY, array.toString()).commit()) throw new IllegalStateException("Could not save fishing trip");
+        } catch (Exception error) { throw new IllegalStateException("Could not save fishing trip", error); }
     }
 
     private FishingDay updateWeather(long id, WeatherSnapshot weather, boolean start) {
