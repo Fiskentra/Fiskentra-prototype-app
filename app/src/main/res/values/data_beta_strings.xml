@@ -1,0 +1,27 @@
+<resources>
+    <string name="data_weight_label">Weight</string>
+    <string name="data_length_label">Length</string>
+    <string name="data_saved_device">Saved on device</string>
+    <string name="data_pending_sync">Pending sync · details on this device</string>
+    <string name="data_sync_failed">Sync failed · saved on device · Retry</string>
+    <string name="data_sync_auth">Sync access denied · saved on device · Retry</string>
+    <string name="data_coordinates_synced">Coordinates synced · details on this device</string>
+    <string name="data_no_location">Saved without location</string>
+    <string name="data_save_failed">Could not save. Check free storage and try again.</string>
+    <string name="data_set_location">Set location</string>
+    <string name="data_location_help">Enter latitude, longitude. The original event time will be preserved.</string>
+    <string name="data_use_current_fix">Use current GPS position</string>
+    <string name="data_late_fix_confirm">This position was measured later than the event. Attach it to this record?</string>
+    <string name="data_invalid_coordinates">Enter valid latitude and longitude.</string>
+    <string name="data_deleted_local">Deleted from this device · cloud deletion queued when needed</string>
+    <string name="data_no_cloud_operations">No pending operations · photos, appearance and tracks stay on this device</string>
+    <string name="data_retry">Retry</string>
+    <string name="data_cancel">Cancel</string>
+    <string name="data_save">Save</string>
+    <string name="data_details">Point details</string>
+    <string name="data_edit">Edit</string>
+    <string name="data_trip">Trip</string>
+    <string name="data_unassigned">Not assigned to a trip</string>
+    <string name="data_photo_saved">Saved catch photo</string>
+    <string name="data_photo_unavailable">Catch photo unavailable</string>
+</resources>

@@ -28,6 +28,10 @@ public final class NavigationVoice {
     public void reset() { cues.reset(); speech.stop(); }
     public void pause() { speech.stop(); }
     public void setActive(boolean value) { active=value;if(!value)speech.stop(); }
+    public void announce(String message) {
+        if(!enabled||!ready||closed||!active||message==null||message.isEmpty())return;
+        if(speech.speak(message,TextToSpeech.QUEUE_FLUSH,null,"fiskentra-local-guidance")==TextToSpeech.ERROR){enabled=false;listener.unavailable();}
+    }
     public void update(RoadRoute route,RoadRoute.Progress progress,boolean arrived) {
         if(!enabled||!ready||closed||!active)return;
         int band=progress.toTurn<=25?0:progress.toTurn<=100?1:progress.toTurn<=300?2:3;

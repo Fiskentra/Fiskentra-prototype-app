@@ -26,6 +26,7 @@ public final class FiskentraFlic2Manager {
         void onStatus(String status);
         void onButtonChanged(String name, String address, boolean connected);
         void onAction(Action action);
+        default void onCapture(Action action, String eventId, long occurredAtUtc) { onAction(action); }
         void onStaleEventIgnored();
         default void onActionResult(Action action, boolean saved, String message) { }
         default void onTestAction(Action action) { }
@@ -42,6 +43,7 @@ public final class FiskentraFlic2Manager {
     private String lastButtonAddress = "";
     private boolean lastButtonConnected;
     private volatile Listener testListener;
+    private final java.util.Map<String, Long> readyOffsets = new java.util.HashMap<>();
     public void setTestListener(Listener listener) { testListener = listener; }
 
     public FiskentraFlic2Manager(Context context) {
@@ -162,6 +164,7 @@ public final class FiskentraFlic2Manager {
         }
 
         @Override public void onReady(Flic2Button button, long timestamp) {
+            readyOffsets.put(button.getBdAddr(), System.currentTimeMillis() - timestamp);
             notifyButtonChanged(displayName(button), button.getBdAddr(), true);
             notifyStatus("Flic 2 ready · single, double or hold");
         }
@@ -201,7 +204,28 @@ public final class FiskentraFlic2Manager {
             if (action != null) {
                 Listener testing = testListener;
                 if (testing != null) { testing.onTestAction(action); return; }
-                for (Listener listener : listeners) listener.onAction(action);
+                // SDK timestamps are milliseconds since the button booted. Persist an epoch across
+                // reconnect/process restart; reset it only when the estimated boot changes.
+                android.content.SharedPreferences epochs = context.getSharedPreferences("flic_event_epochs", 0);
+                String address = button.getBdAddr();
+                long offset = readyOffsets.containsKey(address) ? readyOffsets.get(address) : System.currentTimeMillis() - timestamp;
+                String epoch = epochs.getString(address + "_epoch", "");
+                long ready = button.getReadyTimestamp();
+                long previousReady = epochs.getLong(address + "_ready", ready);
+                // Clock changes on Android must not change event identity. A decreasing button
+                // uptime signals a new boot; reconnects keep the namespace across process restarts.
+                if (epoch.isEmpty() || ready < previousReady) {
+                    epoch = java.util.UUID.randomUUID().toString();
+                    if (!epochs.edit().putString(address + "_epoch", epoch).putLong(address + "_ready", ready).commit()) {
+                        reportActionResult(action, false, context.getString(com.fiskentra.app.R.string.data_save_failed));
+                        return;
+                    }
+                } else if (ready > previousReady && !epochs.edit().putLong(address + "_ready", ready).commit()) {
+                    reportActionResult(action, false, context.getString(com.fiskentra.app.R.string.data_save_failed)); return;
+                }
+                String eventId = "flic:" + address + ":" + epoch + ":" + timestamp + ":" + action;
+                long occurred = Math.min(System.currentTimeMillis(), offset + timestamp);
+                for (Listener listener : listeners) listener.onCapture(action, eventId, occurred);
             }
         }
     };

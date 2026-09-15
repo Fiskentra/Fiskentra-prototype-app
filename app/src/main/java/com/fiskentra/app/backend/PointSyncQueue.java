@@ -1,280 +1,111 @@
 package com.fiskentra.app.backend;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-
+import com.fiskentra.app.R;
+import com.fiskentra.app.data.PointLedger;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.model.SavedPoint;
-
-import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
-/**
- * Process-wide, local-first queue for saved-point uploads and deletes.
- *
- * A single instance prevents the Activity and the Flic foreground service from uploading the same
- * point concurrently. Pending points are retried whenever Android validates an internet network.
- */
+/** One process-wide worker. Durable per-point ordering is owned by PointLedger, not by a View. */
 public final class PointSyncQueue {
-    public interface Observer {
-        void onSyncChanged(long pointId, String state, String message, int pendingCount);
-    }
-
+    public interface Observer { void onSyncChanged(long pointId, String state, String message, int pendingCount); }
     public static final String PREFS = "fiskentra_point_sync_status";
-    public static final String STATE_PENDING = "pending";
-    public static final String STATE_SYNCING = "syncing";
-    public static final String STATE_SYNCED = "synced";
-    public static final String STATE_FAILED = "failed";
-    public static final String STATE_DELETING = "deleting";
-    public static final String STATE_DELETE_FAILED = "delete_failed";
-
-    private static final long STALE_SYNC_MS = 20_000L;
+    public static final String STATE_PENDING = "pending", STATE_SYNCING = "syncing", STATE_SYNCED = "synced",
+            STATE_FAILED = "failed", STATE_DELETING = "deleting", STATE_DELETE_FAILED = "delete_failed";
     private static volatile PointSyncQueue instance;
-
-    private final Object runLock = new Object();
-    private final Set<Long> attemptedInRun = new HashSet<>();
-    private final Set<Observer> observers = new CopyOnWriteArraySet<>();
-    private final PointStore pointStore;
-    private final SharedPreferences prefs;
+    private final Context context;
+    private final PointStore store;
     private final SupabasePointSync remote;
-    private final ConnectivityManager connectivityManager;
-
-    private boolean running;
-    private boolean rerunRequested;
+    private final Set<Observer> observers = new CopyOnWriteArraySet<>();
+    private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
+    private boolean inFlight;
 
     public static PointSyncQueue get(Context context) {
-        PointSyncQueue current = instance;
-        if (current != null) return current;
-        synchronized (PointSyncQueue.class) {
+        if (instance == null) synchronized (PointSyncQueue.class) {
             if (instance == null) instance = new PointSyncQueue(context.getApplicationContext());
-            return instance;
         }
+        return instance;
     }
-
     private PointSyncQueue(Context context) {
-        pointStore = new PointStore(context);
-        prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        remote = new SupabasePointSync(context);
-        connectivityManager = (ConnectivityManager) context.getSystemService(
-                Context.CONNECTIVITY_SERVICE);
-        recoverStaleStates();
-        registerNetworkRecovery();
-        if (hasValidatedInternet()) retryPending();
+        this.context = context; store = new PointStore(context); remote = new SupabasePointSync(context);
+        ConnectivityManager connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivity != null) try {
+            connectivity.registerDefaultNetworkCallback(new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { kick(); }
+                @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+                    if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) kick();
+                }
+            });
+        } catch (RuntimeException ignored) { /* Scheduled and explicit retry remain available. */ }
+        worker.scheduleWithFixedDelay(this::runSafely, 1, 5, TimeUnit.SECONDS);
     }
-
-    public void addObserver(Observer observer) {
-        if (observer != null) observers.add(observer);
-    }
-
-    public void removeObserver(Observer observer) {
-        if (observer != null) observers.remove(observer);
-    }
-
-    /** Marks a new or edited local point for upload, then starts the queue when online. */
+    public void addObserver(Observer observer) { if (observer != null) observers.add(observer); }
+    public void removeObserver(Observer observer) { observers.remove(observer); }
     public void enqueue(SavedPoint point) {
-        if (point == null) return;
-        String current = state(point.id);
-        if (STATE_DELETING.equals(current) || STATE_DELETE_FAILED.equals(current)) return;
-        if (STATE_SYNCING.equals(current)) {
-            setState(point.id, STATE_PENDING, "newer local changes queued");
-            synchronized (runLock) {
-                rerunRequested = true;
-            }
-        } else if (!hasValidatedInternet()) {
-            setState(point.id, STATE_FAILED, "offline · automatic retry queued");
-        } else {
-            setState(point.id, STATE_PENDING, "queued for Supabase");
-        }
-        notifyObservers(point.id);
-        if (hasValidatedInternet()) requestRun();
+        if (point == null || store.find(point.id) == null) return;
+        // Insert/edit already committed the operation atomically. A stale callback cannot upsert.
+        notifyObservers(point.id, pointStatus(point)); kick();
     }
-
-    /** Retries every unsynced local point without requiring the Saved screen to be open. */
-    public void retryPending() {
-        recoverStaleStates();
-        if (!hasValidatedInternet()) return;
-        requestRun();
-    }
-
-    /** Queues cloud deletion behind any active upload so the upload cannot recreate the row. */
+    public void retryPending() { worker.execute(() -> { try { store.ledger().retry(); runSafely(); } catch (RuntimeException e) { notifyObservers(-1, context.getString(R.string.data_save_failed)); } }); }
     public void delete(SavedPoint point, SupabasePointSync.Listener listener) {
-        if (point == null) {
-            listener.onResult(false, "Point is no longer available");
-            return;
-        }
-        setState(point.id, STATE_DELETING, "Deleting from cloud...");
-        notifyObservers(point.id);
-        remote.delete(point, (deleted, message) -> {
-            if (!deleted) {
-                setState(point.id, STATE_DELETE_FAILED, message);
-                notifyObservers(point.id);
-            }
-            listener.onResult(deleted, message);
+        worker.execute(() -> {
+            try {
+                if (point != null) store.delete(point.id);
+                if (point != null) notifyObservers(point.id, context.getString(R.string.data_deleted_local));
+                listener.onResult(true, context.getString(R.string.data_deleted_local)); runSafely();
+            } catch (RuntimeException error) { listener.onResult(false, context.getString(R.string.data_save_failed)); }
         });
     }
-
-    public void clear(long pointId) {
-        prefs.edit()
-                .remove(key(pointId, "state"))
-                .remove(key(pointId, "message"))
-                .remove(key(pointId, "updated_at"))
-                .apply();
-        notifyObservers(pointId);
+    /** Compatibility method: durable receipts/tombstones must never be cleared with UI status. */
+    public void clear(long id) { notifyObservers(id, ""); }
+    public boolean hasValidatedInternet() { return remote.hasValidatedInternet(); }
+    public int pendingCount() { return store.ledger().pendingCount(); }
+    public String state(long id) { return store.ledger().status(id); }
+    public String pointStatus(SavedPoint point) {
+        if (point == null) return context.getString(R.string.data_saved_device);
+        String state = state(point.id);
+        if ("synced".equals(state)) return context.getString(R.string.data_coordinates_synced);
+        if ("auth".equals(state)) return context.getString(R.string.data_sync_auth);
+        if ("failed".equals(state) || "delete_failed".equals(state)) return context.getString(R.string.data_sync_failed);
+        if ("pending".equals(state) || "syncing".equals(state)) return context.getString(R.string.data_pending_sync);
+        return context.getString(R.string.data_saved_device);
     }
-
-    public boolean hasValidatedInternet() {
-        return remote.hasValidatedInternet();
-    }
-
-    public int pendingCount() {
-        recoverStaleStates();
-        int count = 0;
-        for (SavedPoint point : pointStore.all()) {
-            if (shouldSync(point.id)) count++;
-        }
-        return count;
-    }
-
-    private void requestRun() {
-        synchronized (runLock) {
-            if (running) {
-                rerunRequested = true;
-                return;
-            }
-            running = true;
-            rerunRequested = false;
-            attemptedInRun.clear();
-        }
-        syncNext();
-    }
-
-    private void syncNext() {
-        if (!hasValidatedInternet()) {
-            finishRun();
-            return;
-        }
-        SavedPoint next = nextPendingPoint();
-        if (next == null) {
-            finishRun();
-            return;
-        }
-        synchronized (runLock) {
-            attemptedInRun.add(next.id);
-        }
-        setState(next.id, STATE_SYNCING, "Syncing to Supabase");
-        notifyObservers(next.id);
-        remote.sync(next, (synced, message) -> {
-            String current = state(next.id);
-            // An edit or delete made while this request was running owns the newer state.
-            if (STATE_SYNCING.equals(current)) {
-                setState(next.id, synced ? STATE_SYNCED : STATE_FAILED, message);
-                notifyObservers(next.id);
-            }
-            syncNext();
-        });
-    }
-
-    private SavedPoint nextPendingPoint() {
-        List<SavedPoint> points = pointStore.all();
-        synchronized (runLock) {
-            for (SavedPoint point : points) {
-                if (!attemptedInRun.contains(point.id) && shouldSync(point.id)) return point;
-            }
-        }
-        return null;
-    }
-
-    private void finishRun() {
-        boolean rerun;
-        synchronized (runLock) {
-            running = false;
-            attemptedInRun.clear();
-            rerun = rerunRequested;
-            rerunRequested = false;
-        }
-        notifyObservers(-1L);
-        if (rerun && hasValidatedInternet()) requestRun();
-    }
-
-    private boolean shouldSync(long pointId) {
-        String state = state(pointId);
-        return !STATE_SYNCED.equals(state)
-                && !STATE_SYNCING.equals(state)
-                && !STATE_DELETING.equals(state)
-                && !STATE_DELETE_FAILED.equals(state);
-    }
-
-    private void recoverStaleStates() {
-        long now = System.currentTimeMillis();
-        for (SavedPoint point : pointStore.all()) {
-            String state = state(point.id);
-            long updatedAt = prefs.getLong(key(point.id, "updated_at"), point.timestamp);
-            if (now - updatedAt <= STALE_SYNC_MS) continue;
-            if (STATE_SYNCING.equals(state)) {
-                setState(point.id, STATE_FAILED, "sync interrupted · automatic retry queued");
-            } else if (STATE_DELETING.equals(state)) {
-                setState(point.id, STATE_DELETE_FAILED, "delete interrupted · try again");
-            }
-        }
-    }
-
-    private void registerNetworkRecovery() {
-        if (connectivityManager == null) return;
+    private void kick() { worker.execute(this::runSafely); }
+    private void runSafely() {
         try {
-            connectivityManager.registerDefaultNetworkCallback(
-                    new ConnectivityManager.NetworkCallback() {
-                        @Override public void onAvailable(Network network) {
-                            retryPending();
-                        }
-
-                        @Override public void onCapabilitiesChanged(
-                                Network network, NetworkCapabilities capabilities) {
-                            if (capabilities.hasCapability(
-                                    NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                                retryPending();
-                            }
-                        }
-                    });
-        } catch (RuntimeException ignored) {
-            // Manual retry and Activity resume remain available on restricted Android devices.
+            if (inFlight || !hasValidatedInternet()) return;
+            PointLedger.Operation operation = store.ledger().claim(System.currentTimeMillis());
+            if (operation == null) return;
+            inFlight = true; notifyObservers(operation.pointId, "");
+            SupabasePointSync.Listener complete = (ok, message) -> worker.execute(() -> complete(operation, ok, message));
+            if ("delete".equals(operation.kind)) remote.delete(operation.point, complete);
+            else remote.sync(operation.point, complete);
+        } catch (RuntimeException failure) { notifyObservers(-1, context.getString(R.string.data_save_failed)); }
+    }
+    private void complete(PointLedger.Operation operation, boolean success, String message) {
+        try {
+            String category = SupabasePointSync.errorCategory(message);
+            store.ledger().finish(operation.operationId, success, category, message, System.currentTimeMillis());
+            inFlight = false; notifyObservers(operation.pointId, message); runSafely();
+        } catch (RuntimeException failure) {
+            notifyObservers(operation.pointId, context.getString(R.string.data_save_failed));
+            // Retry writing the receipt, not the HTTP request, while this process is alive.
+            worker.schedule(() -> complete(operation, success, message), 5, TimeUnit.SECONDS);
         }
     }
-
-    private String state(long pointId) {
-        return prefs.getString(key(pointId, "state"), "");
-    }
-
-    private void setState(long pointId, String state, String message) {
-        prefs.edit()
-                .putString(key(pointId, "state"), state)
-                .putString(key(pointId, "message"), message == null ? "" : message)
-                .putLong(key(pointId, "updated_at"), System.currentTimeMillis())
-                .apply();
-    }
-
-    private void notifyObservers(long pointId) {
-        String state = pointId < 0L ? "" : state(pointId);
-        String message = pointId < 0L ? "" : prefs.getString(key(pointId, "message"), "");
-        int pending = pendingCountWithoutRecovery();
-        for (Observer observer : observers) {
-            observer.onSyncChanged(pointId, state, message, pending);
-        }
-    }
-
-    private int pendingCountWithoutRecovery() {
-        int count = 0;
-        for (SavedPoint point : pointStore.all()) {
-            if (shouldSync(point.id)) count++;
-        }
-        return count;
-    }
-
-    private static String key(long pointId, String field) {
-        return pointId + "_" + field;
+    private void notifyObservers(long id, String message) {
+        String state = id < 0 ? "" : state(id);
+        // Legacy views still read this non-authoritative projection. The ledger is the source.
+        if (id >= 0) context.getSharedPreferences(PREFS, 0).edit().putString(id + "_state", state)
+                .putString(id + "_message", message).apply();
+        for (Observer observer : observers) observer.onSyncChanged(id, state, message, pendingCount());
     }
 }

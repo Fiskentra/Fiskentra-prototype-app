@@ -13,7 +13,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.SystemClock;
 
 import com.fiskentra.app.FiskentraApplication;
 import com.fiskentra.app.MainActivity;
@@ -26,8 +25,6 @@ import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.weather.WeatherClient;
 
-import java.util.ArrayList;
-import java.util.List;
 
 /** Keeps Flic 2, GPS, local point capture and active trip recording alive screen-off. */
 public final class FiskentraFlicService extends Service implements
@@ -35,14 +32,10 @@ public final class FiskentraFlicService extends Service implements
 
     private static final int NOTIFICATION_ID = 620;
     private static final String CHANNEL_ID = "fiskentra_field_button";
-    private static final long MAX_LOCATION_AGE_MS = 30_000L;
-    private static final long MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS = 30_000L;
-    private static final long MAX_FALLBACK_LOCATION_AGE_MS = 30_000L;
-    private static final long GPS_WAIT_TIMEOUT_MS = 20_000L;
     private static volatile boolean running;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final List<PendingAction> pendingActions = new ArrayList<>();
+    private static final java.util.concurrent.ExecutorService CAPTURE_IO = java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private FiskentraFlic2Manager flicManager;
     private FiskentraLocationManager locationManager;
@@ -65,7 +58,7 @@ public final class FiskentraFlicService extends Service implements
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
         if (PointSyncQueue.STATE_SYNCED.equals(state)) {
             updateNotification(pending == 0
-                    ? "All saved points synced to Fiskentra cloud"
+                    ? getString(R.string.data_no_cloud_operations)
                     : "Point synced · " + pending + " still queued");
         } else if (PointSyncQueue.STATE_FAILED.equals(state)) {
             updateNotification("Point saved locally · automatic retry queued");
@@ -121,7 +114,6 @@ public final class FiskentraFlicService extends Service implements
     @Override public void onDestroy() {
         running = false;
         handler.removeCallbacksAndMessages(null);
-        pendingActions.clear();
         if (locationManager != null) locationManager.stop();
         if (flicManager != null) flicManager.removeListener(this);
         if (syncQueue != null) syncQueue.removeObserver(syncObserver);
@@ -135,43 +127,49 @@ public final class FiskentraFlicService extends Service implements
 
     @Override public void onLocation(Location location) {
         lastLocation = location;
-        if (trackStore != null && trackStore.add(location)) {
-            updateNotification("Trip recording in background · " + trackStore.points().size() + " route points");
-        }
-        if (!isFresh(location) || pendingActions.isEmpty()) return;
-        List<PendingAction> ready = new ArrayList<>(pendingActions);
-        pendingActions.clear();
-        for (PendingAction pending : ready) {
-            if (SystemClock.elapsedRealtime() - pending.receivedAtMs <= GPS_WAIT_TIMEOUT_MS) {
-                saveAction(pending.action, location, false);
-            }
-        }
+        Location copy = new Location(location);
+        CAPTURE_IO.execute(() -> {
+            if (trackStore != null && trackStore.add(copy))
+                updateNotification("Trip recording in background · " + trackStore.points().size() + " route points");
+        });
     }
 
     @Override public void onAction(FiskentraFlic2Manager.Action action) {
-        if (action == FiskentraFlic2Manager.Action.TRACK_TOGGLE) {
-            String message = trackStore.toggleRecording();
-            // Handle hold immediately, even without GPS; never enqueue it as a point.
-            updateNotification(message);
-            flicManager.reportActionResult(action, true, message);
-            return;
-        }
-        Location location = lastLocation != null ? lastLocation : locationManager.getLastLocation();
-        flicManager.reportActionResult(action, false,
-                pointType(action) + " press received · checking GPS");
-        if (isFresh(location)) {
-            saveAction(action, location, false);
-            return;
-        }
-        if (locationAgeMs(location) <= MAX_IMMEDIATE_FALLBACK_LOCATION_AGE_MS) {
-            saveAction(action, location, true);
-            return;
-        }
+        onCapture(action, java.util.UUID.randomUUID().toString(), System.currentTimeMillis());
+    }
 
-        PendingAction pending = new PendingAction(action, SystemClock.elapsedRealtime());
-        pendingActions.add(pending);
-        updateNotification("Button received · waiting for a fresh GPS fix");
-        handler.postDelayed(() -> expirePendingAction(pending), GPS_WAIT_TIMEOUT_MS);
+    @Override public void onCapture(FiskentraFlic2Manager.Action action, String eventId, long occurredAtUtc) {
+        if (action == FiskentraFlic2Manager.Action.TRACK_TOGGLE) {
+            CAPTURE_IO.execute(() -> {
+                try {
+                    String message = trackStore.toggleRecording(eventId, occurredAtUtc);
+                    updateNotification(message);
+                    handler.post(() -> flicManager.reportActionResult(action, true, message));
+                } catch (RuntimeException error) {
+                    handler.post(() -> flicManager.reportActionResult(action, false, getString(R.string.data_save_failed)));
+                }
+            });
+            return;
+        }
+        Location last = lastLocation != null ? lastLocation : locationManager.getLastLocation();
+        Location capturedFix = last == null ? null : new Location(last);
+        CAPTURE_IO.execute(() -> {
+            try {
+                SavedPoint point = pointStore.capture(eventId, occurredAtUtc, pointStore.tripIdAt(occurredAtUtc), pointType(action),
+                        "Captured by Flic 2", capturedFix);
+                if (point == null) return; // An already-deleted event receipt; never recreate it.
+                String message = point.hasLocation() ? getString(R.string.data_saved_device) : getString(R.string.data_no_location);
+                updateNotification(message);
+                handler.post(() -> flicManager.reportActionResult(action, true, message));
+                syncQueue.enqueue(point);
+                if (point.hasLocation()) try { enrichWeatherThenSync(point, pointType(action)); }
+                catch (RuntimeException ignored) { /* The event is already durable; enrichment is optional. */ }
+            } catch (RuntimeException error) {
+                String message = getString(R.string.data_save_failed);
+                updateNotification(message);
+                handler.post(() -> flicManager.reportActionResult(action, false, message));
+            }
+        });
     }
 
     @Override public void onStatus(String status) {
@@ -190,29 +188,17 @@ public final class FiskentraFlicService extends Service implements
         updateNotification("Old queued Flic press ignored safely");
     }
 
-    private void saveAction(
-            FiskentraFlic2Manager.Action action, Location location, boolean cachedLocation) {
-        String type = pointType(action);
-        SavedPoint point = pointStore.add(
-                location.getLatitude(), location.getLongitude(), type,
-                cachedLocation
-                        ? "Captured by Flic 2 with recent cached location"
-                        : "Captured by Flic 2 in background");
-        String message = type + (cachedLocation ? " saved with recent location · " : " saved · ")
-                + coordinateSummary(location);
-        updateNotification(message);
-        flicManager.reportActionResult(action, true, message);
-
-        enrichWeatherThenSync(point, type);
-    }
-
     private void enrichWeatherThenSync(SavedPoint point, String type) {
         weatherClient.fetch(point.latitude, point.longitude, (weather, weatherMessage) -> {
             if (!running) return;
-            SavedPoint enriched = point;
+            SavedPoint enriched = pointStore.find(point.id);
+            if (enriched == null) return;
             if (weather != null) {
-                SavedPoint stored = pointStore.updateWeather(point.id, weather);
-                if (stored != null) enriched = stored;
+                SavedPoint stored;
+                try { stored = pointStore.updateWeather(point.id, weather); }
+                catch (RuntimeException failure) { syncQueue.enqueue(enriched); return; }
+                if (stored == null) return;
+                enriched = stored;
                 updateNotification(type + " saved · " + weather.compactSummary());
             }
 
@@ -221,37 +207,6 @@ public final class FiskentraFlicService extends Service implements
                     ? type + " saved · queued for cloud sync"
                     : type + " saved locally · automatic retry queued");
         });
-    }
-
-    private void expirePendingAction(PendingAction pending) {
-        if (!pendingActions.remove(pending)) return;
-        Location fallback = lastLocation != null ? lastLocation : locationManager.getLastLocation();
-        if (isRecentFallback(fallback)) {
-            saveAction(pending.action, fallback, true);
-            return;
-        }
-        String message = "Flic press not saved · no fresh GPS fix within 20 seconds";
-        updateNotification(message);
-        flicManager.reportActionResult(pending.action, false, message);
-    }
-
-    private boolean isFresh(Location location) {
-        return locationAgeMs(location) <= MAX_LOCATION_AGE_MS;
-    }
-
-    private boolean isRecentFallback(Location location) {
-        return locationAgeMs(location) <= MAX_FALLBACK_LOCATION_AGE_MS;
-    }
-
-    private long locationAgeMs(Location location) {
-        if (location == null) return Long.MAX_VALUE;
-        long elapsedNanos = location.getElapsedRealtimeNanos();
-        if (elapsedNanos > 0L) {
-            long ageNanos = SystemClock.elapsedRealtimeNanos() - elapsedNanos;
-            if (ageNanos < 0L) return Long.MAX_VALUE;
-            return ageNanos / 1_000_000L;
-        }
-        return Math.abs(System.currentTimeMillis() - location.getTime());
     }
 
     private void createNotificationChannel() {
@@ -265,7 +220,8 @@ public final class FiskentraFlicService extends Service implements
     private void enterForeground(String status) {
         Notification notification = notification(status);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+            int types = locationManager.hasPermission() && locationManager.isEnabled()
+                    ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION : 0;
             if (flicManager != null && flicManager.hasPermissions()
                     && flicManager.pairedButtonCount() > 0) {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
@@ -310,13 +266,4 @@ public final class FiskentraFlicService extends Service implements
                 location.getLatitude(), location.getLongitude());
     }
 
-    private static final class PendingAction {
-        final FiskentraFlic2Manager.Action action;
-        final long receivedAtMs;
-
-        PendingAction(FiskentraFlic2Manager.Action action, long receivedAtMs) {
-            this.action = action;
-            this.receivedAtMs = receivedAtMs;
-        }
-    }
 }

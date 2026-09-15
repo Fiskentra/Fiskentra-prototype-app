@@ -19,7 +19,7 @@ val supabaseUrl = localProperties.getProperty(
     "https://dwlbefpmwzmhutlvqfmu.supabase.co"
 )
 val supabasePublishableKey = localProperties.getProperty("SUPABASE_PUBLISHABLE_KEY", "")
-val maptilerApiKey = localProperties.getProperty("MAPTILER_API_KEY", "Po4KLeYIgzOiUCmzXz5z")
+val maptilerApiKey = localProperties.getProperty("MAPTILER_API_KEY", "")
 
 android {
     namespace = "com.fiskentra.app"
@@ -29,8 +29,9 @@ android {
         applicationId = "com.fiskentra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.24-navigation-design"
+        versionCode = 37
+        versionName = "0.25"
+        buildConfigField("String", "GEOCODING_URL", buildConfigString(localProperties.getProperty("GEOCODING_URL", "https://api.maptiler.com/geocoding/")))
         buildConfigField("String", "ROUTING_URL", buildConfigString(localProperties.getProperty("ROUTING_URL", "https://valhalla1.openstreetmap.de/route")))
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(supabaseUrl))

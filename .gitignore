@@ -11,6 +11,7 @@ local.properties
 *.apk
 *.aab
 *.zip
+/artifacts/
 
 # OS files
 .DS_Store
