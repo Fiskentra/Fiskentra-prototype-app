@@ -1,5 +1,8 @@
 <resources>
-    <string name="map_search_title">Search map</string>
+    <string name="map_search_title">Search destination</string>
+    <string name="map_search_address_hint">Address, city or place</string>
+    <string name="map_search_drive">Start driving</string>
+    <string name="map_search_walk">Start walking</string>
     <string name="map_search_close">Close search</string>
     <string name="map_search_hint">Name, type or note</string>
     <string name="map_search_my_points">My points</string>
@@ -26,7 +29,7 @@
     <string name="map_search_save">Save point</string>
     <string name="map_search_navigate">Navigate</string>
     <string name="map_search_choose_destination">Choose destination on map</string>
-    <string name="map_search_area_destination">This is an area center. Choose a destination on the map.</string>
+    <string name="map_search_area_destination">This result covers an area or street. Choose the exact destination on the map.</string>
     <string name="map_search_recent">Recent searches</string>
     <string name="map_search_clear_history">Clear search history</string>
     <string name="map_search_from_center">%1$s from map center</string>

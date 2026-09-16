@@ -94,10 +94,19 @@ public final class MapTilerGeocoding implements PlaceSearchProvider {
                     if (!"Point".equals(geometry.optString("type"))) continue;
                     JSONArray coordinate = geometry.getJSONArray("coordinates");
                     double lon = coordinate.getDouble(0), lat = coordinate.getDouble(1);
-                    String name = feature.optString("text", "").trim(); if (name.isEmpty()) name = feature.optString("place_name", "").trim();
-                    String context = feature.optString("place_name", "");
-                    if (context.startsWith(name + ", ")) context = context.substring(name.length() + 2); else if (context.equals(name)) context = "";
                     JSONArray types = feature.optJSONArray("place_type"); String type = types == null ? "" : types.optString(0, "");
+                    String name = feature.optString("text", "").trim();
+                    String context = feature.optString("place_name", "").trim();
+                    String house = feature.optString("address", "").trim();
+                    if ("address".equals(type)) {
+                        // Keep the provider's local street/house order when it supplies a formatted address.
+                        if (!context.isEmpty()) name = context.split(",", 2)[0].trim();
+                        if (!house.isEmpty() && !java.util.regex.Pattern.compile("(?i)(?<![\\p{L}\\p{N}])" + java.util.regex.Pattern.quote(house) + "(?![\\p{L}\\p{N}])").matcher(name).find()) name = (name + " " + house).trim();
+                        // MapTiler also labels residential street names as address results.
+                        if (house.isEmpty()) type = "road";
+                    }
+                    if (name.isEmpty()) name = context;
+                    if (context.startsWith(name + ", ")) context = context.substring(name.length() + 2); else if (context.equals(name)) context = "";
                     JSONObject properties = feature.optJSONObject("properties");
                     if (properties != null) { String kind = properties.optString("kind", ""); if (!kind.isEmpty()) type += " · " + kind; }
                     double[] bounds = null; JSONArray box = feature.optJSONArray("bbox");

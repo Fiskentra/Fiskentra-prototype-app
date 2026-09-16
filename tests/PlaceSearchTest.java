@@ -13,6 +13,28 @@ public class PlaceSearchTest {
         check(value.latitude == 56.8 && value.longitude == 24.2,"GeoJSON longitude/latitude normalized");
         check(value.name.equals("Озеро & lake") && value.context.equals("Latvia"),"Unicode name/context preserved");
         check(value.areaDestination() && value.bounds()[0] == 24,"area center requires destination choice");
+        String address = VALID.replace("lake.1", "address.1").replace("Озеро & lake", "Main Street").replace("\"water\"", "\"address\"")
+                .replace("\"text\":", "\"address\":\"12A\",\"text\":").replace("Main Street, Latvia", "Main Street 12A, Latvia");
+        PlaceResult home = MapTilerGeocoding.parse(address, 123).get(0);
+        check(home.name.equals("Main Street 12A") && home.context.equals("Latvia"), "house number retained without duplication");
+        check(!home.areaDestination() && home.bounds()!=null, "address with building bounds can start a route");
+        PlaceResult streetOnly=MapTilerGeocoding.parse(address.replace("\"address\":\"12A\",", "").replace("Main Street 12A, Latvia", "Main Street, Latvia"), 1).get(0);
+        check(streetOnly.name.equals("Main Street") && streetOnly.areaDestination(), "residential street fallback does not pretend to find a house");
+        PlaceResult us = MapTilerGeocoding.parse(address.replace("Main Street 12A, Latvia", "12A Main Street, Latvia"), 123).get(0);
+        check(us.name.equals("12A Main Street"), "formatted house-first address keeps provider order");
+        PlaceResult fallback = MapTilerGeocoding.parse(address.replace("\"place_name\":\"Main Street 12A, Latvia\",", ""), 123).get(0);
+        check(fallback.name.equals("Main Street 12A"), "house number survives absent formatted address");
+        PlaceResult numberedRoad = MapTilerGeocoding.parse(address.replace("Main Street", "Route 112A").replace("Route 112A 12A, Latvia", "Route 112A, Latvia"), 123).get(0);
+        check(numberedRoad.name.equals("Route 112A 12A"), "house number is not confused with part of a road number");
+        PlaceResult poi = MapTilerGeocoding.parse(VALID.replace("\"water\"", "\"poi\""), 1).get(0);
+        check(!poi.areaDestination(), "point of interest bounds do not block navigation");
+        for(String type:Arrays.asList("water", "municipality", "locality", "road", "postal_code", "poi · lake", "poi · park")) {
+            PlaceResult area=new PlaceResult("test","area", "Area","",type,56,24,null,"",false,1);
+            check(area.areaDestination(), "broad result needs exact destination: "+type);
+        }
+        PlaceResult parking=new PlaceResult("test","parking", "Parking","","poi · car_park",56,24,new double[]{24,56,25,57},"",false,1);
+        check(!parking.areaDestination(), "parking POI is not mistaken for a natural park");
+        check(new PlaceResult("test","unknown","Unknown",""," · ",56,24,new double[]{24,56,25,57},"",false,1).areaDestination(), "empty type tokens safely retain conservative area behavior");
         check(!value.cached && value.fetchedAtUtc == 123,"live result metadata");
         check(value.attribution.contains("MapTiler") && value.attribution.contains("OpenStreetMap"),"attribution fallback");
         double[] box = value.bounds(); box[0] = 0; check(value.bounds()[0] == 24,"bounds immutable");

@@ -14,6 +14,7 @@ import android.text.method.LinkMovementMethod;
 import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -38,13 +39,13 @@ import java.util.concurrent.Executors;
 import org.json.JSONArray;
 
 /** Reusable content for the map's SEARCH overlay; the map owner controls camera and temporary markers. */
-public final class PlaceSearchPanel extends LinearLayout implements AutoCloseable {
+public final class PlaceSearchPanel extends LinearLayout implements AutoCloseable, MapSheet.FooterContent {
     public interface Actions {
         void selectPoint(SavedPoint point);
         void previewPlace(PlaceResult place);
         void clearPreview();
         void savePlace(PlaceResult place);
-        void navigatePlace(PlaceResult place);
+        void navigatePlace(PlaceResult place, String profile);
         void chooseOnMap(PlaceResult place);
         void close();
     }
@@ -63,7 +64,8 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
     private final EditText input;
     private final CheckBox scope;
     private final TextView status, attribution;
-    private final LinearLayout results;
+    private final LinearLayout results, footer;
+    private final ScrollView resultScroll;
     private final Button myPoints, places, retry;
     private boolean online, closed;
     private PlaceResult selected;
@@ -89,22 +91,24 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
         scope = new CheckBox(context); scope.setTextColor(MUTED); scope.setButtonTintList(ColorStateList.valueOf(CYAN)); scope.setMinHeight(dp(48)); addView(scope);
         status = text("", 13); status.setTextColor(MUTED); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); addView(status);
         retry = button(R.string.map_search_retry, this::refresh, false); addView(retry);
-        ScrollView scroll = new ScrollView(context); scroll.setFillViewport(false);
-        results = new LinearLayout(context); results.setOrientation(VERTICAL); scroll.addView(results); addView(scroll, new LayoutParams(-1, dp(190)));
+        resultScroll = new ScrollView(context); resultScroll.setFillViewport(false);
+        results = new LinearLayout(context); results.setOrientation(VERTICAL); resultScroll.addView(results); addView(resultScroll, new LayoutParams(-1, dp(190)));
         attribution = text("", 12); attribution.setTextColor(MUTED); attribution.setLinkTextColor(CYAN); attribution.setMovementMethod(LinkMovementMethod.getInstance()); addView(attribution);
+        footer = new LinearLayout(context); footer.setVisibility(GONE); footer.setPadding(0,dp(8),0,0);
         input.addTextChangedListener(new TextWatcher() { public void beforeTextChanged(CharSequence s, int start, int count, int after) { } public void onTextChanged(CharSequence s, int start, int before, int count) { refresh(); } public void afterTextChanged(Editable e) { } });
-        input.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH) { refresh(); return true; } return false; });
-        scope.setOnCheckedChangeListener((button, checked) -> refresh()); source(false);
+        input.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH) { hideKeyboard(); refresh(); return true; } return false; });
+        scope.setOnCheckedChangeListener((button, checked) -> refresh()); source(true);
     }
     private void source(boolean usePlaces) {
         online = usePlaces; selected = null; controller.cancel();
         myPoints.setBackground(surface(online ? NAVY : BLUE)); places.setBackground(surface(online ? BLUE : NAVY));
+        input.setHint(online ? R.string.map_search_address_hint : R.string.map_search_hint);
         scope.setOnCheckedChangeListener(null); scope.setChecked(false);
         scope.setText(online ? R.string.map_search_area : R.string.map_search_all_points); scope.setEnabled(!online || bounds != null);
         scope.setOnCheckedChangeListener((button, checked) -> refresh()); refresh();
     }
     private void refresh() {
-        if (closed) return; long localToken=++localGeneration; selected = null; actions.clearPreview(); retry.setVisibility(GONE); results.removeAllViews(); attribution.setText("");
+        if (closed) return; long localToken=++localGeneration; selected = null; clearFooter(); actions.clearPreview(); retry.setVisibility(GONE); results.removeAllViews(); attribution.setText("");
         lastPlaces=java.util.Collections.emptyList();lastPlacesGeneration=-1;
         String query = input.getText().toString().trim();
         if (!online) {
@@ -149,6 +153,7 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
         renderPlaces(lastPlaces);
     }
     private void renderPlaces(List<PlaceResult> values){
+        resultScroll.scrollTo(0,0);
         results.removeAllViews();retry.setVisibility(GONE);attribution.setText("");
         status.setText(values.isEmpty() ? R.string.map_search_empty : R.string.map_search_online);
         for (PlaceResult place : values) {
@@ -160,19 +165,42 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
     }
     private void backToPlaces(long request){
         if(closed||!online||request!=localGeneration||request!=lastPlacesGeneration||!lastPlacesQuery.equals(input.getText().toString().trim())||lastPlacesScope!=scope.isChecked())return;
-        selected=null;actions.clearPreview();renderPlaces(lastPlaces);
+        selected=null;clearFooter();actions.clearPreview();renderPlaces(lastPlaces);
     }
     private void select(PlaceResult place) {
-        selected = place; remember(input.getText().toString().trim()); actions.previewPlace(place); results.removeAllViews();
+        resultScroll.scrollTo(0,0);
+        hideKeyboard(); selected = place; clearFooter(); remember(input.getText().toString().trim()); actions.previewPlace(place); results.removeAllViews();
         long request=localGeneration;results.addView(button(R.string.map_search_back_results,()->backToPlaces(request),false),new LayoutParams(-1,-2));
         TextView label = text(place.name, 20); label.setTypeface(Typeface.DEFAULT_BOLD); results.addView(label); results.addView(text(place.context, 14));
         results.addView(button(R.string.map_search_show, () -> actions.previewPlace(place), true), new LayoutParams(-1, -2));
         results.addView(button(R.string.map_search_save, () -> actions.savePlace(place), false), new LayoutParams(-1, -2));
         if (place.areaDestination()) {
             results.addView(text(getContext().getString(R.string.map_search_area_destination), 13));
-            results.addView(button(R.string.map_search_choose_destination, () -> actions.chooseOnMap(place), false), new LayoutParams(-1, -2));
-        } else results.addView(button(R.string.map_search_navigate, () -> actions.navigatePlace(place), false), new LayoutParams(-1, -2));
+            footer.addView(button(R.string.map_search_choose_destination, () -> actions.chooseOnMap(place), true));
+        } else {
+            footer.addView(button(R.string.map_search_drive, () -> actions.navigatePlace(place,"auto"), true));
+            footer.addView(button(R.string.map_search_walk, () -> actions.navigatePlace(place,"pedestrian"), false));
+        }
+        footer.setVisibility(VISIBLE); prepareWidth(getWidth()); footer.requestLayout();
         attribution.setText(Html.fromHtml(place.attribution, Html.FROM_HTML_MODE_LEGACY));
+    }
+    private void hideKeyboard() {
+        InputMethodManager keyboard=(InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if(keyboard!=null)keyboard.hideSoftInputFromWindow(input.getWindowToken(),0);
+        input.clearFocus();
+    }
+    private void clearFooter() { footer.removeAllViews(); footer.setVisibility(GONE); }
+    @Override public View footer() { return footer; }
+    @Override public void prepareWidth(int widthPx) {
+        boolean stack=getResources().getConfiguration().fontScale>1.3f || widthPx<dp(280);
+        int orientation=stack?VERTICAL:HORIZONTAL;
+        if(footer.getOrientation()!=orientation)footer.setOrientation(orientation);
+        for(int i=0;i<footer.getChildCount();i++) {
+            View child=footer.getChildAt(i); LayoutParams old=(LayoutParams)child.getLayoutParams();
+            int width=stack?-1:0, gap=i==0?0:dp(6); float weight=stack?0:1;
+            if(old.width==width&&old.weight==weight&&old.topMargin==(stack?gap:0)&&old.leftMargin==(stack?0:gap))continue;
+            LayoutParams lp=new LayoutParams(width,-2,weight); lp.topMargin=stack?gap:0; lp.leftMargin=stack?0:gap; child.setLayoutParams(lp);
+        }
     }
     private void remember(String query) {
         if (query.isEmpty()) return;

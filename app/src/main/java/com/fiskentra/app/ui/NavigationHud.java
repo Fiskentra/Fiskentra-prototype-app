@@ -14,7 +14,7 @@ final class NavigationHud {
     final LinearLayout turnPanel, routePanel;
     private final TextView distance, maneuver, street, summary, detail;
     private final ImageView arrow, travel;
-    private final Button walking, driving;
+    private final Button walking, driving, destination;
     private final ImageButton sound;
     private final View steps;
     private boolean compact, hasManeuver;
@@ -34,6 +34,9 @@ final class NavigationHud {
         turnPanel.setOnClickListener(v->actions.options());
 
         routePanel=column(); routePanel.setPadding(dp(10),dp(8),dp(10),dp(8)); routePanel.setBackground(surface(12,NAVY,LINE));
+        destination=modeButton("Search address",R.drawable.ic_search,actions::choose); destination.setTextSize(14);
+        destination.setGravity(Gravity.START|Gravity.CENTER_VERTICAL); destination.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        routePanel.addView(destination,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout modes=row(); int modeWidth=dp(context.getResources().getConfiguration().fontScale>1.4f?126:80);
         walking=modeButton("Walking",R.drawable.ic_nav_directions_walk,()->actions.profile("pedestrian"));
         driving=modeButton("Driving",R.drawable.ic_nav_directions_car,()->actions.profile("auto"));
@@ -52,6 +55,7 @@ final class NavigationHud {
         info.setContentDescription("Route summary and options"); info.setOnClickListener(v->{if(steps.isEnabled())actions.options();else actions.choose();}); routePanel.addView(info);
     }
     void profile(String profile,boolean hasDestination,boolean voice) {
+        destination.setText(hasDestination?"Change destination":"Search address");
         select(walking,"pedestrian".equals(profile)); select(driving,"auto".equals(profile));
         travel.setImageResource("auto".equals(profile)?R.drawable.ic_nav_directions_car:"pedestrian".equals(profile)?R.drawable.ic_nav_directions_walk:R.drawable.ic_navigation);
         steps.setEnabled(hasDestination); steps.setAlpha(hasDestination?1:.45f);
