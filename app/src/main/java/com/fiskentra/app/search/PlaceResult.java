@@ -19,7 +19,21 @@ public final class PlaceResult {
     }
     public double[] bounds() { return bounds == null ? null : bounds.clone(); }
     public boolean areaDestination() {
-        return bounds != null || type.matches(".*(water|lake|river|marine|region|country|landform|municipality|park).*" );
+        String[] kinds = type.toLowerCase(java.util.Locale.ROOT).trim().split("\\s*·\\s*", -1);
+        // A provider bbox also describes individual buildings; it does not imply an area target.
+        if (kinds[0].equals("address")) return false;
+        for (String kind : kinds) {
+            switch (kind.trim()) {
+                case "water": case "lake": case "river": case "marine": case "continental_marine":
+                case "major_landform": case "country": case "region": case "subregion": case "county":
+                case "joint_municipality": case "joint_submunicipality": case "municipality":
+                case "municipal_district": case "locality": case "neighbourhood": case "place":
+                case "postal_code": case "park": case "national_park": case "road": case "street":
+                    return true;
+            }
+        }
+        if (kinds[0].equals("poi")) return false;
+        return bounds != null;
     }
     public static boolean validBounds(double[] b) {
         return b != null && b.length == 4 && FieldNavigation.validCoordinate(b[1], b[0]) && FieldNavigation.validCoordinate(b[3], b[2]) && b[1] <= b[3] && b[0] <= b[2];

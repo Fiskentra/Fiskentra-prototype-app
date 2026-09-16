@@ -127,7 +127,7 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
         header.addView(brand, new LayoutParams(dp(110), dp(36)));
         header.addView(new View(activity), new LayoutParams(0, 1, 1));
         header.addView(iconButton(R.drawable.ic_cloud_sun, "Weather forecast", actions::forecast, false), new LayoutParams(dp(48), dp(48)));
-        header.addView(iconButton(R.drawable.ic_search, "Search saved points or coordinates", this::search, false), new LayoutParams(dp(48), dp(48)));
+        header.addView(iconButton(R.drawable.ic_search, "Search address, place or saved point", this::search, false), new LayoutParams(dp(48), dp(48)));
         addView(header, new LayoutParams(-1, dp(48))); addView(rule());
         LinearLayout signals = row(); signals.setPadding(dp(14), 0, dp(8), 0);
         bluetoothIcon = new ImageView(activity); bluetoothIcon.setImageResource(R.drawable.ic_bluetooth); bluetoothIcon.setColorFilter(0xffffb53e);
@@ -335,10 +335,10 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
         double[] bounds=b==null?null:new double[]{b.getLonWest(),b.getLatSouth(),b.getLonEast(),b.getLatNorth()};
         PlaceSearchPanel panel=new PlaceSearchPanel(activity,filteredPoints,allPoints,center==null?Double.NaN:center.getLatitude(),center==null?Double.NaN:center.getLongitude(),bounds,new PlaceSearchPanel.Actions(){
             public void selectPoint(SavedPoint p){pointMenu(p);}
-            public void previewPlace(PlaceResult p){map.setPreview(placePoint(p));double[] b=p.bounds();if(b!=null)map.showBounds(b[3],b[2],b[1],b[0]);else map.lookAt(p.latitude,p.longitude);}
+            public void previewPlace(PlaceResult p){map.setPreview(placePoint(p));double[] b=p.bounds();if(p.areaDestination()&&b!=null)map.showBounds(b[3],b[2],b[1],b[0]);else map.lookAt(p.latitude,p.longitude);}
             public void clearPreview(){map.setPreview(null);}
             public void savePlace(PlaceResult p){closeOverlay();edit(null,p.latitude,p.longitude);}
-            public void navigatePlace(PlaceResult p){closeOverlay();navigate(placePoint(p));}
+            public void navigatePlace(PlaceResult p,String profile){closeOverlay();navigate(placePoint(p),profile);}
             public void chooseOnMap(PlaceResult p){closeOverlay();map.lookAt(p.latitude,p.longitude);map.setTapToPlace(true);toast(activity.getString(R.string.map_choose_destination_on_map));}
             public void close(){closeOverlay();}
         });showOverlay("SEARCH",panel);
@@ -428,14 +428,18 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
                 }).show();
     }
     private void navigate(SavedPoint point) {
+        navigate(point,routeProfile);
+    }
+    private void navigate(SavedPoint point,String profile) {
         if(point!=null&&!point.hasLocation()){actions.setLocation(point);return;}
         if(point!=null&&backtrack!=null&&backtrack.active()){
-            new AlertDialog.Builder(activity).setTitle(R.string.backtrack_replace_title).setMessage(R.string.map_replace_backtrack).setNegativeButton(R.string.map_cancel,null).setPositiveButton(R.string.map_navigate,(d,w)->{backtrack.stop();navigate(point);}).show();return;
+            new AlertDialog.Builder(activity).setTitle(R.string.backtrack_replace_title).setMessage(R.string.map_replace_backtrack).setNegativeButton(R.string.map_cancel,null).setPositiveButton(R.string.map_navigate,(d,w)->{backtrack.stop();navigate(point,profile);}).show();return;
         }
         voice.reset();
+        routeProfile=profile; map.setDirectGuidance("direct".equals(profile));
         destination = point; arrived = false; map.setDestination(point);
         routing.cancel(); roadRoute=null; roadProgress=null; routeLoading=false; routeRestoring=false; routeError=""; nextRouteAttempt=0; offRouteSince=0; previousAlong=Double.NaN; map.setRoadRoute(null);
-        SharedPreferences.Editor edit = prefs.edit();
+        SharedPreferences.Editor edit = prefs.edit().putString("route_profile",profile);
         if (point == null) edit.remove("nav_lat").remove("nav_lon").remove("nav_label").remove("nav_id");
         else edit.putString("nav_lat", Double.toString(point.latitude)).putString("nav_lon", Double.toString(point.longitude)).putString("nav_label", point.title).putLong("nav_id",point.id);
         if (point != null) { mode = "Navigation"; edit.putString("panel_mode", mode); }
@@ -481,7 +485,8 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
     }
     private void routeOptions() {
         new AlertDialog.Builder(activity).setTitle("Route options")
-                .setItems(new String[]{"Route overview","Recalculate route","Route steps","Routing information","Show destination","Direct compass guidance"},(d,w)->{
+                .setItems(new String[]{"Route overview","Recalculate route","Route steps","Routing information","Show destination","Direct compass guidance","Change destination"},(d,w)->{
+                    if(w==6){search();return;}
                     if(w==5){changeProfile("direct");return;}
                     if(destination==null){search();return;}
                     if(w==0)map.showRoute();
@@ -540,7 +545,7 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
         } else {
             voice.pause();
             String main=destination==null?"Choose destination":"direct".equals(routeProfile)?metricOne.getText()+" · "+metricTwo.getText():state.getText().toString();
-            hud.summary(main,destination==null?"Hold the map or select a saved point":subtitle.getText().toString());
+            hud.summary(main,destination==null?"Search an address or choose on the map":subtitle.getText().toString());
         }
     }
     private void toggleVoice() { voiceEnabled=!voiceEnabled;prefs.edit().putBoolean("navigation_voice",voiceEnabled).apply();voice.setEnabled(voiceEnabled);updateNavigation(); }
