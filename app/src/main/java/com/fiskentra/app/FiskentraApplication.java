@@ -22,7 +22,6 @@ public final class FiskentraApplication extends Application {
         super.onCreate();
         Flic2Manager.initAndGetInstance(getApplicationContext(), new Handler(Looper.getMainLooper()));
         flicManager = new FiskentraFlic2Manager(this);
-        offlineMapController = new OfflineMapController(this);
         PointSyncQueue.get(this);
     }
 
@@ -30,5 +29,5 @@ public final class FiskentraApplication extends Application {
         return flicManager;
     }
 
-    public OfflineMapController getOfflineMapController() { return offlineMapController; }
+    public OfflineMapController getOfflineMapController() { if(offlineMapController==null)offlineMapController=new OfflineMapController(this);return offlineMapController; }
 }

@@ -46,10 +46,9 @@ import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.WeatherForecast;
 import com.fiskentra.app.model.WeatherSnapshot;
-import com.fiskentra.app.offline.OfflineMapController;
 import com.fiskentra.app.service.FiskentraFlicService;
 import com.fiskentra.app.ui.MapTilerMapView;
-import com.fiskentra.app.ui.FieldMapPanel;
+import com.fiskentra.app.ui.BoatMapPanel;
 import com.fiskentra.app.location.ConnectionAlerts;
 import com.fiskentra.app.ui.DesignScreens;
 import com.fiskentra.app.ui.SwipeSwitchLayout;
@@ -113,7 +112,6 @@ public final class MainActivity extends Activity implements
     private SupabaseAuthManager authManager;
     private PointSyncQueue syncQueue;
     private WeatherClient weatherClient;
-    private OfflineMapController offlineMapController;
     private com.fiskentra.app.debug.MapFrameProfiler mapFrameProfiler;
     private String debugMapDataset="off";
     private SharedPreferences syncPrefs;
@@ -136,9 +134,8 @@ public final class MainActivity extends Activity implements
     private FishingDay designSummaryDay;
     private long calendarMonthMillis;
     private MapTilerMapView activeMapView;
-    private FieldMapPanel fieldPanel;
+    private BoatMapPanel fieldPanel;
     private Location offlineMapCenter;
-    private boolean openDownloadedArea;
     private ConnectionAlerts connectionAlerts;
     private final android.os.Handler fieldHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable fieldTick = new Runnable() {
@@ -156,9 +153,9 @@ public final class MainActivity extends Activity implements
     private View fieldMapScreen() {
         SharedPreferences fieldPrefs = getSharedPreferences("field_map", MODE_PRIVATE);
         if (!fieldPrefs.getBoolean("blue_map_design", false)) {
-            fieldPrefs.edit().putString("style", openDownloadedArea ? selectedMapStyle : MapTilerMapView.STYLE_HYBRID).putBoolean("blue_map_design", true).apply();
+            fieldPrefs.edit().putString("style", MapTilerMapView.STYLE_HYBRID).putBoolean("blue_map_design", true).apply();
         }
-        fieldPanel = new FieldMapPanel(this, selectedMapPoint(), new FieldMapPanel.Actions() {
+        fieldPanel = new BoatMapPanel(this, selectedMapPoint(), new BoatMapPanel.Actions() {
             @Override public void saved(SavedPoint point) { syncPoint(point); }
             @Override public void details(SavedPoint point) { showPointDetails(point); }
             @Override public void editDetails(SavedPoint point) { showCatchDetailsDialog(point); }
@@ -184,10 +181,6 @@ public final class MainActivity extends Activity implements
         });
         activeMapView = fieldPanel.map();
         if(BuildConfig.DEBUG&&!"off".equals(debugMapDataset))fieldPanel.setDebugDataset(debugMapDataset);
-        if (openDownloadedArea) {
-            OfflineMapController.Snapshot area = offlineMapController.snapshot();
-            activeMapView.lookAt(area.centerLatitude, area.centerLongitude); openDownloadedArea = false;
-        }
         updateField();
         SwipeSwitchLayout swipe = new SwipeSwitchLayout(this);
         swipe.configure(true, new SwipeSwitchLayout.Listener() {
@@ -220,10 +213,6 @@ public final class MainActivity extends Activity implements
     private long pendingCatchPhotoPointId = -1L;
     private String pendingGpxDocument;
     private volatile boolean destroyed;
-    private final OfflineMapController.Listener offlineMapListener = () -> runOnUiThread(() -> {
-        if (destroyed) return;
-        if ("offlineMaps".equals(screen) || "mapTools".equals(screen) || "device".equals(screen)) render(screen);
-    });
     private final PointSyncQueue.Observer syncObserver = (pointId, state, message, pending) -> {
         if (destroyed) return;
         runOnUiThread(() -> {
@@ -269,7 +258,7 @@ public final class MainActivity extends Activity implements
         mapPrefs = getSharedPreferences(MAP_PREFS, MODE_PRIVATE);
         userPreferences = new UserPreferences(this);
         flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
-        offlineMapController = ((FiskentraApplication) getApplication()).getOfflineMapController();
+
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
         selectedMapStyle = MapTilerMapView.normalizeStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
@@ -349,8 +338,8 @@ public final class MainActivity extends Activity implements
         super.onStart();
         flicManager.addListener(this);
         syncQueue.addObserver(syncObserver);
-        offlineMapController.addListener(offlineMapListener);
-        offlineMapController.refresh();
+
+
         syncQueue.retryPending();
         if (activeMapView != null) activeMapView.start();
     }
@@ -385,7 +374,7 @@ public final class MainActivity extends Activity implements
         if (activeMapView != null) activeMapView.stop();
         flicManager.removeListener(this);
         syncQueue.removeObserver(syncObserver);
-        offlineMapController.removeListener(offlineMapListener);
+
     }
 
     @Override protected void onDestroy() {
@@ -524,7 +513,7 @@ public final class MainActivity extends Activity implements
             if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
             FishingDay summaryDay="tripSummary".equals(screen)?designSummaryDay:null;List<double[]> track=routeFor(summaryDay,s.tripStarted,s.active?0L:s.tripStopped);s.tripTrack=track;float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if(!com.fiskentra.app.model.FieldNavigation.segmentBreak(p,q)){Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}}
             s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
-            OfflineMapController.Snapshot offline=offlineMapController.snapshot();s.offlinePacks=offline.packCount;s.offlineProgress=offline.progress;s.offlineBytes=offline.completedBytes;s.offlineDownloading=offline.downloading;s.offlineComplete=offline.complete;s.offlineAvailable=offline.available;s.offlineChecked=offline.checked;s.offlineStatus=offline.status;s.offlineStyle=offline.styleName;s.offlineLatitude=offline.centerLatitude;s.offlineLongitude=offline.centerLongitude;s.offlineRadiusKm=offline.radiusKm;
+            s.offlineStatus="Area downloads are unavailable with Google Maps";s.offlineChecked=true;
             s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
         }
         public void go(String target) {if(target.startsWith("auth:"))openAuthForm(target.substring(5));else render(target);}
@@ -534,7 +523,7 @@ public final class MainActivity extends Activity implements
         public void command(String action){
             if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
             if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
-            if(action.startsWith("offlineDownload:")){try{double radius=Double.parseDouble(action.substring(16));offlineMapController.download(offlineMapCenter != null ? offlineMapCenter : lastLocation,selectedMapStyle,radius);}catch(Exception error){Toast.makeText(MainActivity.this,"Offline download could not start",Toast.LENGTH_LONG).show();}return;}
+            if(action.startsWith("offline")){render("offlineMaps");return;}
             switch(action){
                 case "refresh":loadForecast(true);break;
                 case "sync":syncPendingPoints();break;
@@ -545,23 +534,14 @@ public final class MainActivity extends Activity implements
                 case "pair":requestNeededPermissions();flicManager.pairNewButton();break;
                 case "permissions":requestNeededPermissions();break;
                 case "recenter":selectedMapPointId=-1;if(lastLocation!=null&&activeMapView!=null)activeMapView.recenter();else Toast.makeText(MainActivity.this,"Turn on Location and wait for a GPS fix",Toast.LENGTH_LONG).show();break;
-                case "offline":render("offlineMaps");break;
-                case "offlineOpen":
-                    OfflineMapController.Snapshot pack = offlineMapController.snapshot();
-                    if (!pack.complete) break;
-                    String packStyle = MapTilerMapView.STYLE_OUTDOOR;
-                    for (String style : new String[]{MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID, MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN}) if (MapTilerMapView.styleName(style).equals(pack.styleName)) packStyle = style;
-                    getSharedPreferences("field_map", MODE_PRIVATE).edit().putString("style", packStyle).apply();
-                    selectedMapPointId = -1; openDownloadedArea = true; render("map"); break;
-                case "offlinePause":offlineMapController.pause();break;
-                case "offlineResume":offlineMapController.resume();break;
-                case "offlineDelete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete offline area?").setMessage("The online map and your saved points are not removed. Only downloaded map data is deleted.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(dialog,which)->offlineMapController.deleteAll()).show();break;
                 case "exportGpx":exportGpx();break;
                 case "testFlic":flicSetupStep=2;flicSingleTested=false;flicDoubleTested=false;flicHoldTested=false;render("flicSetup");break;
                 case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("map");}break;
                 case "setupBack":flicSetupStep=Math.max(0,flicSetupStep-1);render("flicSetup");break;
                 case "continueLocal":userPreferences.completeOnboarding();render("map");break;
-                case "metric":case "imperial":userPreferences.setUsesImperialUnits(action.equals("imperial"));render(screen);break;
+                case "metric":case "imperial":
+                    if(!"device".equals(screen)&&!"settings".equals(screen))break;
+                    userPreferences.setUsesImperialUnits(action.equals("imperial"));render(screen);break;
                 case "editName":showDisplayNameDialog(read().name);break;
                 case "signout":confirmSignOut();break;
                 case "resend":EditText email=new EditText(MainActivity.this);email.setText(authEmailDraft);resendConfirmation(email);break;
@@ -2188,10 +2168,10 @@ public final class MainActivity extends Activity implements
         card.setBackground(roundRect(SURFACE, 14));
 
         LinearLayout tabs = row();
-        addMapLayerTab(tabs, "OUTDOOR", MapTilerMapView.STYLE_OUTDOOR);
+        addMapLayerTab(tabs, "NORMAL", MapTilerMapView.STYLE_OUTDOOR);
         addMapLayerTab(tabs, "SATELLITE", MapTilerMapView.STYLE_HYBRID);
-        addMapLayerTab(tabs, "TOPO", MapTilerMapView.STYLE_TOPO);
-        addMapLayerTab(tabs, "OCEAN", MapTilerMapView.STYLE_OCEAN);
+        addMapLayerTab(tabs, "TERRAIN", MapTilerMapView.STYLE_TOPO);
+        addMapLayerTab(tabs, "HYBRID", MapTilerMapView.STYLE_OCEAN);
         card.addView(tabs, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
         return card;
@@ -2214,19 +2194,8 @@ public final class MainActivity extends Activity implements
     }
 
     private String layerReadyMessage(String styleId) {
-        String normalized = MapTilerMapView.normalizeStyleId(styleId);
-        if (MapTilerMapView.STYLE_HYBRID.equals(normalized)) {
-            return "Satellite layer ready · aerial imagery with labels";
-        }
-        if (MapTilerMapView.STYLE_TOPO.equals(normalized)) {
-            return "Topographic layer ready · terrain and contour detail";
-        }
-        if (MapTilerMapView.STYLE_OCEAN.equals(normalized)) {
-            return "Ocean layer ready · marine bathymetry; inland depth is not guaranteed";
-        }
-        return "Outdoor layer ready · trails, terrain and contours";
+        return "Google Maps - " + MapTilerMapView.styleName(styleId) + " layer ready";
     }
-
     private View weatherPage() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -3085,19 +3054,19 @@ public final class MainActivity extends Activity implements
 
         LinearLayout units = card();
         units.addView(text("MEASUREMENT UNITS", 11, ACCENT, Typeface.BOLD));
-        units.addView(text("Saved values stay unchanged; only display and catch entry units change.",
+        units.addView(text("Speed: km/h or mil/h. Also changes displayed distance, temperature and catch entry units.",
                 12, MUTED, Typeface.NORMAL));
         units.addView(spacer(12));
         LinearLayout unitChoices = row();
         boolean imperial = userPreferences.usesImperialUnits();
-        Button metric = settingsChoice("METRIC · °C / cm / kg", !imperial);
+        Button metric = settingsChoice("METRIC · km/h", !imperial);
         metric.setOnClickListener(v -> {
             userPreferences.setUsesImperialUnits(false);
             render("settings");
         });
         unitChoices.addView(metric, new LinearLayout.LayoutParams(0, dp(48), 1f));
         unitChoices.addView(spaceWide());
-        Button imperialChoice = settingsChoice("IMPERIAL · °F / in / lb", imperial);
+        Button imperialChoice = settingsChoice("IMPERIAL · mil/h", imperial);
         imperialChoice.setOnClickListener(v -> {
             userPreferences.setUsesImperialUnits(true);
             render("settings");

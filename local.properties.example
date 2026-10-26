@@ -3,6 +3,11 @@ sdk.dir=C:\\Users\\YOUR_NAME\\AppData\\Local\\Android\\Sdk
 
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
+# Enable Maps SDK for Android in the associated Google Cloud project.
+# Restrict this Android key to com.fiskentra.app and your signing certificate SHA-1.
+GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_ANDROID_KEY
+# MapTiler is retained for the existing address-search provider only.
 MAPTILER_API_KEY=YOUR_MAPTILER_CLIENT_KEY
 GEOCODING_URL=https://api.maptiler.com/geocoding/
+# Dormant Walk/Driving implementation; not used by boat navigation.
 ROUTING_URL=https://YOUR_APPROVED_VALHALLA_HOST/route

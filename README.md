@@ -1,4 +1,18 @@
-# Fiskentra v0.25 — field map update
+# Fiskentra - Google Maps and boat navigation
+
+## Current release: 0.27
+
+Compact Google map with top search, continuous compass, measured GPS speed (`km/h` / `mil/h`), settings-only unit selection and approximate boat arrival within 50 m. See [RELEASE_NOTES_0.27.md](RELEASE_NOTES_0.27.md) for the changes, validation and field-test limits.
+
+The active Android app is the Android project in this repository. The field map uses Google Maps SDK for Android; Walk and Driving are disabled. Boat guidance uses the existing direct bearing/distance and recorded-track backtracking. It does not calculate a verified navigable waterway or check depth, shoreline or hazards. Google Maps is the base map, not a marine routing service.
+
+`MainActivity` opens `BoatMapPanel`, with Google overlays drawn by `GoogleMapFeatureRenderer`. The previous `FieldMapPanel` and MapLibre renderer remain dormant source for future work; the active navigation flow does not use them.
+
+Before running, configure `GOOGLE_MAPS_API_KEY` as described under [Google Maps setup](#google-maps-setup). Local GPS capture, saved points, Flic actions and trip storage remain local-first. Google base-map tiles require connectivity; explicit offline area downloads are unavailable for Google Maps. Old provider packs are not Google offline maps.
+
+The version sections below preserve development history and their APKs describe the behavior before this migration.
+
+# Fiskentra v0.25 - field map update
 
 Version **0.25** (versionCode **37**) keeps the app interface, dates and map SDK controls in English. The test phone uses 100% system font size; the app continues to respect Android font accessibility settings.
 
@@ -53,12 +67,12 @@ Native Android MVP/prototype for Fiskentra — an outdoor companion for fishing,
 - Saved screen backfill action to re-sync older local points and mark them as cloud synced.
 - A process-wide sequential sync queue shared by the app and Flic service, preventing duplicate concurrent uploads.
 - Automatic retry when Android validates internet access again, including while the foreground Flic service is active.
-- Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on the selected MapTiler layer.
+- Saved point map action: tap a saved point or `OPEN MAP` to center and highlight it on Google Maps.
 - Normal Map prioritizes the selected point, then live GPS, then the newest saved point; it avoids opening between unrelated distant saved locations.
-- Selectable MapTiler Outdoor, Satellite/Hybrid, Topographic and Ocean maps powered by MapLibre Native Android.
+- Selectable Normal, Satellite, Terrain and Hybrid Google Maps layers powered by Maps SDK for Android; older saved layer preferences migrate to their Google equivalents.
 - The selected layer persists across app restarts, while Fiskentra overlays keep current position, track, saved points and selected point visible on every layer.
-- Explicit 2, 5 or 10 km offline-area download for the selected map style, with progress, pause/resume and delete controls.
-- Map loading and failure status is shown without exposing the MapTiler API key.
+- Explicit offline-area download is unavailable for Google Maps. Saved points, recorded tracks and GPS capture still work without internet.
+- Map loading and configuration status is shown without exposing API keys.
 - Optional Supabase email/password registration and sign-in; local Flic, GPS, map and journal features remain available without an account.
 - Full-page Sign Up and Sign In forms with confirmation-email resend, password visibility, safe inline validation and password recovery.
 - Email confirmation and password-reset links can return directly to Fiskentra through the private Android callback `com.fiskentra.app://auth/callback`.
@@ -187,47 +201,42 @@ If pairing says the button is busy with another device, temporarily disconnect i
 4. Run on a physical Android phone. BLE and real GPS are much easier to validate on hardware than an emulator.
 5. Grant Location and Nearby Devices permissions.
 
-A debug APK has been successfully compiled with Android SDK 35, the Android Gradle Plugin's default Build Tools and the Android Studio bundled JDK. The project uses MapLibre Native Android for the real map view.
+A debug APK is built using Android SDK 35 and JDK 21. Run `scripts/Build-Android.ps1` to compile and lint the active project.
 
-If Android Studio fails right after the MapTiler update, make sure `MapTilerMapView.java` imports `org.maplibre.android.*`, not the old `com.mapbox.mapboxsdk.*` package. Current MapLibre Native Android uses the `org.maplibre.android` namespace.
+## Google Maps setup
 
-## MapTiler fishing map
+1. In Google Cloud Console, choose a project with billing enabled and enable **Maps SDK for Android**.
+2. Create an API key restricted to Android apps: package `com.fiskentra.app` plus the SHA-1 fingerprint of the signing certificate. Use the debug certificate for local builds and the Play App Signing certificate for Play releases.
+3. Restrict the key to **Maps SDK for Android**. No Google Directions or Navigation SDK is used for boat guidance.
+4. Add `GOOGLE_MAPS_API_KEY=YOUR_KEY` to ignored `local.properties` or `maps.local.properties`. Alternatively set the `GOOGLE_MAPS_API_KEY` environment variable. Resolution order is `maps.local.properties`, `local.properties`, then the environment; empty values are skipped. Keep the existing `sdk.dir` and other service configuration.
+5. Sync Gradle, rebuild and run on an Android device or emulator with Google Play services. An empty key permits building but cannot load Google base-map tiles.
 
-The first launch map stack is MapLibre Native Android + MapTiler Outdoor. MapLibre embeds the interactive map view inside the native Android app. v0.11 uses the current MapTiler v4 styles and lets the user switch between them:
+Gradle inserts the key into the manifest's `com.google.android.geo.API_KEY` metadata and exposes `BuildConfig.GOOGLE_MAPS_API_KEY` for configuration checks. Do not commit real keys. Google authorization also checks that billing, enabled API, package and signing certificate match.
 
-```text
-https://api.maptiler.com/maps/<style-id>/style.json?key=<MAPTILER_API_KEY>
-```
-
-| Layer | MapTiler style | Intended use |
-|---|---|---|
-| Outdoor | `outdoor-v4` | Trails, outdoor landmarks, terrain and contours |
-| Satellite | `hybrid-v4` | Aerial imagery with labels and roads |
-| Topographic | `topo-v4` | General topographic detail |
-| Ocean | `ocean-v4` | Marine seabed and bathymetry; inland lake depth is not guaranteed |
-
-`local.properties.example` includes `MAPTILER_API_KEY`. You can keep the supplied prototype key or replace it with another MapTiler key in your local `local.properties`. Gradle exposes it to `BuildConfig.MAPTILER_API_KEY`.
-
-The Android dependency is:
+The pinned Android dependency is:
 
 ```kotlin
-implementation("org.maplibre.gl:android-sdk:13.4.1")
+implementation("com.google.android.gms:play-services-maps:20.1.0")
 ```
 
-After changing this dependency, run **File -> Sync Project with Gradle Files**, then **Build -> Clean Project**, then **Rebuild Project**.
+MapLibre remains a dependency of the previous provider's offline-area storage code. MapTiler credentials are retained for the existing address-search provider; they are not used to render the Google base map. Walk/Driving routing code and `ROUTING_URL` are retained for future use and disabled in the current app.
 
 The current fishing map shows:
 
-- Four selectable real base-map layers with the choice saved locally.
+- Normal, Satellite, Terrain and Hybrid Google layers with the choice saved locally.
 - A clear loading or error message when the selected online layer is unavailable.
 - Current phone location.
 - Local trip track.
 - Saved point markers with different colors and letters: `Catch`, `Waypoint`, `Tackle change`, plus older prototype types such as `Sighting`, `Camp`, `Hazard` and `Map`.
 - Compact marker legend on the Map screen.
-- Automatic camera fit around all saved points when the Map tab is opened normally.
+- Camera follow and overview controls.
 - Selected saved point highlight when opened from the Saved screen.
 
-The Ocean layer provides MapTiler's marine bathymetry. v0.19 can cache the selected base style around the current GPS position; dedicated inland lake depth and fishing-zone overlays are still future work.
+Google Maps does not supply the previous Ocean bathymetry layer. Dedicated depth and fishing-zone overlays remain future work. Do not treat the base map or a direct guide line as a verified safe water route. Preserve the SDK's visible Google attribution when placing overlays.
+
+Google Maps does not expose the old provider's downloadable offline-area feature. Fiskentra does not prefetch or bulk-cache Google tiles. Previously downloaded MapTiler packs cannot be used as Google Maps tiles. The offline-map test below applies only to the historical v0.19 MapTiler implementation.
+
+References: [Android setup](https://developers.google.com/maps/documentation/android-sdk/config), [API-key restrictions](https://developers.google.com/maps/api-security-best-practices), [SDK policies and attribution](https://developers.google.com/maps/documentation/android-sdk/policies).
 
 ### v0.19 offline-map test
 
@@ -477,7 +486,7 @@ Delete one point in the app, then run the query again. The Saved screen should s
 
 To verify normal map saved-point markers, create several saved points in different nearby places, then open the Map tab directly from the bottom navigation. The Map screen should fit the camera around all saved points and show every marker in its real location. Marker colors and letters identify the saved point type, and the legend explains the visible types.
 
-To verify selected saved point map opening, open Saved, then tap the point card or `OPEN MAP`. The Map screen should open with `SELECTED SAVED POINT`, center the MapTiler Outdoor map on that one location, and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to the normal all-saved-points view.
+To verify selected saved point map opening, open Saved, then tap the point card or `OPEN MAP`. The Map screen should center Google Maps on that location and show a highlighted marker plus a selected-point details card. `CLEAR` returns the map to its normal view.
 
 If an older app build already removed points from the phone but left rows in Supabase, clean those orphan rows manually by their visible `local_id` values:
 
