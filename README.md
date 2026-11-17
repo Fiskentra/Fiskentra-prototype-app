@@ -6,7 +6,7 @@ Use the map's **+** menu to mark a personal danger point or draw a danger zone. 
 
 Android alerts at 100 m from a point or the nearest edge of a drawn zone. The alert rearms at 130 m. Its rhythm is three 110 ms pulses with 75 ms gaps, followed by a 420 ms pause and one 170 ms pulse. Screen-off monitoring uses the Android location service and requires precise location and notifications.
 
-Build the APK with `scripts/Build-Android.ps1`. The on-device check used test GPS positions on a locked Samsung. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone.
+Build the APK with `scripts/Build-Android.ps1`. The on-device check used test GPS positions on a locked Samsung. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone. The zone samples approached the middle of a drawn polygon side. Drawing, undo, naming, persistence after relaunch and deletion were also checked on the phone.
 
 ## Android 0.28.3 (versionCode 44)
 
