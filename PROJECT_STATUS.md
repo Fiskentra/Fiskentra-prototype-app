@@ -1,6 +1,10 @@
 # Fiskentra Project Status
 
-Current candidate, checked 7 November 2026: **0.28.3 / versionCode 44**. See [README](README.md), [full-backup behavior and verification](RELEASE_NOTES_0.28.3.md), the agreed [Free and Premium split](PRODUCT_TIERS.md) and [closed-beta plan](BETA_ROADMAP.md). APK: `artifacts/Fiskentra-0.28.3-full-backup-debug.apk`.
+The current Android candidate is **0.29.0 / versionCode 45**. It includes personal map hazards and locked-screen proximity alerts. See the [Android 0.29.0 notes](README.md#android-0290-versioncode-45) for the alert behavior and device test. APK file `artifacts/Fiskentra-0.29.0-hazards-debug.apk`.
+
+## Android 0.28.3 full backup
+
+Checked 7 November 2026. See [full-backup behavior and verification](RELEASE_NOTES_0.28.3.md), the agreed [Free and Premium split](PRODUCT_TIERS.md) and [closed-beta plan](BETA_ROADMAP.md). APK file `artifacts/Fiskentra-0.28.3-full-backup-debug.apk`.
 
 Private immutable full backups now include original saved photos, routes, point details and their links, with an explicit enable action and restore from version history. Unfinished tracks restore as saved routes without auto-starting GPS. Account ownership, checksums, staged immutable jobs and local-conflict protection guard the transfer; missing files fail the new copy rather than disappear from it. Background work runs while the process is alive. Old cloud versions survive local deletion; deletion UI, retention pruning and object garbage collection are not implemented.
 

@@ -12,6 +12,10 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.method.LinkMovementMethod;
+import android.text.style.URLSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -213,7 +217,7 @@ final class MapWindLayer implements AutoCloseable {
 
     /** Fixed north-up instrument; weather coordinates select the sample, never its screen position. */
     private static final class WindHud extends LinearLayout {
-        private final TextView speed, direction, age, source, state;
+        private final TextView speed, direction, age, sampleTime, state;
         private final FlowArrow arrow;
         WindHud(Context context) {
             super(context); setOrientation(VERTICAL); setGravity(Gravity.CENTER_HORIZONTAL);
@@ -223,18 +227,40 @@ final class MapWindLayer implements AutoCloseable {
             TextView title=label(10);title.setText(R.string.wind_hud_title);addView(title);
             arrow=new FlowArrow(context);addView(arrow,new LayoutParams(dp(32),dp(32)));
             speed=label(11);speed.setTypeface(Typeface.DEFAULT_BOLD);addView(speed);
-            direction=label(10);addView(direction);source=label(10);addView(source);age=label(10);addView(age);
-            state=label(10);addView(state);setClickable(true);setFocusable(true);
+            direction=label(10);addView(direction);
+            sampleTime=label(10);addView(sampleTime);
+            age=label(10);addView(age);
+            state=label(10);addView(state);
+
+            TextView credit = label(10);
+            SpannableString creditText = new SpannableString(context.getText(R.string.wind_source));
+            creditText.setSpan(new URLSpan("https://open-meteo.com/"), 0, creditText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            credit.setText(creditText);
+            credit.setLinkTextColor(0xff8edaff);
+            credit.setMovementMethod(LinkMovementMethod.getInstance());
+            credit.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+            addView(credit, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+
+            setClickable(true);setFocusable(true);
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
-            setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);unavailable();
+            setDescendantFocusability(FOCUS_BEFORE_DESCENDANTS);unavailable();
         }
         private TextView label(int size){TextView text=new TextView(getContext());text.setTextSize(size);text.setTextColor(0xffeff4ff);text.setGravity(Gravity.CENTER);text.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);return text;}
         private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
-        void unavailable(){arrow.bearing=Float.NaN;arrow.invalidate();speed.setText(R.string.wind_no_speed);direction.setText(R.string.wind_no_direction);source.setText(R.string.wind_source);age.setText(R.string.wind_no_age);state.setText(R.string.wind_waiting);}
+        void unavailable(){
+            arrow.bearing=Float.NaN;arrow.invalidate();
+            speed.setText(R.string.wind_no_speed);
+            direction.setText(R.string.wind_no_direction);
+            sampleTime.setVisibility(GONE);
+            age.setText(R.string.wind_no_age);
+            state.setText(R.string.wind_waiting);
+        }
         void sample(String value,String from,String time,long minutes,float bearing,boolean calm,boolean saved,String status,String description){
             arrow.bearing=calm?Float.NaN:bearing;arrow.invalidate();speed.setText(value);
             direction.setText(calm?getContext().getString(R.string.wind_calm):getContext().getString(R.string.wind_from,from));
-            source.setText(time);age.setText(getResources().getQuantityString(R.plurals.wind_age,(int)minutes,minutes));state.setText(status);
+            sampleTime.setText(time);
+            sampleTime.setVisibility(VISIBLE);
+            age.setText(getResources().getQuantityString(R.plurals.wind_age,(int)minutes,minutes));state.setText(status);
             state.setTextColor(saved?0xffffbd63:0xff35dfd1);setContentDescription(description);
         }
     }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="map_hazards">Danger points &amp; zones</string>
+    <string name="map_hazard_add_point">Add danger point</string>
+    <string name="map_hazard_add_zone">Add danger zone</string>
+    <string name="map_hazard_list_point">Point · %1$s</string>
+    <string name="map_hazard_list_zone">Zone · %1$s</string>
+    <string name="map_hazard_place_point">Tap the map to place the danger point.</string>
+    <string name="map_hazard_place_zone">Tap the map to place the center of the danger zone.</string>
+    <string name="map_hazard_name">Name</string>
+    <string name="map_hazard_name_required">Enter a name</string>
+    <string name="map_hazard_radius">Radius (m)</string>
+    <string name="map_hazard_radius_invalid">Enter a radius of %1$d–%2$d m</string>
+    <string name="map_hazard_point_details">Danger point. Warns within %1$d m.</string>
+    <string name="map_hazard_zone_details">Danger zone with a %1$d m radius. Warns within %2$d m of the boundary or inside the zone.</string>
+    <string name="map_hazard_alert_permissions">To receive vibration alerts, allow precise location and notifications and enable vibration for danger alerts in Android settings.</string>
+    <string name="map_hazard_delete">Delete danger marker</string>
+    <string name="map_hazard_delete_action">Delete</string>
+    <string name="map_hazard_confirm_delete">Delete “%1$s” and its proximity alert?</string>
+    <string name="map_hazard_delete_failed">Could not delete the danger marker. Please try again.</string>
+</resources>

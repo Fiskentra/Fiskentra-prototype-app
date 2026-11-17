@@ -77,4 +77,6 @@
     <string name="backtrack_voice_off">Voice off</string>
     <string name="backtrack_next_section">Show next recorded section</string>
     <string name="map_basemap_retry">Retry basemap</string>
+    <string name="map_basemap_loading">Loading %1$s map…</string>
+    <string name="map_basemap_load_failed">Could not load the %1$s map.</string>
 </resources>

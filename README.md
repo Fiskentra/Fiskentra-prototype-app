@@ -1,6 +1,14 @@
 # Fiskentra - Google Maps and boat navigation
 
-## Current release: 0.28.3 (versionCode 44)
+## Android 0.29.0 (versionCode 45)
+
+Use the map's **+** menu to mark a personal danger point or a circular zone. Zone radius is configurable and defaults to 100 m. Hazards are stored on the device.
+
+Android alerts at 100 m from a point or the outside edge of a zone. The alert rearms at 130 m. Its rhythm is three 110 ms pulses with 75 ms gaps, followed by a 420 ms pause and one 170 ms pulse. Screen-off monitoring uses the Android location service and requires precise location and notifications.
+
+Build the APK with `scripts/Build-Android.ps1`. The on-device check used test GPS positions on a locked Samsung. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone.
+
+## Android 0.28.3 (versionCode 44)
 
 The 7 November 2026 candidate adds private versioned backups of original photo bytes, point details, recorded routes and their links. Use **Saved → SYNC → BACK UP PHOTOS & TRIPS**; on the destination phone, sign into the same account and choose **RESTORE A FULL BACKUP**. Unfinished tracks restore as saved routes without starting recording. Explicit consent enables subsequent backups while Fiskentra is running. See [0.28.3 behavior and verification](RELEASE_NOTES_0.28.3.md).
 

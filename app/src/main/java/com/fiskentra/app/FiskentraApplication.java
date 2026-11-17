@@ -6,6 +6,7 @@ import android.os.Looper;
 
 import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
+import com.fiskentra.app.location.HazardAlerts;
 import com.fiskentra.app.offline.OfflineMapController;
 
 import io.flic.flic2libandroid.Flic2Manager;
@@ -17,6 +18,7 @@ public final class FiskentraApplication extends Application {
     private PointSyncQueue pointSyncQueue;
     private com.fiskentra.app.backend.AccountBackupManager backupManager;
     private com.fiskentra.app.location.ConnectionAlerts connectionAlerts;
+    private HazardAlerts hazardAlerts;
 
     @Override protected void attachBaseContext(android.content.Context base) {
         super.attachBaseContext(AppLanguage.english(base));
@@ -65,5 +67,10 @@ public final class FiskentraApplication extends Application {
     public synchronized com.fiskentra.app.location.ConnectionAlerts getConnectionAlerts() {
         if (connectionAlerts == null) connectionAlerts = new com.fiskentra.app.location.ConnectionAlerts(this);
         return connectionAlerts;
+    }
+
+    public synchronized HazardAlerts getHazardAlerts() {
+        if (hazardAlerts == null) hazardAlerts = new HazardAlerts(this);
+        return hazardAlerts;
     }
 }

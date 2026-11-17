@@ -28,6 +28,9 @@
     <string name="wind_source">Open-Meteo</string>
     <string name="wind_waiting">Waiting</string>
     <string name="wind_full_details">%1$s\n\nSource: Open-Meteo. The indicator is north-up; its arrow points downwind. Wind is sampled at the selected point, otherwise your fresh GPS location or the map centre.</string>
+    <string name="map_depth_attribution">EMODnet Bathymetry</string>
+    <string name="map_sea_marks_attribution">© OpenSeaMap · © OpenStreetMap</string>
+    <string name="map_additional_layers_off">Additional layers are off. Enable them in Map layers.</string>
     <string name="map_ui_default_appearance">Use this appearance for new points of this type (including Flic)</string>
     <string name="map_ui_catch_species">Catch species: %1$s</string>
     <string name="map_ui_all_species">All species</string>

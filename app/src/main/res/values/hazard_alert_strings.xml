@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hazard_notification_channel">Personal hazard alerts</string>
+    <string name="hazard_notification_title">Danger nearby</string>
+    <plurals name="hazard_notification_nearby">
+        <item quantity="one">%1$s and %2$d other hazard</item>
+        <item quantity="other">%1$s and %2$d other hazards</item>
+    </plurals>
+    <string name="hazard_monitoring_title">Fiskentra hazard alerts active</string>
+    <string name="hazard_monitoring_status">Monitoring your saved hazards</string>
+</resources>

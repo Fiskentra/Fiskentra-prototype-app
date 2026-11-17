@@ -11,6 +11,7 @@ import android.widget.*;
 import android.text.InputFilter;
 import com.fiskentra.app.data.*;
 import com.fiskentra.app.location.*;
+import com.fiskentra.app.model.MapHazard;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.FieldNavigation;
 import com.fiskentra.app.navigation.NavigationVoice;
@@ -38,6 +39,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         void details(SavedPoint point);void editDetails(SavedPoint point);void delete(SavedPoint point);void setLocation(SavedPoint point);
         void requestLocation();
         void toggleTrip(); void history(); void offline(); void export(); void navigationChanged(); void forecast();
+        default void hazardsChanged() {}
     }
     private final Activity activity;
     private final Actions actions;
@@ -81,6 +83,10 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private final TrackStore tracks;
     private final SharedPreferences prefs;
     private final MapTilerMapView map;
+    private final MapHazardDialogs hazardDialogs;
+    private final LinearLayout hazardPlacementBanner;
+    private final TextView hazardPlacementHint;
+    private Boolean placeHazardZone;
 
     private final TextView status, gps, speed, mapNotice, navigation, tripInfo, title, subtitle, state, metricOne, metricTwo, metricThree;
     private final TextView metricOneLabel, metricTwoLabel, metricThreeLabel;
@@ -111,7 +117,11 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private float depthOpacity,heatOpacity;
     private String heatSpecies;
     private Set<String> historyIds;
-    private TextView layerNotice,layerAttribution,layerDialogStatus;
+    private static final int DEPTH_CREDIT = 1, SEA_MARKS_CREDIT = 2;
+    // The map panel is recreated on tab changes. Show each credit once per app session.
+    private static int shownMarineCredits;
+    private PopupWindow marineCredits;
+    private TextView layerDialogStatus;
     private AlertDialog layerOptionsDialog;
     private static final int INK = 0xffeff4ff, MUTED = 0xffb7c9e6, NAVY = 0xff001e2e,
             BLUE = 0xff00a7ff, BUTTON = 0xff0059e8, LINE = 0xff53778f, AQUA = 0xff35dfd1;
@@ -130,8 +140,15 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         filter=new MapFilterPolicy(prefs.getString("filter_scope","all"),prefs.getString("filter_trip",""),prefs.getLong("filter_from",0),prefs.getLong("filter_to",Long.MAX_VALUE),prefs.getStringSet("filter_types",new HashSet<>(Arrays.asList(MapFilterPolicy.TYPES))),prefs.getBoolean("filter_favorite",false));
         setOrientation(VERTICAL); setBackgroundColor(NAVY); setFocusableInTouchMode(true);
         stage = new FrameLayout(activity); addView(stage, new LayoutParams(-1, 0, 1));
-        map = new MapTilerMapView(activity); stage.addView(map, new FrameLayout.LayoutParams(-1, -1));
+        String savedStyle = prefs.getString("style", MapTilerMapView.STYLE_OUTDOOR);
+        String baseStyle = MapTilerMapView.normalizeOnlineStyleId(savedStyle);
+        if (!baseStyle.equals(savedStyle)) {
+            prefs.edit().putString("style", baseStyle).apply();
+        }
+        map = new MapTilerMapView(activity, baseStyle, null);
+        stage.addView(map, new FrameLayout.LayoutParams(-1, -1));
         map.setDirectGuidance(true);
+        hazardDialogs = new MapHazardDialogs(activity, map, actions::hazardsChanged);
 
         searchBar=row();searchBar.setMinimumHeight(dp(52));searchBar.setPadding(dp(14),dp(2),dp(2),dp(2));
         searchBar.setBackground(surface(NAVY,24,LINE));searchBar.setElevation(dp(4));
@@ -168,11 +185,19 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         statusChip.addView(signals,new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL|Gravity.START));information.addView(statusChip,new LayoutParams(-1,-2));
         mapNotice=text("Loading map.",12);mapNotice.setPadding(dp(10),dp(6),dp(10),dp(6));mapNotice.setMaxLines(2);mapNotice.setEllipsize(android.text.TextUtils.TruncateAt.END);
         mapNotice.setBackground(surface(NAVY,12,LINE));mapNotice.setOnClickListener(v->signalDetails());information.addView(mapNotice,new LayoutParams(-1,-2));
-        layerNotice=text("",12);layerNotice.setPadding(dp(10),dp(6),dp(10),dp(6));layerNotice.setMaxLines(6);layerNotice.setEllipsize(android.text.TextUtils.TruncateAt.END);layerNotice.setMinHeight(dp(48));layerNotice.setBackground(surface(NAVY,12,LINE));layerNotice.setContentDescription("Map layer status and options");layerNotice.setOnClickListener(v->layerOptions());layerNotice.setVisibility(GONE);information.addView(layerNotice,new LayoutParams(-1,-2));
-        layerAttribution=text("",10);layerAttribution.setPadding(dp(6),dp(3),dp(6),dp(3));layerAttribution.setBackgroundColor(NAVY);layerAttribution.setOnClickListener(v->layerOptions());layerAttribution.setVisibility(GONE);information.addView(layerAttribution,new LayoutParams(-1,-2));
         filterBadge=MapUi.text(activity,"",12,false);filterBadge.setBackground(surface(NAVY,12,LINE));filterBadge.setPadding(dp(8),dp(6),dp(8),dp(6));filterBadge.setOnClickListener(v->filters());filterBadge.setMinHeight(dp(40));filterBadge.setMaxLines(1);filterBadge.setEllipsize(android.text.TextUtils.TruncateAt.END);filterBadge.setVisibility(GONE);
         information.addView(filterBadge,new LayoutParams(-2,-2));
         tripInfo=text("",12);tripInfo.setBackground(surface(NAVY,12,LINE));tripInfo.setPadding(dp(8),dp(6),dp(8),dp(6));tripInfo.setMinHeight(dp(40));tripInfo.setOnClickListener(v->trips());tripInfo.setVisibility(GONE);information.addView(tripInfo,new LayoutParams(-2,-2));
+        hazardPlacementBanner = row();
+        hazardPlacementBanner.setBackground(surface(NAVY, 12, LINE));
+        hazardPlacementBanner.setPadding(dp(8), 0, dp(4), 0);
+        hazardPlacementHint = text("", 13);
+        hazardPlacementHint.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
+        hazardPlacementBanner.addView(hazardPlacementHint, new LayoutParams(0, -2, 1));
+        Button cancelPlacement = button(activity.getString(R.string.map_cancel), this::cancelHazardPlacement);
+        hazardPlacementBanner.addView(cancelPlacement, new LayoutParams(-2, dp(48)));
+        hazardPlacementBanner.setVisibility(GONE);
+        information.addView(hazardPlacementBanner, new LayoutParams(-1, -2));
 
         compass=new CompassDial(activity);compass.setOnClickListener(v->map.north());compass.setContentDescription("Compass heading. Tap for north-up map");
         FrameLayout.LayoutParams compassLp=new FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP|Gravity.END);compassLp.setMargins(0,dp(76),dp(14),0);stage.addView(compass,compassLp);
@@ -198,6 +223,12 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         LayoutParams addLp=new LayoutParams(dp(56),dp(56));addLp.setMarginStart(dp(12));lower.addView(add,addLp);
         stage.addView(lower,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
         tools=new LinearLayout(activity);tools.setOrientation(VERTICAL);
+        ImageButton hazardButton = floatingButton(R.drawable.ic_alert_triangle,
+                activity.getString(R.string.map_hazards), this::showHazards, false);
+        hazardButton.setColorFilter(0xffff9083);
+        LayoutParams hazardButtonLp = new LayoutParams(dp(48), dp(48));
+        hazardButtonLp.bottomMargin = dp(8);
+        tools.addView(hazardButton, hazardButtonLp);
         locateButton=floatingButton(R.drawable.ic_current_location,"Locate me",this::locate,false);tools.addView(locateButton,new LayoutParams(dp(48),dp(48)));
         FrameLayout.LayoutParams toolsLp=new FrameLayout.LayoutParams(dp(48),-2,Gravity.BOTTOM|Gravity.END);toolsLp.setMargins(0,0,dp(18),dp(84));stage.addView(tools,toolsLp);
 
@@ -235,10 +266,20 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
 
         map.setLayers(layers[0],layers[1],layers[2]);
         map.setListener(new MapTilerMapView.Listener(){
-            public void onLayersChanged(){updateLayerNotice();}
+            public void onLayersChanged(){updateLayerDialogStatus();}
             public void onMapStatusChanged(){post(()->{if(!disposed)updateGps(lastPosition);});}
-            public void onPlace(double latitude,double longitude){map.setTapToPlace(false);place(latitude,longitude);}
+            public void onPlace(double latitude, double longitude) {
+                if (placeHazardZone != null) {
+                    boolean zone = placeHazardZone;
+                    cancelHazardPlacement();
+                    hazardDialogs.add(zone, latitude, longitude);
+                } else {
+                    map.setTapToPlace(false);
+                    place(latitude, longitude);
+                }
+            }
             public void onPoint(SavedPoint point){pointMenu(point);}
+            public void onHazard(MapHazard hazard) { if (!debugReadOnly()) hazardDialogs.showDetails(hazard); }
             public void onCameraMode(MapCameraPolicy.Mode value,boolean available){updateLocate(value,available);}
             public void onCameraIdle(){updateOfflineCoverage();}
             public void onCluster(List<SavedPoint> group){
@@ -247,6 +288,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
                 new AlertDialog.Builder(activity).setTitle(group.size()+" points here").setItems(labels,(d,w)->pointMenu(group.get(w))).setNegativeButton("Close",null).show();
             }
         });
+        hazardDialogs.refresh();
         applyFishingLayers();
         sensors = activity.getSystemService(SensorManager.class); rotation = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         if (prefs.contains("nav_lat")) {
@@ -367,12 +409,33 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private String guidanceWaitMessage() { return fresh() ? "Waiting for accurate GPS" : "Waiting for fresh GPS"; }
     private void addMenu() {
         if(debugReadOnly())return;
-        new AlertDialog.Builder(activity).setTitle("Add point").setItems(new String[]{"At my GPS position", "At map center", "Tap anywhere on map", "Enter coordinates"}, (d, which) -> {
+        cancelHazardPlacement();
+        new AlertDialog.Builder(activity).setTitle("Add point").setItems(new String[]{"At my GPS position", "At map center", "Tap anywhere on map", "Enter coordinates",
+                activity.getString(R.string.map_hazard_add_point), activity.getString(R.string.map_hazard_add_zone)}, (d, which) -> {
             if (which == 0) { if (fresh()) edit(null, location.getLatitude(), location.getLongitude()); else { actions.requestLocation(); toast("Waiting for a fresh location"); } }
             if (which == 1) { LatLng center = map.center(); if (center != null) place(center.getLatitude(), center.getLongitude()); }
             if (which == 2) { map.setTapToPlace(true); toast("Tap map to place a point · long press also works"); }
             if (which == 3) coordinates();
+            if (which == 4 || which == 5) beginHazardPlacement(which == 5);
         }).show();
+    }
+    private void showHazards() {
+        if (debugReadOnly()) return;
+        closeOverlay();
+        hazardDialogs.showList(this::beginHazardPlacement);
+    }
+    private void beginHazardPlacement(boolean zone) {
+        closeOverlay();
+        placeHazardZone = zone;
+        map.setTapToPlace(true);
+        hazardPlacementHint.setText(zone ? R.string.map_hazard_place_zone : R.string.map_hazard_place_point);
+        hazardPlacementBanner.setVisibility(VISIBLE);
+    }
+    private void cancelHazardPlacement() {
+        if (placeHazardZone == null) return;
+        placeHazardZone = null;
+        map.setTapToPlace(false);
+        hazardPlacementBanner.setVisibility(GONE);
     }
     private void coordinates() {
         LinearLayout form = form(); EditText lat = input(form, "Latitude −90…90", ""), lon = input(form, "Longitude −180…180", "");
@@ -388,8 +451,11 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private void place(double lat, double lon) {
         if(debugReadOnly())return;
         new AlertDialog.Builder(activity).setTitle(String.format(Locale.US, "%.5f, %.5f", lat, lon))
-                .setItems(new String[]{"Save point…", "Navigate here"}, (d, which) -> {
-                    if (which == 0) edit(null, lat, lon); else navigate(new SavedPoint(-2, lat, lon, 0, "Waypoint", ""));
+                .setItems(new String[]{"Save point…", "Navigate here", activity.getString(R.string.map_hazard_add_point),
+                        activity.getString(R.string.map_hazard_add_zone)}, (d, which) -> {
+                    if (which == 0) edit(null, lat, lon);
+                    else if (which == 1) navigate(new SavedPoint(-2, lat, lon, 0, "Waypoint", ""));
+                    else hazardDialogs.add(which == 3, lat, lon);
                 }).setNegativeButton("Cancel", null).show();
     }
     private void pointMenu(SavedPoint point) {
@@ -535,8 +601,17 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         new AlertDialog.Builder(activity).setTitle("Map layers").setMultiChoiceItems(LAYER_NAMES, layers, (d, index, checked) -> {
             layers[index] = checked; map.setLayers(layers[0], layers[1], layers[2]);
             prefs.edit().putBoolean(LAYER_KEYS[index],checked).apply();applyFishingLayers();
-        }).setNegativeButton("Tools",(d,w)->mapTools()).setNeutralButton("Map types", (d, w) -> new AlertDialog.Builder(activity).setTitle("Base map")
-                .setItems(new String[]{"Normal", "Satellite", "Terrain", "Hybrid"}, (d2, which) -> map.setBaseStyle(new String[]{MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID, MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN}[which])).show()).setPositiveButton("Done", null).show();
+        }).setNegativeButton("Tools",(d,w)->mapTools()).setNeutralButton("Map types", (d, w) -> baseMaps()).setPositiveButton("Done", null).show();
+    }
+    private void baseMaps() {
+        String[] styles = {MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID};
+        String[] names = new String[styles.length];
+        for (int i = 0; i < styles.length; i++) names[i] = MapTilerMapView.styleName(styles[i]);
+        new AlertDialog.Builder(activity).setTitle("Base map")
+                .setSingleChoiceItems(names, Arrays.asList(styles).indexOf(map.getBaseStyle()), (dialog, which) -> {
+                    dialog.dismiss();
+                    map.setBaseStyle(styles[which]);
+                }).setNegativeButton(android.R.string.cancel, null).show();
     }
     private void applyFishingLayers(){
         List<SavedPoint> catches=mapPoints;
@@ -545,21 +620,63 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
             for(SavedPoint point:mapPoints){String species=point.catchDetails==null?"":point.catchDetails.species;if(heatSpecies.equals(species))chosen.add(point);}catches=chosen;
         }
         map.setFishingLayers(layers[3],layers[4],layers[5],layers[6],layers[7],catches,historyTrips,historyIds,depthOpacity,heatOpacity,imperial);
-        updateLayerNotice();
     }
-    private void updateLayerNotice(){
-        if(disposed||layerNotice==null)return;
-        String status=map.fishingLayerStatus();boolean active=layers[3]||layers[4]||layers[5]||layers[6]||layers[7];
-        setTextIfChanged(layerNotice,status);layerNotice.setVisibility(active?VISIBLE:GONE);
-        ArrayList<String> credits=new ArrayList<>();if(layers[3])credits.add("Weather data by Open-Meteo.com");if(layers[4])credits.add("EMODnet Bathymetry");if(layers[5])credits.add("© OpenSeaMap · © OpenStreetMap contributors");
-        setTextIfChanged(layerAttribution,android.text.TextUtils.join(" · ",credits));layerAttribution.setVisibility(credits.isEmpty()?GONE:VISIBLE);
-        if(layerDialogStatus!=null)setTextIfChanged(layerDialogStatus,status.isEmpty()?"Additional layers are off. Enable them in Map layers.":status);
-        updateMapInsets();
+    private void showMarineCredits() {
+        if (disposed || !isShown() || !hasWindowFocus()) {
+            return;
+        }
+        int activeCredits = (layers[4] ? DEPTH_CREDIT : 0) | (layers[5] ? SEA_MARKS_CREDIT : 0);
+        int newCredits = activeCredits & ~shownMarineCredits;
+        if (newCredits == 0) {
+            return;
+        }
+        List<String> credits = new ArrayList<>(2);
+        if ((newCredits & DEPTH_CREDIT) != 0) {
+            credits.add(activity.getString(R.string.map_depth_attribution));
+        }
+        if ((newCredits & SEA_MARKS_CREDIT) != 0) {
+            credits.add(activity.getString(R.string.map_sea_marks_attribution));
+        }
+        TextView notice = text(android.text.TextUtils.join("\n", credits), 12);
+        notice.setPaddingRelative(dp(12), dp(8), dp(12), dp(8));
+        notice.setBackground(surface(NAVY, 12, LINE));
+        notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        if (marineCredits != null) {
+            marineCredits.dismiss();
+        }
+        PopupWindow popup = new PopupWindow(notice, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, false);
+        popup.setTouchable(false);
+        popup.showAsDropDown(searchBar, 0, dp(4), Gravity.END);
+        marineCredits = popup;
+        shownMarineCredits |= newCredits;
+        int timeout = 5000;
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            android.view.accessibility.AccessibilityManager accessibility =
+                    activity.getSystemService(android.view.accessibility.AccessibilityManager.class);
+            if (accessibility != null) {
+                timeout = accessibility.getRecommendedTimeoutMillis(timeout,
+                        android.view.accessibility.AccessibilityManager.FLAG_CONTENT_TEXT);
+            }
+        }
+        ui.postDelayed(() -> {
+            if (marineCredits == popup) {
+                popup.dismiss();
+                marineCredits = null;
+            }
+        }, timeout);
+    }
+    private void updateLayerDialogStatus() {
+        if (disposed || layerDialogStatus == null) {
+            return;
+        }
+        String status = map.fishingLayerStatus();
+        setTextIfChanged(layerDialogStatus, status.isEmpty()
+                ? activity.getString(R.string.map_additional_layers_off) : status);
     }
     private void layerOptions(){
         if(disposed)return;if(layerOptionsDialog!=null){layerOptionsDialog.dismiss();layerOptionsDialog=null;}
         LinearLayout body=new LinearLayout(activity);body.setOrientation(VERTICAL);body.setPadding(dp(20),dp(4),dp(20),dp(12));
-        layerDialogStatus=MapUi.text(activity,"",13,false);body.addView(layerDialogStatus);updateLayerNotice();
+        layerDialogStatus=MapUi.text(activity,"",13,false);body.addView(layerDialogStatus);updateLayerDialogStatus();
         addOpacityControl(body,"Depth opacity",depthOpacity,value->{depthOpacity=value;prefs.edit().putFloat("depth_opacity",value).apply();applyFishingLayers();});
         addOpacityControl(body,"Catch heatmap opacity",heatOpacity,value->{heatOpacity=value;prefs.edit().putFloat("heat_opacity",value).apply();applyFishingLayers();});
         Button species=MapUi.button(activity,R.string.map_filter_types,()->{layerOptionsDialog.dismiss();chooseHeatSpecies();},false);species.setText(activity.getString(R.string.map_ui_catch_species,heatSpecies.isEmpty()?activity.getString(R.string.map_ui_all_species):heatSpecies));body.addView(species);
@@ -617,8 +734,37 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     }
     public void pauseSensors() { sensors.unregisterListener(this); listening = false; voice.setActive(false); invalidateHeading(); }
     private void invalidateHeading(){ui.removeCallbacks(headingExpired);heading=Double.NaN;compass.setHeading(heading);map.setHeading(heading);if(!disposed)updateNavigation();}
-    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); resumeSensors(); }
-    @Override protected void onDetachedFromWindow() { disposed=true;if(layerOptionsDialog!=null)layerOptionsDialog.dismiss();dataGeneration++;dataWorker.shutdownNow();ui.removeCallbacksAndMessages(null);if(backtrack!=null)backtrack.close();pauseSensors(); voice.close(); super.onDetachedFromWindow(); }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        resumeSensors();
+        ui.post(this::showMarineCredits);
+    }
+    @Override public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        if (hasWindowFocus) {
+            ui.post(this::showMarineCredits);
+        }
+    }
+    @Override protected void onDetachedFromWindow() {
+        hazardDialogs.close();
+        disposed = true;
+        if (marineCredits != null) {
+            marineCredits.dismiss();
+            marineCredits = null;
+        }
+        if (layerOptionsDialog != null) {
+            layerOptionsDialog.dismiss();
+        }
+        dataGeneration++;
+        dataWorker.shutdownNow();
+        ui.removeCallbacksAndMessages(null);
+        if (backtrack != null) {
+            backtrack.close();
+        }
+        pauseSensors();
+        voice.close();
+        super.onDetachedFromWindow();
+    }
     @Override public void onSensorChanged(SensorEvent event) {
         long now = android.os.SystemClock.elapsedRealtime();
         if(!listening)return;
@@ -688,11 +834,14 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         setTextIfChanged(gps,compactGps);gps.setTextColor(state==LocationQualityPolicy.State.FRESH?MUTED:0xffffb53e);
         updateSpeed(state==LocationQualityPolicy.State.FRESH?fix:null);
         String signalDescription=lastSignals+". "+label+". Speed "+speed.getText();if(!android.text.TextUtils.equals(statusChip.getContentDescription(),signalDescription))statusChip.setContentDescription(signalDescription);
-        String notice=map.getMapStatus();if(state!=LocationQualityPolicy.State.FRESH)notice=label;else if(!fine)notice=activity.getString(R.string.map_gps_approximate);else if(fix.hasAccuracy()&&fix.getAccuracy()>25)notice=activity.getString(R.string.map_gps_low,MapUi.distance(fix.getAccuracy(),imperial));
+        String gpsNotice="";if(state!=LocationQualityPolicy.State.FRESH)gpsNotice=label;else if(!fine)gpsNotice=activity.getString(R.string.map_gps_approximate);else if(fix.hasAccuracy()&&fix.getAccuracy()>25)gpsNotice=activity.getString(R.string.map_gps_low,MapUi.distance(fix.getAccuracy(),imperial));
+        String notice=map.getMapStatus();
+        if(!gpsNotice.isEmpty())notice=notice.isEmpty()?gpsNotice:notice+"\n"+gpsNotice;
         setTextIfChanged(mapNotice,notice);mapNotice.setVisibility(notice.isEmpty()?GONE:VISIBLE);updateOfflineCoverage();
     }
     private void updateLocate(MapCameraPolicy.Mode value,boolean available){if(locateButton==null)return;locateButton.setImageResource(value==MapCameraPolicy.Mode.FOLLOW_HEADING?R.drawable.ic_navigation:R.drawable.ic_current_location);locateButton.setColorFilter(value==MapCameraPolicy.Mode.FREE?INK:BLUE);locateButton.setContentDescription(activity.getString(value==MapCameraPolicy.Mode.FREE?R.string.map_camera_free:value==MapCameraPolicy.Mode.FOLLOW_HEADING?R.string.map_camera_heading:available?R.string.map_camera_position:R.string.map_heading_unavailable));}
     private void showOverlay(String kind,View content){
+        cancelHazardPlacement();
         if(sheet!=null)removeSheet(true);
         overlayMode=kind;overlayFocus=activity.getCurrentFocus();sheet=new MapSheet(activity,this::closeOverlay);sheet.content(content);
         if("SEARCH".equals(kind))sheet.setExpanded(true);
@@ -711,9 +860,10 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         if(!wasSearch&&overlayFocus!=null&&overlayFocus!=searchInput)overlayFocus.requestFocus();overlayFocus=null;
         renderPanel();updateMapInsets();
     }
-    private void closeOverlay(){removeSheet(true);map.setTapToPlace(false);updateOfflineCoverage();}
+    private void closeOverlay(){cancelHazardPlacement();removeSheet(true);map.setTapToPlace(false);updateOfflineCoverage();}
     private void hideSearchKeyboard(){activity.getSystemService(android.view.inputmethod.InputMethodManager.class).hideSoftInputFromWindow(searchInput.getWindowToken(),0);}
     public boolean handleBack(){
+        if (placeHazardZone != null) { cancelHazardPlacement(); return true; }
         if(sheet==null)return false;
         View focus=activity.getCurrentFocus();
         if(focus instanceof EditText){focus.clearFocus();hideSearchKeyboard();if(focus==searchInput)closeOverlay();return true;}
@@ -735,9 +885,9 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         tools.setVisibility(sheet==null?VISIBLE:GONE);map.setControlInsets(safeTop,bottom+dp(8));
     }
     private void mapTools(){
-        new AlertDialog.Builder(activity).setTitle("Map tools").setItems(new String[]{"Point filters","Trip & recording","Trip details","Trip events","Map workspace","Weather & forecast","Connections & GPS","Offline maps","Layer options & sources"},(d,w)->{
+        new AlertDialog.Builder(activity).setTitle("Map tools").setItems(new String[]{"Point filters","Trip & recording","Trip details","Map workspace","Connections & GPS","Offline maps","Layer options & sources"},(d,w)->{
             if(w==0)filters();else if(w==1)trips();else if(w==2){mode=tracks.isActive()?"Track":"Trip";renderPanel();if(card.getParent() instanceof ViewGroup)((ViewGroup)card.getParent()).removeView(card);showOverlay("TRIP",card);}
-            else if(w==3)events();else if(w==4)modeMenu();else if(w==5)actions.forecast();else if(w==6)signalDetails();else if(w==7)offline();else layerOptions();
+            else if(w==3)modeMenu();else if(w==4)signalDetails();else if(w==5)offline();else layerOptions();
         }).show();
     }
     private void filters(){MapFilterPanel body=new MapFilterPanel(activity,filter,allPoints,currentTrip,new FishingDayStore(activity).all(),new MapFilterPanel.Actions(){public void apply(MapFilterPolicy value){applyFilter(value);}public void list(){visiblePoints();}});showOverlay("FILTERS",body);}

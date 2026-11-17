@@ -38,12 +38,14 @@ import com.fiskentra.app.backend.PointSyncQueue;
 import com.fiskentra.app.backend.CloudDataPolicy;
 import com.fiskentra.app.backend.AccountBackupManager;
 import com.fiskentra.app.data.FishingDayStore;
+import com.fiskentra.app.data.MapHazardStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.data.UserPreferences;
 import com.fiskentra.app.export.GpxExporter;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
+import com.fiskentra.app.location.HazardAlerts;
 import com.fiskentra.app.model.FishingDay;
 import com.fiskentra.app.model.FieldAccessPolicy;
 import com.fiskentra.app.model.CatchDetails;
@@ -81,6 +83,7 @@ public final class MainActivity extends ComponentActivity implements
     private static final int REQUEST_PERMISSIONS = 1001;
     private static final int REQUEST_CATCH_PHOTO = 1002;
     private static final int REQUEST_CREATE_GPX = 1003;
+    private static final int REQUEST_HAZARD_PERMISSIONS = 1004;
     private static final int BG = Color.rgb(0, 21, 34);
     private static final int SURFACE = Color.rgb(6, 27, 43);
     private static final int SURFACE_2 = Color.rgb(10, 34, 53);
@@ -113,6 +116,9 @@ public final class MainActivity extends ComponentActivity implements
     private FishingDayStore fishingDayStore;
     private TrackStore trackStore;
     private FiskentraLocationManager locationManager;
+    private HazardAlerts hazardAlerts;
+    private boolean hazardPermissionsRequested;
+    private boolean fieldLocationEnabled;
     private FiskentraFlic2Manager flicManager;
     private SupabaseConnection supabaseConnection;
     private SupabaseAuthManager authManager;
@@ -149,7 +155,16 @@ public final class MainActivity extends ComponentActivity implements
     private ConnectionAlerts connectionAlerts;
     private final android.os.Handler fieldHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable fieldTick = new Runnable() {
-        @Override public void run() { updateField(); fieldHandler.postDelayed(this, 3000); }
+        @Override public void run() {
+            boolean enabled = locationManager.isEnabled();
+            if (fieldLocationEnabled != enabled) {
+                fieldLocationEnabled = enabled;
+                if (enabled && hazardAlerts.isMonitoringNeeded()) ensureBackgroundService();
+                else if (!enabled) stopBackgroundServiceIfIdle();
+            }
+            updateField();
+            fieldHandler.postDelayed(this, 3000);
+        }
     };
     private void updateField() {
         if (locationManager == null || flicManager == null) return;
@@ -163,7 +178,11 @@ public final class MainActivity extends ComponentActivity implements
     private View fieldMapScreen() {
         SharedPreferences fieldPrefs = getSharedPreferences("field_map", MODE_PRIVATE);
         if (!fieldPrefs.getBoolean("blue_map_design", false)) {
-            fieldPrefs.edit().putString("style", MapTilerMapView.STYLE_HYBRID).putBoolean("blue_map_design", true).apply();
+            SharedPreferences.Editor editor = fieldPrefs.edit().putBoolean("blue_map_design", true);
+            if (!fieldPrefs.contains("style")) {
+                editor.putString("style", MapTilerMapView.STYLE_HYBRID);
+            }
+            editor.apply();
         }
         fieldPanel = new BoatMapPanel(this, selectedMapPoint(), new BoatMapPanel.Actions() {
             @Override public void saved(SavedPoint point) { syncPoint(point); }
@@ -189,6 +208,7 @@ public final class MainActivity extends ComponentActivity implements
             }
             @Override public void export() { exportGpx(); }
             @Override public void navigationChanged() { ensureBackgroundService(); stopBackgroundServiceIfIdle(); }
+            @Override public void hazardsChanged() { updateHazardMonitoring(); }
         });
         activeMapView = fieldPanel.map();
         if(BuildConfig.DEBUG&&!"off".equals(debugMapDataset))fieldPanel.setDebugDataset(debugMapDataset);
@@ -268,6 +288,7 @@ public final class MainActivity extends ComponentActivity implements
         fishingDayStore = new FishingDayStore(this);
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
+        hazardAlerts = HazardAlerts.get(this);
         supabaseConnection = new SupabaseConnection();
         authManager = ((FiskentraApplication) getApplication()).getAuthManager();
         syncQueue = PointSyncQueue.get(this);
@@ -280,7 +301,7 @@ public final class MainActivity extends ComponentActivity implements
         flicManager = ((FiskentraApplication) getApplication()).getFlicManager();
 
         selectedSpecies = weatherPrefs.getString(WEATHER_SPECIES, FishingAdvisor.SPECIES[0]);
-        selectedMapStyle = MapTilerMapView.normalizeStyleId(
+        selectedMapStyle = MapTilerMapView.normalizeOnlineStyleId(
                 mapPrefs.getString(MAP_STYLE, MapTilerMapView.STYLE_OUTDOOR));
         showingWeatherPage = false;
         selectedLogDateMillis = System.currentTimeMillis();
@@ -338,6 +359,7 @@ public final class MainActivity extends ComponentActivity implements
         setIntent(intent);
         applyDebugUiOptions(intent);
         if (isAuthRedirect(intent)) handleAuthRedirect(intent);
+        if (HazardAlerts.ACTION_OPEN_MAP.equals(intent.getAction()) && !"map".equals(screen)) render("map");
     }
     private void applyDebugUiOptions(Intent intent) {
         if(!BuildConfig.DEBUG||intent==null)return;
@@ -371,9 +393,11 @@ public final class MainActivity extends ComponentActivity implements
         updateFlicTestMode();
         if (activeMapView != null) activeMapView.resume();
         if (fieldPanel != null) fieldPanel.resumeSensors();
+        fieldLocationEnabled = locationManager.isEnabled();
         fieldHandler.removeCallbacks(fieldTick); fieldHandler.post(fieldTick);
         if (locationManager.hasPermission()) locationManager.start();
         ensureBackgroundService();
+        stopBackgroundServiceIfIdle();
         if ("saved".equals(screen) || "log".equals(screen) || "beta".equals(screen)) {
             render(screen);
         }
@@ -461,12 +485,14 @@ public final class MainActivity extends ComponentActivity implements
         boolean trackNeeded = trackStore != null && trackStore.isActive();
         boolean buttonNeeded = flicManager != null && flicManager.pairedButtonCount() > 0;
         boolean navigationNeeded = getSharedPreferences("field_map", MODE_PRIVATE).contains("nav_lat");
-        if (!trackNeeded && !buttonNeeded && !navigationNeeded) return;
+        boolean hazardsNeeded = hazardAlerts.isMonitoringNeeded() && locationManager.isEnabled();
+        if (!trackNeeded && !buttonNeeded && !navigationNeeded && !hazardsNeeded) return;
         int capabilities = FieldAccessPolicy.backgroundCapabilities(
                 locationManager.hasPermission(), locationManager.isEnabled(),
                 flicManager.hasPermissions(), buttonNeeded);
         if (capabilities == 0) return;
-        if (FiskentraFlicService.isRunning()) return;
+        if (FiskentraFlicService.isRunning()
+                && (!hazardsNeeded || FiskentraFlicService.hasForegroundLocation())) return;
         try {
             FiskentraFlicService.start(this);
         } catch (RuntimeException error) {
@@ -474,8 +500,33 @@ public final class MainActivity extends ComponentActivity implements
         }
     }
 
+    private void updateHazardMonitoring() {
+        if (!hazardPermissionsRequested && !MapHazardStore.get(this).snapshot().isEmpty()) {
+            ArrayList<String> requested = new ArrayList<>();
+            for (String permission : FieldAccessPolicy.locationPermissionsToRequest(
+                    checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)) {
+                requested.add(permission);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requested.add(Manifest.permission.POST_NOTIFICATIONS);
+            }
+            if (!requested.isEmpty()) {
+                hazardPermissionsRequested = true;
+                requestPermissions(requested.toArray(new String[0]), REQUEST_HAZARD_PERMISSIONS);
+            }
+        }
+        ensureBackgroundService();
+        stopBackgroundServiceIfIdle();
+    }
+
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_HAZARD_PERMISSIONS) {
+            if (locationManager.hasPermission()) locationManager.start();
+            ensureBackgroundService();
+            return;
+        }
         if (requestCode == REQUEST_PERMISSIONS && locationManager.hasPermission()) locationManager.start();
         if (requestCode == REQUEST_PERMISSIONS) {
             flicManager.attachAndConnectPairedButtons();
@@ -548,7 +599,7 @@ public final class MainActivity extends ComponentActivity implements
         public MapTilerMapView map(){MapTilerMapView map=new MapTilerMapView(MainActivity.this,selectedMapStyle,null);activeMapView=map;List<SavedPoint> points=new ArrayList<>(pointStore.all());List<double[]> track=new ArrayList<>(trackStore.points());if("tripSummary".equals(screen)){DesignScreens.State s=read();points.removeIf(p->p.timestamp<s.tripStarted||(!s.active&&s.tripStopped>0&&p.timestamp>s.tripStopped));track=new ArrayList<>(s.tripTrack);map.setData(null,points,track,null);}else map.setData(lastLocation,points,track,selectedMapPoint());return map;}
         public void command(String action){
             if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
-            if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
+            if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeOnlineStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
             if(action.startsWith("offline")){render("offlineMaps");return;}
             switch(action){
                 case "refresh":loadForecast(true);break;
@@ -2194,8 +2245,6 @@ public final class MainActivity extends ComponentActivity implements
         LinearLayout tabs = row();
         addMapLayerTab(tabs, "NORMAL", MapTilerMapView.STYLE_OUTDOOR);
         addMapLayerTab(tabs, "SATELLITE", MapTilerMapView.STYLE_HYBRID);
-        addMapLayerTab(tabs, "TERRAIN", MapTilerMapView.STYLE_TOPO);
-        addMapLayerTab(tabs, "HYBRID", MapTilerMapView.STYLE_OCEAN);
         card.addView(tabs, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
         return card;
@@ -3139,11 +3188,7 @@ public final class MainActivity extends ComponentActivity implements
         explore.addView(spacer(8));
         addSettingsMapLayerRow(explore, new String[] {
                 MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID
-        }, new String[] {"OUTDOOR", "SATELLITE"});
-        explore.addView(spacer(8));
-        addSettingsMapLayerRow(explore, new String[] {
-                MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN
-        }, new String[] {"TOPOGRAPHIC", "OCEAN"});
+        }, new String[] {"NORMAL", "SATELLITE"});
         body.addView(explore, cardMargins());
 
         LinearLayout fish = card();
@@ -3384,6 +3429,7 @@ public final class MainActivity extends ComponentActivity implements
         if (getSharedPreferences("field_map", MODE_PRIVATE).contains("nav_lat")) return;
         if (trackStore != null && trackStore.isActive()) return;
         if (flicManager != null && flicManager.pairedButtonCount() > 0) return;
+        if (hazardAlerts.isMonitoringNeeded() && locationManager.isEnabled()) return;
         FiskentraFlicService.stop(this);
     }
 
@@ -4376,6 +4422,7 @@ public final class MainActivity extends ComponentActivity implements
         runOnUiThread(() -> {
             boolean firstLocation = lastLocation == null;
             lastLocation = location;
+            hazardAlerts.onLocation(location);
             if (trackStore.isActive() && !FiskentraFlicService.isRunning()) dataIo.execute(() -> trackStore.add(new Location(location)));
             if (activeMapView != null && !"tripSummary".equals(screen)) {
                 if (fieldPanel != null) updateField(); else activeMapView.setData(lastLocation, pointStore.all(), trackStore.points(), selectedMapPoint());
