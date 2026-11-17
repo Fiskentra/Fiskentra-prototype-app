@@ -37,6 +37,7 @@ import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.data.UserPreferences;
+import com.fiskentra.app.export.GpxExporter;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.FishingDay;
@@ -56,6 +57,8 @@ import com.fiskentra.app.weather.WeatherClient;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -71,6 +74,7 @@ public final class MainActivity extends Activity implements
 
     private static final int REQUEST_PERMISSIONS = 1001;
     private static final int REQUEST_CATCH_PHOTO = 1002;
+    private static final int REQUEST_CREATE_GPX = 1003;
     private static final int BG = Color.rgb(0, 21, 34);
     private static final int SURFACE = Color.rgb(6, 27, 43);
     private static final int SURFACE_2 = Color.rgb(10, 34, 53);
@@ -149,6 +153,7 @@ public final class MainActivity extends Activity implements
     private boolean flicHoldTested;
     private boolean resumedForTests;
     private long pendingCatchPhotoPointId = -1L;
+    private String pendingGpxDocument;
     private volatile boolean destroyed;
     private final OfflineMapController.Listener offlineMapListener = () -> runOnUiThread(() -> {
         if (destroyed) return;
@@ -431,7 +436,7 @@ public final class MainActivity extends Activity implements
             s.gpsEnabled=gpsManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)||gpsManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER);
             s.active=trackStore.isActive();s.tripStarted=trackStore.startedAt();s.tripStopped=trackStore.stoppedAt();
             if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
-            List<double[]> track=trackStore.points();float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if("tripSummary".equals(screen)&&(p[2]<s.tripStarted||(!s.active&&s.tripStopped>0&&q[2]>s.tripStopped)))continue;Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}
+            FishingDay summaryDay="tripSummary".equals(screen)?designSummaryDay:null;List<double[]> track=routeFor(summaryDay,s.tripStarted,s.active?0L:s.tripStopped);s.tripTrack=track;float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}
             s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
             OfflineMapController.Snapshot offline=offlineMapController.snapshot();s.offlinePacks=offline.packCount;s.offlineProgress=offline.progress;s.offlineBytes=offline.completedBytes;s.offlineDownloading=offline.downloading;s.offlineComplete=offline.complete;s.offlineAvailable=offline.available;s.offlineChecked=offline.checked;s.offlineStatus=offline.status;s.offlineStyle=offline.styleName;s.offlineLatitude=offline.centerLatitude;s.offlineLongitude=offline.centerLongitude;s.offlineRadiusKm=offline.radiusKm;
             s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
@@ -439,7 +444,7 @@ public final class MainActivity extends Activity implements
         public void go(String target) {if(target.startsWith("auth:"))openAuthForm(target.substring(5));else render(target);}
         public void species(String value){selectedSpecies=value;weatherPrefs.edit().putString(WEATHER_SPECIES,value).apply();render(screen);}
         public void trip(FishingDay day){designSummaryDay=day;selectedLogDateMillis=day.startedAt;render("tripSummary");}
-        public MapTilerMapView map(){MapTilerMapView map=new MapTilerMapView(MainActivity.this,selectedMapStyle,null);activeMapView=map;List<SavedPoint> points=new ArrayList<>(pointStore.all());List<double[]> track=new ArrayList<>(trackStore.points());if("tripSummary".equals(screen)){DesignScreens.State s=read();points.removeIf(p->p.timestamp<s.tripStarted||(!s.active&&s.tripStopped>0&&p.timestamp>s.tripStopped));track.removeIf(p->p[2]<s.tripStarted||(!s.active&&s.tripStopped>0&&p[2]>s.tripStopped));map.setData(null,points,track,null);}else map.setData(lastLocation,points,track,selectedMapPoint());return map;}
+        public MapTilerMapView map(){MapTilerMapView map=new MapTilerMapView(MainActivity.this,selectedMapStyle,null);activeMapView=map;List<SavedPoint> points=new ArrayList<>(pointStore.all());List<double[]> track=new ArrayList<>(trackStore.points());if("tripSummary".equals(screen)){DesignScreens.State s=read();points.removeIf(p->p.timestamp<s.tripStarted||(!s.active&&s.tripStopped>0&&p.timestamp>s.tripStopped));track=new ArrayList<>(s.tripTrack);map.setData(null,points,track,null);}else map.setData(lastLocation,points,track,selectedMapPoint());return map;}
         public void command(String action){
             if(action.startsWith("save:")){saveCurrentMoment(action.substring(5));return;}
             if(action.startsWith("style:")){selectedMapStyle=MapTilerMapView.normalizeStyleId(action.substring(6));mapPrefs.edit().putString(MAP_STYLE,selectedMapStyle).apply();render(screen);return;}
@@ -457,6 +462,7 @@ public final class MainActivity extends Activity implements
                 case "offlinePause":offlineMapController.pause();break;
                 case "offlineResume":offlineMapController.resume();break;
                 case "offlineDelete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete offline area?").setMessage("The online map and your saved points are not removed. Only downloaded map data is deleted.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(dialog,which)->offlineMapController.deleteAll()).show();break;
+                case "exportGpx":exportGpx();break;
                 case "testFlic":flicSetupStep=2;flicSingleTested=false;flicDoubleTested=false;flicHoldTested=false;render("flicSetup");break;
                 case "setupNext":if(flicSetupStep<3){flicSetupStep++;render("flicSetup");}else{userPreferences.completeOnboarding();render("map");}break;
                 case "setupBack":flicSetupStep=Math.max(0,flicSetupStep-1);render("flicSetup");break;
@@ -1125,6 +1131,7 @@ public final class MainActivity extends Activity implements
     private void finishActiveTrip() {
         designSummaryDay=null;
         long tripId = trackStore.startedAt();
+        List<double[]> completedRoute = new ArrayList<>(trackStore.points());
         if (trackStore.isActive()) {
             trackStore.stop();
             stopBackgroundServiceIfIdle();
@@ -1134,9 +1141,18 @@ public final class MainActivity extends Activity implements
         if (day != null) {
             FishingDay finished = fishingDayStore.stop();
             if (finished != null) {
+                FishingDay archived = fishingDayStore.updateRoute(finished.id, completedRoute);
+                designSummaryDay = archived == null ? finished : archived;
                 selectedLogDateMillis = finished.startedAt;
                 calendarMonthMillis = firstDayOfMonth(finished.startedAt);
                 captureFishingDayWeather(finished, false);
+            }
+        } else {
+            FishingDay matching = fishingDayForTrip(tripId);
+            if (matching != null) {
+                FishingDay archived = fishingDayStore.updateRoute(matching.id, completedRoute);
+                designSummaryDay = archived == null ? matching : archived;
+                selectedLogDateMillis = matching.startedAt;
             }
         }
         Toast.makeText(this, "Trip saved to your journal", Toast.LENGTH_SHORT).show();
@@ -1678,6 +1694,11 @@ public final class MainActivity extends Activity implements
                 .setPositiveButton("Finish", (dialog, which) -> {
                     FishingDay finished = fishingDayStore.stop();
                     if (finished != null) {
+                        if (trackStore.isActive() && trackStore.startedAt() >= finished.startedAt) {
+                            FishingDay archived = fishingDayStore.updateRoute(
+                                    finished.id, new ArrayList<>(trackStore.points()));
+                            if (archived != null) finished = archived;
+                        }
                         selectedLogDateMillis = finished.startedAt;
                         calendarMonthMillis = firstDayOfMonth(finished.startedAt);
                         captureFishingDayWeather(finished, false);
@@ -1736,11 +1757,102 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CREATE_GPX) {
+            String document = pendingGpxDocument;
+            pendingGpxDocument = null;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null
+                    || document == null) return;
+            writeGpx(data.getData(), document);
+            return;
+        }
         if (requestCode != REQUEST_CATCH_PHOTO) return;
         long pointId = pendingCatchPhotoPointId;
         pendingCatchPhotoPointId = -1L;
         if (resultCode != RESULT_OK || data == null || data.getData() == null || pointId < 0L) return;
         saveSelectedCatchPhoto(pointId, data.getData());
+    }
+
+    private void exportGpx() {
+        long start = trackStore.startedAt();
+        long end = trackStore.isActive() ? 0L : trackStore.stoppedAt();
+        FishingDay day = "tripSummary".equals(screen) ? designSummaryDay : null;
+        if (day != null) {
+            start = day.startedAt;
+            end = day.isActive() ? 0L : day.endedAt;
+        }
+        if (start <= 0L) {
+            Toast.makeText(this, "Record a trip before exporting GPX", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        List<double[]> route = routeFor(day, start, end);
+        List<GpxExporter.Waypoint> waypoints = new ArrayList<>();
+        long effectiveEnd = end <= 0L ? System.currentTimeMillis() : end;
+        for (SavedPoint point : pointStore.all()) {
+            if (point.timestamp < start || point.timestamp > effectiveEnd) continue;
+            String name = point.title;
+            if ((name == null || name.isEmpty()) && point.catchDetails != null
+                    && !point.catchDetails.species.isEmpty()) name = point.catchDetails.species;
+            waypoints.add(new GpxExporter.Waypoint(point.latitude, point.longitude,
+                    point.timestamp, name, point.type, point.note));
+        }
+        if (route.isEmpty() && waypoints.isEmpty()) {
+            Toast.makeText(this, "This trip has no route or saved points to export",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        SimpleDateFormat titleDate = new SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.US);
+        SimpleDateFormat fileDate = new SimpleDateFormat("yyyy-MM-dd-HHmm", Locale.US);
+        pendingGpxDocument = GpxExporter.create("Fiskentra trip · " + titleDate.format(new Date(start)),
+                start, effectiveEnd, route, waypoints);
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        save.addCategory(Intent.CATEGORY_OPENABLE);
+        save.setType("application/gpx+xml");
+        save.putExtra(Intent.EXTRA_TITLE, "Fiskentra-trip-" + fileDate.format(new Date(start)) + ".gpx");
+        try {
+            startActivityForResult(save, REQUEST_CREATE_GPX);
+        } catch (RuntimeException error) {
+            pendingGpxDocument = null;
+            Toast.makeText(this, "No file app is available for GPX export", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void writeGpx(Uri destination, String document) {
+        new Thread(() -> {
+            try (OutputStream output = getContentResolver().openOutputStream(destination, "w")) {
+                if (output == null) throw new IllegalStateException("No output stream");
+                output.write(document.getBytes(StandardCharsets.UTF_8));
+                output.flush();
+                runOnUiThread(() -> Toast.makeText(this, "GPX file saved",
+                        Toast.LENGTH_LONG).show());
+            } catch (Exception error) {
+                runOnUiThread(() -> Toast.makeText(this, "GPX file could not be saved",
+                        Toast.LENGTH_LONG).show());
+            }
+        }, "fiskentra-gpx-export").start();
+    }
+
+    private List<double[]> routeFor(FishingDay day, long start, long end) {
+        List<double[]> source = day != null && !day.route.isEmpty()
+                ? day.route : trackStore.points();
+        long effectiveEnd = end <= 0L ? Long.MAX_VALUE : end;
+        ArrayList<double[]> route = new ArrayList<>();
+        for (double[] point : source) {
+            if (point == null || point.length < 3 || point[2] < start || point[2] > effectiveEnd) continue;
+            route.add(new double[]{point[0], point[1], point[2]});
+        }
+        route.sort((left, right) -> Double.compare(left[2], right[2]));
+        return route;
+    }
+
+    private FishingDay fishingDayForTrip(long startedAt) {
+        if (startedAt <= 0L) return null;
+        long now = System.currentTimeMillis();
+        for (FishingDay day : fishingDayStore.all()) {
+            if (startedAt >= day.startedAt && startedAt <= day.effectiveEnd(now)) return day;
+        }
+        return null;
     }
 
     private static boolean hasSessionOnDate(List<FishingDay> sessions, long date) {
