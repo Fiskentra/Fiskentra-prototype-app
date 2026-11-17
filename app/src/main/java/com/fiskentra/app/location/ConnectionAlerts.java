@@ -12,11 +12,12 @@ public final class ConnectionAlerts {
     private final Context context;
     private Boolean gps, internet;
     private boolean bluetooth;
-    private static ConnectionAlerts instance;
-    public static synchronized ConnectionAlerts get(Context context) { if (instance == null) instance = new ConnectionAlerts(context.getApplicationContext()); return instance; }
+    public static ConnectionAlerts get(Context context) {
+        return ((com.fiskentra.app.FiskentraApplication) context.getApplicationContext()).getConnectionAlerts();
+    }
     private final NotificationManager notifications;
-    private ConnectionAlerts(Context context) {
-        this.context = context;
+    public ConnectionAlerts(Context context) {
+        this.context = context.getApplicationContext();
         notifications = context.getSystemService(NotificationManager.class);
         notifications.createNotificationChannel(new NotificationChannel("field_alerts", "Field connection alerts", NotificationManager.IMPORTANCE_DEFAULT));
     }

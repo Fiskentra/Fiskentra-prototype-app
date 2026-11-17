@@ -1,6 +1,7 @@
 param([ValidateSet('core','auth','setup','details')][string]$Group='core',[string]$Serial=$env:ANDROID_SERIAL,[string[]]$Only)
 $ErrorActionPreference='Stop'
-$adb=Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$adb=Resolve-FiskentraAdb ''
 $adbArgs=@()
 if($Serial){$adbArgs=@('-s',$Serial)}
 & $adb @adbArgs shell input keyevent 224

@@ -1,4 +1,5 @@
 package com.fiskentra.app.ui;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.*;
 import android.location.Location;
@@ -12,6 +13,8 @@ import java.text.DateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 
+// The owning map supplies point actions; a Context-only XML constructor cannot bind them.
+@SuppressLint("ViewConstructor")
 final class PointSheet extends LinearLayout implements MapSheet.Expandable,MapSheet.FooterContent {
     interface Actions{void navigate();void edit();void details();void favorite();void more();}
     private final TextView title,info,details,notes,distance,status,photoError,weight,length,weightLabel,lengthLabel;
@@ -58,12 +61,14 @@ final class PointSheet extends LinearLayout implements MapSheet.Expandable,MapSh
     }
     @Override protected void onMeasure(int width,int height){prepareWidth(MeasureSpec.getSize(width));super.onMeasure(width,height);}
     void bind(SavedPoint p,Location fix,boolean imperial,String syncStatus){
-        title.setText(p.title.isEmpty()?p.type:p.title);info.setText(p.type+" · "+DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(p.timestamp)));
+        title.setText(p.title.isEmpty()?p.type:p.title);info.setText(getContext().getString(R.string.ui_label_value,p.type,DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(p.timestamp))));
         CatchDetails c=p.catchDetails;details.setText(c==null?"":c.species);
         weight.setText(c!=null&&c.weightKg>0?String.format(Locale.getDefault(),imperial?"%.1f lb":"%.1f kg",imperial?c.weightKg*2.2046226218:c.weightKg):"");
         length.setText(c!=null&&c.lengthCm>0?String.format(Locale.getDefault(),imperial?"%.1f in":"%.0f cm",imperial?c.lengthCm/2.54:c.lengthCm):"");
         weight.setVisibility(weight.length()>0?VISIBLE:GONE);weightLabel.setVisibility(weight.getVisibility());length.setVisibility(length.length()>0?VISIBLE:GONE);lengthLabel.setVisibility(length.getVisibility());
-        notes.setText(((c==null||c.notes.isEmpty()?"":c.notes+"\n")+p.note).trim());
+        String catchNotes=c==null?"":c.notes;
+        String combinedNotes=catchNotes.isEmpty()?p.note:p.note.isEmpty()?catchNotes:getContext().getString(R.string.ui_two_lines,catchNotes,p.note);
+        notes.setText(combinedNotes.trim());
         boolean hasLocation=p.hasLocation();navigate.setText(hasLocation?R.string.map_navigate:R.string.map_set_location);favorite.setImageResource(p.favorite?android.R.drawable.btn_star_big_on:android.R.drawable.btn_star_big_off);favorite.setColorFilter(p.favorite?0xff00bfff:0xffb7c9e6);favorite.setContentDescription(getContext().getString(p.favorite?R.string.map_unfavorite:R.string.map_favorite));
         distance.setText(!hasLocation?getContext().getString(R.string.map_no_location):FiskentraLocationManager.isFresh(fix)?getContext().getString(R.string.map_straight_distance,MapUi.distance(FieldNavigation.distance(fix.getLatitude(),fix.getLongitude(),p.latitude,p.longitude),imperial)):getContext().getString(R.string.map_no_distance));status.setText(syncStatus);
         String path=c==null?"":c.localPhotoPath;if(!path.equals(photoPath)){photoPath=path;loadPhoto(path);}setExpanded(expanded);

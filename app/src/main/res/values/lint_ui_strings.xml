@@ -1,0 +1,5 @@
+<resources>
+    <string name="ui_label_value">%1$s · %2$s</string>
+    <string name="ui_three_values">%1$s · %2$s · %3$s</string>
+    <string name="ui_two_lines">%1$s\n%2$s</string>
+</resources>

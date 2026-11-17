@@ -23,7 +23,8 @@ public final class MapCameraPolicy {
         double target=course&&Double.isFinite(bearing)?bearing:sensorReliable?sensor:Double.NaN;
         orientationAvailable=Double.isFinite(target);
         if(!orientationAvailable && mode==Mode.FOLLOW_HEADING)mode=Mode.FOLLOW_POSITION;
-        if(!Double.isFinite(target))return stable;
+        // Keep smoothing history internally, but never expose an old angle as a live heading.
+        if(!Double.isFinite(target))return Double.NaN;
         target=normalize(target);
         if(!Double.isFinite(stable))stable=target;
         else { double delta=delta(stable,target); if(Math.abs(delta)>=5)stable=normalize(stable+delta*.3); }

@@ -7,6 +7,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.R;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -39,14 +40,17 @@ public final class SupabasePointSync {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final SharedPreferences prefs;
     private final ConnectivityManager connectivityManager;
+    private final String localOnlyMessage;
 
     public SupabasePointSync(Context context) {
+        localOnlyMessage = context.getString(R.string.data_local_beta);
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         connectivityManager = (ConnectivityManager) context.getApplicationContext()
                 .getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
     public void sync(SavedPoint point, Listener listener) {
+        if (!CloudDataPolicy.allowsPersonalDataRequests()) { listener.onResult(false, localOnlyMessage); return; }
         if (point == null || !point.hasLocation()) { listener.onResult(false, "Location required; details saved on device"); return; }
         if (!SupabaseConfig.isConfigured()) {
             listener.onResult(false, "Cloud sync skipped: Supabase is not configured");
@@ -84,6 +88,7 @@ public final class SupabasePointSync {
     }
 
     public void delete(SavedPoint point, Listener listener) {
+        if (!CloudDataPolicy.allowsPersonalDataRequests()) { listener.onResult(false, localOnlyMessage); return; }
         if (!SupabaseConfig.isConfigured()) {
             listener.onResult(false, "Cloud delete skipped: Supabase is not configured");
             return;
@@ -99,12 +104,11 @@ public final class SupabasePointSync {
                 URL url = new URL(SupabaseConfig.url()
                         + "/rest/v1/saved_points?select=local_id&device_id=eq." + deviceId
                         + "&local_id=eq." + localId);
-                connection = (HttpURLConnection) url.openConnection();
+                connection = CloudDataPolicy.openConnection(url);
                 connection.setRequestMethod("DELETE");
                 connection.setConnectTimeout(7000);
                 connection.setReadTimeout(7000);
                 connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
-                connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
                 connection.setRequestProperty("X-Device-Id", installId);
                 connection.setRequestProperty("Accept", "application/json");
                 connection.setRequestProperty("Prefer", "return=representation");
@@ -152,13 +156,12 @@ public final class SupabasePointSync {
             byte[] body = payload(point, includeWeather, includeCatchDetails, installId)
                     .getBytes(StandardCharsets.UTF_8);
             URL url = new URL(SupabaseConfig.url() + "/rest/v1/saved_points?on_conflict=id");
-            connection = (HttpURLConnection) url.openConnection();
+            connection = CloudDataPolicy.openConnection(url);
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(4_000);
             connection.setReadTimeout(4_000);
             connection.setDoOutput(true);
             connection.setRequestProperty("apikey", SupabaseConfig.publishableKey());
-            connection.setRequestProperty("Authorization", "Bearer " + SupabaseConfig.publishableKey());
             connection.setRequestProperty("X-Device-Id", installId);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json");

@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Serial)
 $ErrorActionPreference='Stop'
-$adb=Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$adb=Resolve-FiskentraAdb ''
 function Read-Ui {
     $xmlText=(& $adb -s $Serial shell 'uiautomator dump /sdcard/fiskentra-smoke.xml >/dev/null && cat /sdcard/fiskentra-smoke.xml' | Out-String)
     if($LASTEXITCODE -ne 0 -or $xmlText -notmatch '<hierarchy'){throw 'Current UI unavailable'}

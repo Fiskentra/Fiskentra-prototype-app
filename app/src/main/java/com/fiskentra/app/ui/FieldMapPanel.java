@@ -26,14 +26,18 @@ import com.fiskentra.app.offline.OfflineAreaPanel;
 import com.fiskentra.app.offline.OfflineMapController;
 import com.fiskentra.app.search.PlaceResult;
 import com.fiskentra.app.backend.PointSyncQueue;
+import com.fiskentra.app.backend.CloudDataPolicy;
 import java.util.concurrent.*;
 import org.maplibre.android.geometry.LatLng;
 import java.util.*;
 
 /** Compact field workspace; dialogs contain secondary controls so the map stays usable. */
+// Constructed programmatically with its Activity and action owner; never inflated by Android.
+@android.annotation.SuppressLint("ViewConstructor")
 public final class FieldMapPanel extends LinearLayout implements SensorEventListener {
     public interface Actions {
         void saved(SavedPoint point);
+        default void sync(SavedPoint point) { saved(point); }
         void details(SavedPoint point);void editDetails(SavedPoint point);void delete(SavedPoint point);void setLocation(SavedPoint point);
         void requestLocation();
         void toggleTrip(); void history(); void offline(); void export(); void navigationChanged(); void forecast();
@@ -294,11 +298,11 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
         long seconds = start > 0 ? Math.max(0, end - start) / 1000 : 0;
         int catches = 0, count = 0;
         for (SavedPoint p : tripEvents) { count++; if ("Catch".equals(p.type)) catches++; }
-        subtitle.setText(navMode ? ("direct".equals(routeProfile)?"Direct guidance · works offline":"Choose a point to build a route") : compact&&start>0?duration(seconds)+" · "+(trackMode?distance:activity.getString(R.string.map_catch_count,catches)):trackMode ? "Saved locally · " + (paused ? "recording paused" : "GPS track") : start > 0 ? new java.text.SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(start)) : "Your next fishing trip");
+        subtitle.setText(navMode ? ("direct".equals(routeProfile)?"Direct guidance · works offline":"Choose a point to build a route") : compact&&start>0?duration(seconds)+" · "+(trackMode?distance:getResources().getQuantityString(R.plurals.map_catch_count,catches,catches)):trackMode ? "Saved locally · " + (paused ? "recording paused" : "GPS track") : start > 0 ? new java.text.SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(start)) : "Your next fishing trip");
         metricOne.setText(trackMode ? distance : duration(seconds)); metricOneLabel.setText(trackMode ? "Distance" : "Duration");
-        metricTwo.setText(trackMode ? String.format(Locale.US, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : Integer.toString(catches));
+        metricTwo.setText(trackMode ? String.format(Locale.US, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : String.format(Locale.getDefault(),"%d",catches));
         metricTwoLabel.setText(trackMode ? "Trip elapsed" : "Catches");
-        metricThree.setText(Integer.toString(count)); thirdMetric.setVisibility(trackMode || navMode ? GONE : VISIBLE);
+        metricThree.setText(String.format(Locale.getDefault(),"%d",count)); thirdMetric.setVisibility(trackMode || navMode ? GONE : VISIBLE);
         secondary.setText(navMode ? ("direct".equals(routeProfile)?"Show point":"☷ Steps") : trackMode ? (paused ? "▶ Resume" : "Ⅱ Pause") : "☷ Events · " + count);
         secondary.setEnabled(!navMode || destination != null); secondary.setAlpha(secondary.isEnabled() ? 1f : .45f);
         if (trackMode) { secondary.setEnabled(active); secondary.setAlpha(active ? 1f : .45f); }
@@ -384,7 +388,25 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
     }
     private void editSelected(){if(selected==null)return;SavedPoint p=selected;ArrayList<String> labels=new ArrayList<>();labels.add(activity.getString(R.string.map_point_appearance));labels.add(activity.getString(R.string.map_trip_binding));if("Catch".equals(p.type))labels.add(activity.getString(R.string.map_catch_editor));new AlertDialog.Builder(activity).setTitle(R.string.map_point_editor).setItems(labels.toArray(new String[0]),(d,w)->{if(w==0)edit(p,p.latitude,p.longitude);else if(w==1)assignTrip(p);else actions.editDetails(p);}).show();}
     private void assignTrip(SavedPoint p){List<FishingDay> trips=new FishingDayStore(activity).all();ArrayList<String> labels=new ArrayList<>();labels.add(activity.getString(R.string.map_unassigned));for(FishingDay trip:trips)labels.add(java.text.DateFormat.getDateTimeInstance().format(new Date(trip.startedAt)));new AlertDialog.Builder(activity).setTitle(R.string.map_trip_binding).setItems(labels.toArray(new String[0]),(d,w)->dataWorker.execute(()->{try{points.setTripId(p.id,w==0?0:trips.get(w-1).id);ui.post(()->update(lastPosition,lastSignals));}catch(Exception e){ui.post(()->toast(activity.getString(R.string.map_save_failed)));}})).show();}
-    private void pointMore(){if(selected==null)return;SavedPoint p=selected;new AlertDialog.Builder(activity).setItems(new String[]{activity.getString(R.string.map_set_location),activity.getString(R.string.map_retry_sync),activity.getString(R.string.map_delete)},(d,w)->{if(w==0)actions.setLocation(p);else if(w==1)actions.saved(p);else new AlertDialog.Builder(activity).setTitle(R.string.map_delete).setMessage(R.string.map_delete_confirm).setNegativeButton(R.string.map_cancel,null).setPositiveButton(R.string.map_delete,(q,n)->{closeOverlay();if(destination!=null&&destination.id==p.id){navigate(null);toast(activity.getString(R.string.map_target_deleted));}actions.delete(p);}).show();}).show();}
+    private void pointMore(){
+        if(selected==null)return;SavedPoint p=selected;
+        boolean localOnly=CloudDataPolicy.isLocalOnlyBeta();
+        int deleteLabel=localOnly?R.string.data_delete_from_phone:R.string.map_delete;
+        new AlertDialog.Builder(activity).setItems(new String[]{activity.getString(R.string.map_set_location),
+                activity.getString(localOnly?R.string.data_storage_info:R.string.map_retry_sync),activity.getString(deleteLabel)},(d,w)->{
+            if(w==0)actions.setLocation(p);
+            else if(w==1){
+                if(localOnly)new AlertDialog.Builder(activity).setTitle(R.string.data_local_storage_title)
+                        .setMessage(activity.getString(R.string.data_local_storage_summary)+"\n\n"+activity.getString(R.string.data_previous_cloud_notice))
+                        .setPositiveButton(android.R.string.ok,null).show();
+                else actions.sync(p);
+            }else new AlertDialog.Builder(activity).setTitle(deleteLabel)
+                    .setMessage(PointSyncQueue.get(activity).deleteNotice(p))
+                    .setNegativeButton(R.string.map_cancel,null).setPositiveButton(deleteLabel,(q,n)->{
+                        closeOverlay();if(destination!=null&&destination.id==p.id){navigate(null);toast(activity.getString(R.string.map_target_deleted));}actions.delete(p);
+                    }).show();
+        }).show();
+    }
     private void bindPoint(){if(pointSheet!=null&&selected!=null)pointSheet.bind(selected,location,imperial,debugFixture==null?PointSyncQueue.get(activity).pointStatus(selected):activity.getString(R.string.map_debug_readonly));}
     public void openPointForQa(long id){if(com.fiskentra.app.BuildConfig.DEBUG){SavedPoint p=points.find(id);if(p!=null){pointMenu(p);sheet.setExpanded(true);}}}
     private void edit(SavedPoint existing, double lat, double lon) {
@@ -412,7 +434,7 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         };
         icon.setOnItemSelectedListener(changed); color.setOnItemSelectedListener(changed); size.setOnItemSelectedListener(changed); update.run();
-        CheckBox defaults = new CheckBox(activity); defaults.setText("Use this appearance for new points of this type (including Flic)"); form.addView(defaults);
+        CheckBox defaults = new CheckBox(activity); defaults.setText(R.string.map_ui_default_appearance); form.addView(defaults);
         ScrollView scroll = new ScrollView(activity); scroll.addView(form);
         new AlertDialog.Builder(activity).setTitle(existing == null ? "New point" : "Point appearance").setView(scroll).setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
@@ -508,23 +530,23 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
     private String formatDistance(double meters) { return MapUi.distance(meters,imperial); }
     private void updateRoadNavigation() {
         boolean navMode="Navigation".equals(mode);
-        if(navMode) { metricOneLabel.setText("Remaining"); metricTwoLabel.setText("Travel time"); metricOne.setText("—"); metricTwo.setText("—"); subtitle.setText("Valhalla · © OpenStreetMap"); }
+        if(navMode) { metricOneLabel.setText(R.string.map_ui_remaining); metricTwoLabel.setText(R.string.map_ui_travel_time); metricOne.setText(R.string.map_ui_dash); metricTwo.setText(R.string.map_ui_dash); subtitle.setText(R.string.map_ui_route_attribution); }
         compass.setTarget(Double.NaN);
-        if(!fresh()||!location.hasAccuracy()||location.getAccuracy()>50) { navigation.setText("Waiting for accurate GPS\nRoute guidance paused"); if(navMode)state.setText("GPS"); return; }
-        if(routeLoading||routeRestoring) { navigation.setText(roadRoute==null?"Building route…":"Recalculating route…"); if(navMode)state.setText("Loading"); return; }
-        if(roadRoute==null||roadProgress==null) { navigation.setText(routeError.isEmpty()?"Choose a route · tap for options":routeError+"\nTap to retry"); if(navMode)state.setText("No route"); return; }
+        if(!fresh()||!location.hasAccuracy()||location.getAccuracy()>50) { navigation.setText(R.string.map_ui_guidance_paused); if(navMode)state.setText(R.string.map_ui_gps); return; }
+        if(routeLoading||routeRestoring) { navigation.setText(roadRoute==null?R.string.map_ui_building_route:R.string.map_ui_recalculating_route); if(navMode)state.setText(R.string.map_ui_loading); return; }
+        if(roadRoute==null||roadProgress==null) { navigation.setText(routeError.isEmpty()?activity.getString(R.string.map_ui_choose_route):activity.getString(R.string.map_ui_retry_error,routeError)); if(navMode)state.setText(R.string.map_ui_no_route); return; }
         RoadRoute.Progress progress=roadProgress;
-        if(progress.offRoute>Math.max(45,location.getAccuracy()*2)) { navigation.setText("Off route · "+formatDistance(progress.offRoute)+"\n"+(lastSignals.contains("Internet · offline")?"Internet needed to recalculate":"Recalculating when GPS settles")); if(navMode) {state.setText("Off route");subtitle.setText(routeError.isEmpty()?"ETA paused · off route":routeError);} return; }
+        if(progress.offRoute>Math.max(45,location.getAccuracy()*2)) { navigation.setText(activity.getString(R.string.map_ui_off_route_detail,formatDistance(progress.offRoute),activity.getString(lastSignals.contains("Internet · offline")?R.string.map_ui_recalculate_online:R.string.map_ui_recalculate_gps))); if(navMode) {state.setText(R.string.map_ui_off_route);subtitle.setText(routeError.isEmpty()?activity.getString(R.string.map_ui_eta_paused):routeError);} return; }
         RoadRoute.Step step=roadRoute.steps.get(progress.nextStep); RoadRoute.Coordinate turn=roadRoute.shape.get(step.begin);
         compass.setTarget(FieldNavigation.bearing(location.getLatitude(),location.getLongitude(),turn.lat,turn.lon));
         double gap=roadRoute.destinationGap(); boolean reached=progress.atEnd && location.getAccuracy()<=25;
-        navigation.setText(reached?(gap>30?"Route ends here\nPoint is "+formatDistance(gap)+" away":"You have arrived") : step.arrow()+"  In "+formatDistance(progress.toTurn)+"\n"+step.instruction);
+        navigation.setText(reached?(gap>30?activity.getString(R.string.map_ui_route_ends,formatDistance(gap)):activity.getString(R.string.map_ui_arrived)) : activity.getString(R.string.map_ui_turn,step.arrow(),formatDistance(progress.toTurn),step.instruction));
         if(reached&&!arrived) { arrived=true; toast(gap>30?"End of mapped route; destination is off the road":"You have arrived at your destination"); }
         if(navMode) {
-            metricOne.setText(formatDistance(progress.remainingMeters)); metricTwo.setText(reached?"0 min":Math.max(1,(long)Math.ceil(progress.remainingSeconds/60))+" min");
+            int minutes=reached?0:(int)Math.max(1,Math.ceil(progress.remainingSeconds/60));metricOne.setText(formatDistance(progress.remainingMeters)); metricTwo.setText(getResources().getQuantityString(R.plurals.map_ui_minutes,minutes,minutes));
             String eta=new java.text.SimpleDateFormat("HH:mm",Locale.getDefault()).format(new Date(System.currentTimeMillis()+(long)(progress.remainingSeconds*1000)));
-            subtitle.setText("ETA "+eta+" · no live traffic"+(gap>30?"\nRoute ends "+formatDistance(gap)+" from point":"")+(lastSignals.contains("Internet · offline")?" · saved route":""));
-            state.setText(reached?(gap>30?"Route end":"Arrived"):"● Active");
+            subtitle.setText(activity.getString(R.string.map_ui_eta,eta,gap>30?activity.getString(R.string.map_ui_destination_gap,formatDistance(gap)):"",lastSignals.contains("Internet · offline")?activity.getString(R.string.map_ui_saved_route):""));
+            state.setText(reached?(gap>30?R.string.map_ui_route_end:R.string.map_ui_arrived_state):R.string.map_ui_active);
         }
     }
     private void updateNavigation() {
@@ -556,20 +578,20 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
         int top = dp(destination == null ? 12 : 96); if (toolsLp.topMargin != top) { toolsLp.topMargin = top; tools.setLayoutParams(toolsLp); }
         FrameLayout.LayoutParams noticeLp = (FrameLayout.LayoutParams)mapNotice.getLayoutParams();
         if (noticeLp.topMargin != top) { noticeLp.topMargin = top; mapNotice.setLayoutParams(noticeLp); }
-        if (destination == null) { if ("Navigation".equals(mode)) { metricOne.setText("—"); metricTwo.setText("—"); metricOneLabel.setText("direct".equals(routeProfile)?"Distance":"Remaining"); metricTwoLabel.setText("direct".equals(routeProfile)?"Bearing":"Travel time"); } return; }
+        if (destination == null) { if ("Navigation".equals(mode)) { metricOne.setText(R.string.map_ui_dash); metricTwo.setText(R.string.map_ui_dash); metricOneLabel.setText("direct".equals(routeProfile)?R.string.map_ui_distance:R.string.map_ui_remaining); metricTwoLabel.setText("direct".equals(routeProfile)?R.string.map_ui_bearing:R.string.map_ui_travel_time); } return; }
         if(!"direct".equals(routeProfile)) { updateRoadNavigation(); return; }
         String name = destination.title.isEmpty() ? "Destination" : destination.title;
-        if (!fresh()) { navigation.setText(name + "\nWaiting for fresh GPS"); compass.setTarget(Double.NaN);
-            if ("Navigation".equals(mode)) { metricOne.setText("—"); metricTwo.setText("—"); metricOneLabel.setText("Distance"); metricTwoLabel.setText("Bearing"); } return; }
+        if (!fresh()) { navigation.setText(activity.getString(R.string.map_ui_waiting_gps,name)); compass.setTarget(Double.NaN);
+            if ("Navigation".equals(mode)) { metricOne.setText(R.string.map_ui_dash); metricTwo.setText(R.string.map_ui_dash); metricOneLabel.setText(R.string.map_ui_distance); metricTwoLabel.setText(R.string.map_ui_bearing); } return; }
         float[] result = {(float)com.fiskentra.app.model.FieldNavigation.distance(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude), (float)com.fiskentra.app.model.FieldNavigation.bearing(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude)};
         float bearing = (result[1] + 360) % 360;
         String distance = result[0] >= 1000 ? String.format(Locale.US, "%.2f km", result[0] / 1000) : Math.round(result[0]) + " m";
         boolean near = result[0] <= 20 && location.hasAccuracy() && location.getAccuracy() <= 20;
         if (near && !arrived) { toast("You are near the destination"); arrived = true; }
         String direction = Double.isFinite(heading) ? " · turn " + Math.round(com.fiskentra.app.model.FieldNavigation.turn(bearing, heading)) + "°" : "";
-        navigation.setText((near ? "Near destination" : distance + " to destination") + "\n" + name + direction);
+        navigation.setText(activity.getString(R.string.map_ui_guidance_detail,near?activity.getString(R.string.map_ui_near):activity.getString(R.string.map_ui_distance_to,distance),name,direction));
         compass.setTarget(bearing);
-        if ("Navigation".equals(mode)) { metricOne.setText(distance); metricTwo.setText(Math.round(bearing) + "°"); metricOneLabel.setText("Direct distance"); metricTwoLabel.setText("True bearing"); }
+        if ("Navigation".equals(mode)) { metricOne.setText(distance); metricTwo.setText(activity.getString(R.string.map_ui_degrees,Math.round(bearing))); metricOneLabel.setText(R.string.map_ui_direct_distance); metricTwoLabel.setText(R.string.map_ui_true_bearing); }
     }
     private void layers() {
         new AlertDialog.Builder(activity).setTitle("Map layers").setMultiChoiceItems(new String[]{"Saved points", "Trip track", "Point labels"}, layers, (d, index, checked) -> {
@@ -632,7 +654,7 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
                 if(destination!=null&&destination.id>0&&points.find(destination.id)==null){navigate(null);toast(activity.getString(R.string.map_target_deleted));}
                 if(destination!=null&&destination.id>0){SavedPoint latest=points.find(destination.id);if(latest!=null&&latest.hasLocation()){if(latest.latitude!=destination.latitude||latest.longitude!=destination.longitude)navigate(latest);else{destination=latest;map.setDestination(latest);}}}
                 map.setData(lastPosition,mapPoints,trackSnapshot,selected);bindPoint();
-                filterBadge.setText(activity.getString(R.string.map_visible_count,mapPoints.size(),filteredPoints.size()-mapPoints.size()));filterBadge.setVisibility(filter.active()||filteredPoints.isEmpty()?VISIBLE:GONE);
+                filterBadge.setText(getResources().getQuantityString(R.plurals.map_visible_count,filteredPoints.size()-mapPoints.size(),mapPoints.size(),filteredPoints.size()-mapPoints.size()));filterBadge.setVisibility(filter.active()||filteredPoints.isEmpty()?VISIBLE:GONE);
                 renderPanel();updateMapInsets();
             });
         });
@@ -671,10 +693,10 @@ public final class FieldMapPanel extends LinearLayout implements SensorEventList
     private void filters(){MapFilterPanel body=new MapFilterPanel(activity,filter,allPoints,currentTrip,new FishingDayStore(activity).all(),new MapFilterPanel.Actions(){public void apply(MapFilterPolicy value){applyFilter(value);}public void list(){visiblePoints();}});showOverlay("FILTERS",body);}
     private void applyFilter(MapFilterPolicy value){filter=value;if(debugFixture==null)prefs.edit().putString("filter_scope",value.scope).putString("filter_trip",value.tripId).putLong("filter_from",value.fromUtc).putLong("filter_to",value.toUtc).putStringSet("filter_types",value.types).putBoolean("filter_favorite",value.favorite).apply();closeOverlay();update(lastPosition,lastSignals);}
     private void visiblePoints(){
-        LinearLayout body=MapUi.column(activity);body.addView(MapUi.text(activity,activity.getString(R.string.map_visible_count,mapPoints.size(),filteredPoints.size()-mapPoints.size()),18,true));
+        LinearLayout body=MapUi.column(activity);body.addView(MapUi.text(activity,getResources().getQuantityString(R.plurals.map_visible_count,filteredPoints.size()-mapPoints.size(),mapPoints.size(),filteredPoints.size()-mapPoints.size()),18,true));
         if(filteredPoints.isEmpty())body.addView(MapUi.button(activity,R.string.map_filter_reset,()->{filter=MapFilterPolicy.all();filters();},true));
         List<SavedPoint> listing=filteredPoints;ArrayAdapter<SavedPoint> adapter=new ArrayAdapter<SavedPoint>(activity,android.R.layout.simple_list_item_1,listing){
-            @Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView row=(TextView)super.getView(position,convert,parent);SavedPoint p=getItem(position);row.setText((p.title.isEmpty()?p.type:p.title)+(p.hasLocation()?"":" · "+activity.getString(R.string.map_no_location)));row.setTextColor(INK);row.setMinHeight(dp(48));return row;}
+            @Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView row=(TextView)super.getView(position,convert,parent);SavedPoint p=getItem(position);String name=p.title.isEmpty()?p.type:p.title;row.setText(p.hasLocation()?name:activity.getString(R.string.map_ui_point_without_location,name,activity.getString(R.string.map_no_location)));row.setTextColor(INK);row.setMinHeight(dp(48));return row;}
         };
         ListView list=new ListView(activity);list.setAdapter(adapter);list.setOnItemClickListener((p,v,index,id)->pointMenu(listing.get(index)));body.addView(list,new LayoutParams(-1,dp(240)));showOverlay("FILTERS",body);
     }

@@ -1,11 +1,15 @@
 # Android / Gradle
 .gradle/
+.gradle-codex/
+.android-codex/
+.jtmp/
 **/build/
 *.iml
 .idea/
 
 # Local machine configuration
 local.properties
+maps.local.properties
 
 # Generated packages
 *.apk
@@ -22,3 +26,4 @@ Thumbs.db
 /qa/*
 !/qa/*.ps1
 !/qa/*.py
+supabase.local.properties

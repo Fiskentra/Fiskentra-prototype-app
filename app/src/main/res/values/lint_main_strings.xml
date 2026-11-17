@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_map_unavailable_offline">Map unavailable · field capture still works offline</string>
+    <string name="ui_loading_map_layer">Loading %1$s layer…</string>
+    <string name="ui_map_layer_failed">Could not load %1$s · check internet or choose another layer</string>
+    <string name="ui_confirm_delete">Confirm before deleting a saved point</string>
+    <string name="ui_show_password">Show password</string>
+    <string name="ui_title_and_subtitle">%1$s\n%2$s</string>
+</resources>

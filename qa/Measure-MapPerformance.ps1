@@ -3,9 +3,11 @@ param(
     [ValidateSet('standard','stress')][string[]]$Datasets=@('standard','stress'),
     [ValidateRange(60,180)][int]$Seconds=60,
     [string]$OutputDirectory,
-    [string]$Adb='C:\Users\Gebruiker\AppData\Local\Android\Sdk\platform-tools\adb.exe'
+    [string]$Adb=''
 )
 $ErrorActionPreference='Stop'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$Adb = Resolve-FiskentraAdb $Adb
 $repo=Split-Path $PSScriptRoot -Parent
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo ('qa\map-performance\'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

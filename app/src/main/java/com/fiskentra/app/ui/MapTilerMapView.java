@@ -6,59 +6,95 @@ import android.location.Location;
 import android.view.View;
 import android.widget.FrameLayout;
 import com.fiskentra.app.BuildConfig;
+import com.fiskentra.app.R;
+import com.fiskentra.app.model.MapHazard;
 import com.fiskentra.app.model.SavedPoint;
+import com.fiskentra.app.model.FishingDay;
 import com.fiskentra.app.model.RoadRoute;
 import com.fiskentra.app.model.BacktrackRoute;
 import com.fiskentra.app.model.FieldNavigation;
 import com.fiskentra.app.model.MapFilterPolicy;
-import org.maplibre.android.maps.Style;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import com.fiskentra.app.model.MapCameraPolicy;
 import com.fiskentra.app.model.LocationQualityPolicy;
 import com.fiskentra.app.location.FiskentraLocationManager;
-import org.maplibre.android.MapLibre;
-import org.maplibre.android.camera.CameraPosition;
-import org.maplibre.android.geometry.LatLng;
-import org.maplibre.android.geometry.LatLngBounds;
-import org.maplibre.android.maps.MapLibreMap;
-import org.maplibre.android.maps.MapView;
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.GoogleMapOptions;
+import com.google.android.gms.maps.MapView;
+import com.google.android.gms.maps.model.BitmapDescriptor;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
+import com.google.android.gms.maps.model.CameraPosition;
+import com.google.android.gms.maps.model.Circle;
+import com.google.android.gms.maps.model.CircleOptions;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.Marker;
+import com.google.android.gms.maps.model.MarkerOptions;
 import java.util.*;
 
-/** Visual marker offsets never modify geographic coordinates. */
+/** Google Maps host. The historical class name retains the existing screen contract. */
 public final class MapTilerMapView extends FrameLayout {
-    public static final String STYLE_OUTDOOR = "outdoor-v4", STYLE_HYBRID = "hybrid-v4", STYLE_TOPO = "topo-v4", STYLE_OCEAN = "ocean-v4";
+    public static final String STYLE_OUTDOOR = "google-normal", STYLE_HYBRID = "google-satellite", STYLE_TOPO = "google-terrain", STYLE_OCEAN = "google-hybrid";
     public interface StyleListener { void onStyleLoading(String id); void onStyleLoaded(String id); void onStyleError(String id); }
-    public static String normalizeStyleId(String id) { return STYLE_HYBRID.equals(id) || STYLE_TOPO.equals(id) || STYLE_OCEAN.equals(id) ? id : STYLE_OUTDOOR; }
-    public static String styleName(String id) { return STYLE_HYBRID.equals(id) ? "Satellite" : STYLE_TOPO.equals(id) ? "Topographic" : STYLE_OCEAN.equals(id) ? "Ocean" : "Outdoor"; }
+    public static String normalizeStyleId(String id) {
+        if (STYLE_HYBRID.equals(id) || "hybrid-v4".equals(id) || "hybrid".equals(id)) return STYLE_HYBRID;
+        if (STYLE_TOPO.equals(id) || "topo-v4".equals(id)) return STYLE_TOPO;
+        if (STYLE_OCEAN.equals(id)) return STYLE_OCEAN;
+        return STYLE_OUTDOOR;
+    }
+    public static String normalizeOnlineStyleId(String id) {
+        String style = normalizeStyleId(id);
+        if (STYLE_HYBRID.equals(style) || STYLE_OCEAN.equals(style)) {
+            return STYLE_HYBRID;
+        }
+        return STYLE_OUTDOOR;
+    }
+    public static String styleName(String id) { String style=normalizeStyleId(id); return STYLE_HYBRID.equals(style) ? "Satellite" : STYLE_TOPO.equals(style) ? "Terrain" : STYLE_OCEAN.equals(style) ? "Hybrid" : "Normal"; }
     public void setOverlayVisibility(boolean points, boolean track) { setLayers(points, track, showLabels); }
     public void recenter() { locate(); }
     public void northUp() { north(); }
-    public void zoomBy(double amount) { overviewBounds=null;insetGeneration++;if (map != null) map.setCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).zoom(Math.max(1, Math.min(20, map.getCameraPosition().zoom + amount))).build()); }
+    public void zoomBy(double amount) { overviewBounds=null;insetGeneration++;if (map != null) map.moveCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).zoom((float)Math.max(1, Math.min(20, map.getCameraPosition().zoom + amount))).build())); }
     public interface Listener {
         void onPlace(double latitude, double longitude);
         void onPoint(SavedPoint point);
+        default void onHazard(MapHazard hazard) {}
         default void onCluster(List<SavedPoint> points) { onPoint(points.get(0)); }
         default void onCameraMode(MapCameraPolicy.Mode mode, boolean orientationAvailable) {}
         default void onCameraIdle() {}
+        default void onMapStatusChanged() {}
+        default void onLayersChanged() {}
     }
     private final MapView mapView;
     private final MarkerOverlay overlay;
     private final ExecutorService geometryWorker = Executors.newSingleThreadExecutor();
     private long geometryGeneration, overviewGeneration;
     private int styleGeneration;
-    private boolean loadingStyle, neutralStyle;
+    private boolean loadingStyle, neutralStyle, basemapLoaded;
     private final StyleListener styleListener;
-    private MapLibreMap map;
+    private GoogleMap map;
     private Listener listener;
     private Location location;
     private List<SavedPoint> points = Collections.emptyList();
+    private List<MapHazard> hazards = Collections.emptyList();
+    private final List<Marker> hazardMarkers = new ArrayList<>();
+    private final List<Circle> hazardCircles = new ArrayList<>();
+    private BitmapDescriptor hazardIcon;
     private List<double[]> track = Collections.emptyList();
     private SavedPoint selected, destination;
     private RoadRoute roadRoute;
     private boolean directGuidance=true;
     private final MapCameraPolicy camera = new MapCameraPolicy();
-    private MapFeatureRenderer renderer;
+    private GoogleMapFeatureRenderer renderer;
+    private MarineTileLayers marineLayers;
+    private LocalFishingLayers fishingLayers;
+    private final MapWindLayer windLayer;
+    private boolean windVisible, depthsVisible, seamarksVisible, heatmapVisible, historyVisible, layerImperial;
+    private float depthOpacity=.60f, heatOpacity=.70f;
+    private List<SavedPoint> heatPoints=Collections.emptyList();
+    private List<FishingDay> historyTrips=Collections.emptyList();
+    private Set<String> historyIds=Collections.emptySet();
     private List<double[]> backtrack=Collections.emptyList();
     private SavedPoint preview;
     private CameraPosition selectionCamera;
@@ -102,20 +138,24 @@ public final class MapTilerMapView extends FrameLayout {
             if(overviewBounds!=null){fitOverview();return;}
             // setPadding caches insets until a camera transform. Commit them while keeping
             // a manually chosen geographic center and zoom, even when FREE has no GPS updates.
-            if(before!=null)map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(before).padding(cameraPadding()).build()));
+            if(before!=null)map.moveCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(before).build()));
         });
     }
     private double[] cameraPadding(){
         int height=getHeight();int top=Math.max(0,controlTop),bottom=Math.max(0,controlBottom);
-        if(height>0){top=Math.min(top,Math.max(0,height-(int)dp(80)));bottom=Math.min(bottom,Math.max(0,height-top-(int)dp(80)));}
-        int ahead=navigating&&selected==null&&camera.mode()!=MapCameraPolicy.Mode.FREE?Math.max(0,(height-top-bottom)/3):0;
+        int minimumViewport=(int)dp(80);
+        if(height>0){
+            // Keep native Google attribution above the sheet when the keyboard reduces map height.
+            int availableInsets=Math.max(0,height-minimumViewport);
+            bottom=Math.min(bottom,availableInsets);top=Math.min(top,availableInsets-bottom);
+        }
+        int ahead=navigating&&selected==null&&camera.mode()!=MapCameraPolicy.Mode.FREE
+                ?Math.min(Math.max(0,(height-top-bottom)/3),Math.max(0,height-top-bottom-minimumViewport)):0;
         return new double[]{0,top+ahead,0,bottom};
     }
     private void applyControlInsets() {
         if (map == null||destroyed) return;
         double[] padding=cameraPadding();map.setPadding(0,(int)padding[1],0,(int)padding[3]);
-        map.getUiSettings().setLogoMargins((int)dp(14), 0, 0, controlBottom);
-        map.getUiSettings().setAttributionMargins((int)dp(112), 0, 0, controlBottom);
     }
     private void queueSelectionCamera(){
         if(selectionCamera==null&&selectionRestore==null)return;
@@ -123,10 +163,10 @@ public final class MapTilerMapView extends FrameLayout {
         postOnAnimation(()->{
             if(destroyed||map==null||request!=selectionGeneration)return;
             if(selectionCamera!=null&&selected!=null&&selected.hasLocation()){
-                map.cancelTransitions();map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(selected.latitude,selected.longitude)).zoom(selectionZoom).padding(cameraPadding()).build()));
+                map.stopAnimation();map.moveCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(selected.latitude,selected.longitude)).zoom((float)selectionZoom).build()));
             }else if(selectionRestore!=null){
                 CameraPosition restore=selectionRestore;MapCameraPolicy.Mode mode=selectionRestoreMode;selectionRestore=null;
-                map.cancelTransitions();map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(restore).padding(cameraPadding()).build()));
+                map.stopAnimation();map.moveCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(restore).build()));
                 camera.restore(mode.name());animatedFix=0;animatedBearing=Double.NaN;notifyMode();
             }
             overlay.invalidate();
@@ -137,54 +177,129 @@ public final class MapTilerMapView extends FrameLayout {
     public MapTilerMapView(Context context, String requestedStyle, StyleListener styleListener) {
         super(context);
         this.styleListener = styleListener;
-        MapLibre.getInstance(context);
         baseStyle = normalizeStyleId(requestedStyle);
-        mapView = new MapView(context, org.maplibre.android.maps.MapLibreMapOptions.createFromAttributes(context).textureMode(true));
-        mapView.onCreate(null);
-        mapView.addOnDidFailLoadingMapListener(error -> { if (loadingStyle && !neutralStyle && !destroyed) useNeutralStyle(); });
-        addView(mapView, new LayoutParams(-1, -1));
         overlay = new MarkerOverlay(context);
+        windLayer = new MapWindLayer(context, this::notifyLayers);
+        if (BuildConfig.GOOGLE_MAPS_API_KEY.trim().isEmpty()) {
+            mapView = null;
+            neutralStyle = true;
+            mapStatus = "Google Maps API key is missing";
+            android.widget.TextView message = new android.widget.TextView(context);
+            message.setText("Google Maps is not configured yet.\nPlease install a build configured for Google Maps.");
+            message.setTextColor(Color.WHITE); message.setGravity(android.view.Gravity.CENTER);
+            message.setPadding((int)dp(24),(int)dp(24),(int)dp(24),(int)dp(24));
+            setBackgroundColor(0xff092f3e); addView(message,new LayoutParams(-1,-1));
+            if (styleListener != null) post(() -> { if(!destroyed)styleListener.onStyleError(baseStyle); });
+            return;
+        }
+        mapView = new MapView(context, new GoogleMapOptions().mapType(googleMapType())
+                .compassEnabled(false).tiltGesturesEnabled(false).mapToolbarEnabled(false));
+        mapView.onCreate(null);
+        addView(mapView, new LayoutParams(-1, -1));
         addView(overlay, new LayoutParams(-1, -1));
         mapView.getMapAsync(value -> {
             if (destroyed) return;
-            map = value; renderer=new MapFeatureRenderer(context,map);
+            map = value; renderer=new GoogleMapFeatureRenderer(context,map);
+            marineLayers=new MarineTileLayers(context,map,this::notifyLayers);
+            fishingLayers=new LocalFishingLayers(context,map);
             android.content.SharedPreferences saved=context.getSharedPreferences("field_map",0);
             camera.restore(saved.getString("camera_mode","FREE"));
             if(saved.contains("camera_lat"))try {
                 double lat=Double.parseDouble(saved.getString("camera_lat","")),lon=Double.parseDouble(saved.getString("camera_lon",""));
-                if(Double.isFinite(lat)&&Double.isFinite(lon)&&Math.abs(lat)<=85&&Math.abs(lon)<=180){map.setCameraPosition(new CameraPosition.Builder().target(new LatLng(lat,lon)).zoom(saved.getFloat("camera_zoom",13)).bearing(saved.getFloat("camera_bearing",0)).build());positioned=true;}
+                if(Double.isFinite(lat)&&Double.isFinite(lon)&&Math.abs(lat)<=85&&Math.abs(lon)<=180){movePosition(new CameraPosition.Builder().target(new LatLng(lat,lon)).zoom(saved.getFloat("camera_zoom",13)).bearing(saved.getFloat("camera_bearing",0)).build());positioned=true;}
             }catch(NumberFormatException ignored){}
             if(debugCamera&&debugSavedCamera==null){debugSavedCamera=map.getCameraPosition();debugSavedMode=camera.mode();debugSavedPositioned=positioned;}
             map.getUiSettings().setCompassEnabled(false);
-            map.getUiSettings().setCompassFadeFacingNorth(false);
             map.getUiSettings().setTiltGesturesEnabled(false);
+            map.getUiSettings().setMapToolbarEnabled(false);
+            map.getUiSettings().setIndoorLevelPickerEnabled(false);
+            map.setIndoorEnabled(false);
             applyControlInsets();
             loadBaseStyle();
-            map.addOnCameraMoveListener(overlay::invalidate);
-            map.addOnCameraIdleListener(() -> { overlay.invalidate(); persistCamera(); if(listener!=null)listener.onCameraIdle(); });
-            map.addOnCameraMoveStartedListener(reason -> {
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) { follow = false; camera.gesture(); notifyMode(); selectionCamera=null;selectionRestore=null;pendingSelectedId=Long.MIN_VALUE;selectionGeneration++;overviewBounds=null;insetGeneration++;overviewGeneration++; positioned = true; }
+            map.setOnCameraMoveListener(overlay::invalidate);
+            map.setOnCameraIdleListener(() -> { renderer.refreshCamera();overlay.invalidate(); persistCamera(); if(marineLayers!=null)marineLayers.refreshView();refreshWind(); if(listener!=null)listener.onCameraIdle(); });
+            map.setOnCameraMoveStartedListener(reason -> {
+                if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) { follow = false; camera.gesture(); notifyMode(); selectionCamera=null;selectionRestore=null;pendingSelectedId=Long.MIN_VALUE;selectionGeneration++;overviewBounds=null;insetGeneration++;overviewGeneration++; positioned = true; }
             });
-            map.addOnMapLongClickListener(coordinate -> {
-                if (listener != null) listener.onPlace(coordinate.getLatitude(), coordinate.getLongitude());
-                return true;
+            map.setOnMapLongClickListener(coordinate -> {
+                if (listener != null) listener.onPlace(coordinate.latitude, coordinate.longitude);
             });
-            map.addOnMapClickListener(coordinate -> {
-                if (listener == null) return false;
-                if (tapToPlace) { listener.onPlace(coordinate.getLatitude(),coordinate.getLongitude()); return true; }
-                Hit hit = overlay.hit(map.getProjection().toScreenLocation(coordinate));
-                if (hit != null) { if (hit.members.size() > 1) listener.onCluster(hit.members); else listener.onPoint(hit.point); return true; }
-                PointF tapped = map.getProjection().toScreenLocation(coordinate);
-                if (preview != null) { PointF shown=map.getProjection().toScreenLocation(new LatLng(preview.latitude,preview.longitude));if(Math.hypot(tapped.x-shown.x,tapped.y-shown.y)<=dp(24))return true; }
-                if(renderer.tap(tapped, listener)){camera.gesture();notifyMode();return true;}
-                if (tapToPlace) { listener.onPlace(coordinate.getLatitude(), coordinate.getLongitude()); return true; }
-                return false;
+            map.setOnMarkerClickListener(marker -> {
+                if(listener==null)return true;
+                if(tapToPlace){LatLng p=marker.getPosition();listener.onPlace(p.latitude,p.longitude);return true;}
+                if (marker.getTag() instanceof MapHazard) {
+                    listener.onHazard((MapHazard) marker.getTag());
+                    return true;
+                }
+                return renderer.tapMarker(marker,listener);
             });
+            map.setOnMapClickListener(coordinate -> {
+                if (listener == null) return;
+                if (tapToPlace) { listener.onPlace(coordinate.latitude,coordinate.longitude); return; }
+                Hit hit = overlay.hit(toScreen(coordinate));
+                if (hit != null) { if (hit.members.size() > 1) listener.onCluster(hit.members); else listener.onPoint(hit.point); return; }
+                PointF tapped = toScreen(coordinate);
+                if (preview != null) { PointF shown=toScreen(new LatLng(preview.latitude,preview.longitude));if(Math.hypot(tapped.x-shown.x,tapped.y-shown.y)<=dp(24))return; }
+                if(renderer.tap(tapped, listener)){camera.gesture();notifyMode();}
+            });
+            renderData();
+            renderHazards();
             updateCamera();
         });
     }
-    public void setListener(Listener value) { listener = value; notifyMode(); }
-    public void setTapToPlace(boolean enabled) { tapToPlace = enabled; }
+    public void setListener(Listener value) { listener = value; notifyMode(); notifyMapStatus(); }
+    private void notifyMapStatus() { if(listener!=null)listener.onMapStatusChanged(); }
+    public void setTapToPlace(boolean enabled) {
+        tapToPlace = enabled;
+    }
+    public void setHazards(List<MapHazard> value) {
+        if (destroyed) return;
+        hazards = new ArrayList<>(value);
+        renderHazards();
+    }
+    private void renderHazards() {
+        if (map == null) return;
+        clearHazards();
+        for (MapHazard hazard : hazards) {
+            LatLng center = new LatLng(hazard.latitude, hazard.longitude);
+            if (hazard.isZone()) {
+                hazardCircles.add(map.addCircle(new CircleOptions().center(center).radius(hazard.radiusMeters)
+                        .strokeColor(0xffef5044).fillColor(0x30ef5044).strokeWidth(dp(2.5f))
+                        .zIndex(3)));
+            }
+            Marker marker = map.addMarker(new MarkerOptions().position(center).title(hazard.name)
+                    .icon(hazardIcon()).anchor(.5f, .5f).zIndex(6));
+            if (marker != null) {
+                marker.setTag(hazard);
+                hazardMarkers.add(marker);
+            }
+        }
+    }
+    private BitmapDescriptor hazardIcon() {
+        if (hazardIcon == null) {
+            int size = Math.round(dp(32));
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint);
+            paint.setColor(0xffb92f28);
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(1.5f), paint);
+            android.graphics.drawable.Drawable icon = getContext().getDrawable(R.drawable.ic_alert_triangle).mutate();
+            int inset = Math.round(dp(4));
+            icon.setTint(Color.WHITE);
+            icon.setBounds(inset, inset, size - inset, size - inset);
+            icon.draw(canvas);
+            hazardIcon = BitmapDescriptorFactory.fromBitmap(bitmap);
+        }
+        return hazardIcon;
+    }
+    private void clearHazards() {
+        for (Marker marker : hazardMarkers) marker.remove();
+        for (Circle circle : hazardCircles) circle.remove();
+        hazardMarkers.clear();
+        hazardCircles.clear();
+    }
     public void setHeading(double degrees) { if(destroyed)return;heading=degrees; headingSampleMillis=Double.isFinite(degrees)?android.os.SystemClock.elapsedRealtime():0; updateOrientation(); updateCamera(); overlay.invalidate(); }
     private void updateOrientation() {
         MapCameraPolicy.Mode before=camera.mode();boolean available=camera.orientationAvailable();
@@ -216,7 +331,7 @@ public final class MapTilerMapView extends FrameLayout {
         });
     }
     public void showTrack(List<double[]> line){if(destroyed||line==null||line.size()<2)return;LatLngBounds.Builder b=new LatLngBounds.Builder();int count=0;for(double[] p:line)if(p!=null&&p.length>=2&&FieldNavigation.validCoordinate(p[0],p[1])){b.include(new LatLng(p[0],p[1]));count++;}if(count>=2)showOverview(b.build());}
-    public void showBounds(double n,double e,double s,double w){if(destroyed||!FieldNavigation.validCoordinate(n,e)||!FieldNavigation.validCoordinate(s,w)||n<s||e<w)return;showOverview(LatLngBounds.from(n,e,s,w));}
+    public void showBounds(double n,double e,double s,double w){if(destroyed||!FieldNavigation.validCoordinate(n,e)||!FieldNavigation.validCoordinate(s,w)||n<s||e<w)return;showOverview(new LatLngBounds(new LatLng(s,w),new LatLng(n,e)));}
     private void showOverview(LatLngBounds bounds){
         overviewBounds=bounds;overviewPending=true;pendingCenter=null;pendingSelectedId=Long.MIN_VALUE;selectionCamera=null;selectionRestore=null;selectionGeneration++;insetGeneration++;
         follow=false;camera.gesture();notifyMode();positioned=true;fitOverview();
@@ -224,28 +339,14 @@ public final class MapTilerMapView extends FrameLayout {
     private void fitOverview(){
         if(destroyed||map==null||overviewBounds==null||getWidth()<=0||getHeight()<=0)return;
         overviewPending=false;
-        CameraPosition before=map.getCameraPosition();double[] padding=cameraPadding();
-        int visibleHeight=Math.max(0,getHeight()-(int)padding[1]-(int)padding[3]);
-        int margin=Math.min((int)dp(24),visibleHeight/6);int[] fit={margin,(int)padding[1]+margin,margin,(int)padding[3]+margin};
-        map.cancelTransitions();
-        // Native fit queries see the current persistent camera padding. Remove inherited
-        // padding for this calculation, supply panel insets exactly once, then persist only
-        // the panel insets (the symmetric 24dp bounds margin is temporary).
-        map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(before).padding(0,0,0,0).build()));
-        CameraPosition fitted=map.getCameraForLatLngBounds(overviewBounds,fit,before.bearing,0);
-        if(fitted==null||!Double.isFinite(fitted.zoom)){map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(before).padding(padding).build()));return;}
-        double north=Math.toRadians(Math.min(85.05112878,overviewBounds.getLatNorth())),south=Math.toRadians(Math.max(-85.05112878,overviewBounds.getLatSouth()));
-        double centerY=(Math.log(Math.tan(Math.PI/4+north/2))+Math.log(Math.tan(Math.PI/4+south/2)))/2;
-        LatLng center=new LatLng(Math.toDegrees(2*Math.atan(Math.exp(centerY))-Math.PI/2),overviewBounds.getCenter().getLongitude());
-        map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(fitted).target(center).padding(padding).build()));
+        applyControlInsets();
+        map.stopAnimation();
+        double[] padding=cameraPadding();
+        // Google already applies the native map padding when fitting the bounds.
+        int width=getWidth();
+        int height=getHeight();
+        map.moveCamera(CameraUpdateFactory.newLatLngBounds(overviewBounds,width,height,(int)dp(24)));
         overlay.invalidate();
-        if(BuildConfig.DEBUG){final LatLngBounds checked=overviewBounds;final long token=insetGeneration;postOnAnimation(()->{
-            if(destroyed||map==null||overviewBounds!=checked||token!=insetGeneration)return;
-            float left=Float.POSITIVE_INFINITY,top=Float.POSITIVE_INFINITY,right=Float.NEGATIVE_INFINITY,bottom=Float.NEGATIVE_INFINITY;
-            for(LatLng corner:new LatLng[]{new LatLng(checked.getLatNorth(),checked.getLonWest()),new LatLng(checked.getLatNorth(),checked.getLonEast()),new LatLng(checked.getLatSouth(),checked.getLonWest()),new LatLng(checked.getLatSouth(),checked.getLonEast())}){PointF point=map.getProjection().toScreenLocation(corner);left=Math.min(left,point.x);right=Math.max(right,point.x);top=Math.min(top,point.y);bottom=Math.max(bottom,point.y);}
-            double[] actual=cameraPadding();boolean visible=left>=actual[0]-2&&right<=getWidth()-actual[2]+2&&top>=actual[1]-2&&bottom<=getHeight()-actual[3]+2;LatLng target=map.getCameraPosition().target;
-            android.util.Log.d("FiskentraBoundsFit",String.format(Locale.US,"zoom=%.3f viewport=%dx%d padding=%.0f,%.0f,%.0f,%.0f boundsPixels=%.1f,%.1f,%.1f,%.1f centerInside=%s cornersVisible=%s",map.getCameraPosition().zoom,getWidth(),getHeight(),actual[0],actual[1],actual[2],actual[3],left,top,right,bottom,target!=null&&checked.contains(target),visible));
-        });}
     }
     public void selectPoint(SavedPoint p){
         overviewBounds=null;insetGeneration++;
@@ -258,9 +359,41 @@ public final class MapTilerMapView extends FrameLayout {
     }
     public void closeSelection(){
         selectionGeneration++;pendingSelectedId=Long.MIN_VALUE;selected=null;focusedId=-1;overlay.prepareMarkers();renderData();overlay.invalidate();
-        if(map!=null&&selectionCamera!=null){selectionRestore=selectionCamera;selectionRestoreMode=selectionMode;selectionCamera=null;map.cancelTransitions();queueSelectionCamera();}
+        if(map!=null&&selectionCamera!=null){selectionRestore=selectionCamera;selectionRestoreMode=selectionMode;selectionCamera=null;map.stopAnimation();queueSelectionCamera();}
     }
-    private void renderData(){if(!destroyed&&renderer!=null){renderer.visibility(showPoints,showTrack,showLabels);renderer.data(points,track,selected,roadRoute,backtrack);}}
+    private void renderData(){if(!destroyed&&renderer!=null){renderer.visibility(showPoints,showTrack,showLabels);renderer.data(points,track,selected,roadRoute,backtrack);refreshFishingLayers();}}
+    public void setFishingLayers(boolean wind,boolean depths,boolean seamarks,boolean heatmap,boolean history,
+            List<SavedPoint> catches,List<FishingDay> trips,Set<String> ids,float depthsAlpha,float heatAlpha,boolean imperial){
+        if(destroyed)return;
+        windVisible=wind;depthsVisible=depths;seamarksVisible=seamarks;heatmapVisible=heatmap;historyVisible=history;
+        heatPoints=catches==null?Collections.emptyList():catches;historyTrips=trips==null?Collections.emptyList():trips;
+        historyIds=ids==null?Collections.emptySet():new HashSet<>(ids);depthOpacity=depthsAlpha;heatOpacity=heatAlpha;layerImperial=imperial;
+        refreshFishingLayers();
+    }
+    private void refreshFishingLayers(){
+        refreshWind();
+        if(destroyed||map==null)return;
+        if(marineLayers!=null){marineLayers.setVisible(depthsVisible,seamarksVisible);marineLayers.setOpacity(depthOpacity);}
+        if(fishingLayers!=null)fishingLayers.update(heatmapVisible,historyVisible,heatPoints,historyTrips,historyIds,heatOpacity);
+        notifyLayers();
+    }
+    public View windIndicator(){return windLayer.indicator();}
+    private void refreshWind(){
+        if(destroyed)return;
+        LatLng target=map==null?null:map.getCameraPosition().target;
+        if(selected!=null&&selected.hasLocation())target=new LatLng(selected.latitude,selected.longitude);
+        else if(!debugCamera&&positionLive&&FiskentraLocationManager.isFresh(location))target=new LatLng(location.getLatitude(),location.getLongitude());
+        windLayer.update(windVisible&&resumed,target==null?Double.NaN:target.latitude,target==null?Double.NaN:target.longitude,layerImperial);
+    }
+    private void notifyLayers(){if(!destroyed&&listener!=null)listener.onLayersChanged();}
+    public String fishingLayerStatus(){
+        ArrayList<String> messages=new ArrayList<>();
+        if(windVisible)messages.add(windLayer==null?"Wind: waiting for map":windLayer.status());
+        if(depthsVisible||seamarksVisible)messages.add(marineLayers==null?"Marine layers: waiting for map":marineLayers.status());
+        if(heatmapVisible||historyVisible)messages.add(fishingLayers==null?"Local layers: waiting for map":fishingLayers.status());
+        return android.text.TextUtils.join("\n",messages);
+    }
+    public void retryFishingLayers(){if(marineLayers!=null)marineLayers.retry();if(windLayer!=null)windLayer.retry();}
     public void beginDebugCamera(){
         if(!BuildConfig.DEBUG||debugCamera||destroyed)return;
         debugSavedCamera=map==null?null:map.getCameraPosition();debugSavedMode=camera.mode();
@@ -268,19 +401,25 @@ public final class MapTilerMapView extends FrameLayout {
     }
     public void endDebugCamera(){
         if(!BuildConfig.DEBUG||!debugCamera)return;
-        if(map!=null){map.cancelTransitions();if(debugSavedCamera!=null)map.setCameraPosition(debugSavedCamera);}
+        if(map!=null){map.stopAnimation();if(debugSavedCamera!=null)movePosition(debugSavedCamera);}
         if(debugSavedMode!=null)camera.restore(debugSavedMode.name());
         positioned=debugSavedPositioned;pendingCenter=debugSavedPendingCenter;animatedFix=0;animatedBearing=Double.NaN;
         debugSavedCamera=null;debugSavedPendingCenter=null;debugCamera=false;notifyMode();
     }
-    private void persistCamera(){if(map==null||destroyed||debugCamera)return;CameraPosition p=map.getCameraPosition();if(p.target==null)return;getContext().getSharedPreferences("field_map",0).edit().putString("camera_mode",camera.mode().name()).putString("camera_lat",Double.toString(p.target.getLatitude())).putString("camera_lon",Double.toString(p.target.getLongitude())).putFloat("camera_zoom",(float)p.zoom).putFloat("camera_bearing",(float)p.bearing).apply();}
+    private void persistCamera(){if(map==null||destroyed||debugCamera)return;CameraPosition p=map.getCameraPosition();if(p.target==null)return;getContext().getSharedPreferences("field_map",0).edit().putString("camera_mode",camera.mode().name()).putString("camera_lat",Double.toString(p.target.latitude)).putString("camera_lon",Double.toString(p.target.longitude)).putFloat("camera_zoom",(float)p.zoom).putFloat("camera_bearing",(float)p.bearing).apply();}
     public void setDestination(SavedPoint point) { destination = point; overlay.prepareMarkers();overlay.invalidate(); }
     public void setDirectGuidance(boolean direct) { directGuidance=direct; overlay.invalidate(); }
     public void setRoadRoute(RoadRoute route) { roadRoute=route; renderData(); overlay.invalidate(); }
     public void showRoute() {
-        if(map==null||roadRoute==null) return;
+        if(map==null) return;
         LatLngBounds.Builder bounds=new LatLngBounds.Builder();
-        for(RoadRoute.Coordinate p:roadRoute.shape)bounds.include(new LatLng(p.lat,p.lon));
+        if(roadRoute!=null)for(RoadRoute.Coordinate p:roadRoute.shape)bounds.include(new LatLng(p.lat,p.lon));
+        else {
+            if(destination==null||!destination.hasLocation())return;
+            bounds.include(new LatLng(destination.latitude,destination.longitude));
+            if(location!=null&&FieldNavigation.validCoordinate(location.getLatitude(),location.getLongitude()))bounds.include(new LatLng(location.getLatitude(),location.getLongitude()));
+            else { lookAt(destination.latitude,destination.longitude);return; }
+        }
         showOverview(bounds.build());
     }
     public void setLayers(boolean points, boolean track, boolean labels) {
@@ -291,30 +430,52 @@ public final class MapTilerMapView extends FrameLayout {
     public String styleUrl() { return "https://api.maptiler.com/maps/" + baseStyle + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY; }
     public static String styleUrl(String id) { return "https://api.maptiler.com/maps/" + normalizeStyleId(id) + "/style.json?key=" + BuildConfig.MAPTILER_API_KEY; }
     public void setBaseStyle(String style) {
-        baseStyle = normalizeStyleId(style); mapStatus = "Loading map…";
-        getContext().getSharedPreferences("field_map", 0).edit().putString("style", style).apply();
+        String requested = normalizeStyleId(style);
+        if (requested.equals(baseStyle) && (basemapLoaded || loadingStyle)) return;
+        baseStyle = requested;
+        getContext().getSharedPreferences("field_map", 0).edit().putString("style", baseStyle).apply();
         if (map != null) loadBaseStyle();
     }
-    public LatLng center() { return map == null ? null : map.getCameraPosition().target; }
+    public org.maplibre.android.geometry.LatLng center() { if(map==null)return null;LatLng p=map.getCameraPosition().target;return new org.maplibre.android.geometry.LatLng(p.latitude,p.longitude); }
     public boolean usingNeutralStyle() { return neutralStyle; }
     public void retryBaseStyle() { if (!destroyed && map != null) loadBaseStyle(); }
+    private int googleMapType() {
+        switch (baseStyle) {
+            case STYLE_HYBRID:
+            case STYLE_OCEAN: return GoogleMap.MAP_TYPE_HYBRID;
+            case STYLE_TOPO: return GoogleMap.MAP_TYPE_TERRAIN;
+            default: return GoogleMap.MAP_TYPE_NORMAL;
+        }
+    }
     private void loadBaseStyle() {
         if(destroyed||map==null)return;
-        int token = ++styleGeneration; loadingStyle = true; neutralStyle = false;
-        mapStatus = getContext().getString(com.fiskentra.app.R.string.map_basemap_loading);
-        renderer.loading(); if (styleListener != null) styleListener.onStyleLoading(baseStyle);
-        map.setStyle(styleUrl(), loaded -> { if (destroyed || token != styleGeneration) return; loadingStyle = false; mapStatus = ""; renderer.style(loaded); renderData(); if (styleListener != null) styleListener.onStyleLoaded(baseStyle); });
+        int token=++styleGeneration;
+        basemapLoaded=false;loadingStyle=true;neutralStyle=false;
+        mapStatus=getContext().getString(R.string.map_basemap_loading, styleName(baseStyle));
+        if(styleListener!=null)styleListener.onStyleLoading(baseStyle);
+        notifyMapStatus();
+        map.setMapType(googleMapType());
+        // Google delivers each requested load callback once. Request a new callback
+        // after selecting the map type, including when retrying the existing type.
+        map.setOnMapLoadedCallback(() -> {
+            if(destroyed||token!=styleGeneration)return;
+            basemapLoaded=true;loadingStyle=false;neutralStyle=false;mapStatus="";
+            notifyMapStatus();
+            if(styleListener!=null)styleListener.onStyleLoaded(baseStyle);
+        });
+        postDelayed(()->{
+            if(destroyed||token!=styleGeneration||basemapLoaded)return;
+            loadingStyle=false;neutralStyle=true;
+            mapStatus=getContext().getString(R.string.map_basemap_load_failed, styleName(baseStyle));
+            notifyMapStatus();
+            if(styleListener!=null)styleListener.onStyleError(baseStyle);
+        },15000);
     }
-    private void useNeutralStyle() {
-        if(destroyed||map==null)return;
-        int token = ++styleGeneration; loadingStyle = false; neutralStyle = true;
-        renderer.loading();
-        mapStatus = getContext().getString(com.fiskentra.app.R.string.map_basemap_missing);
-        if (styleListener != null) styleListener.onStyleError(baseStyle);
-        String json = "{\"version\":8,\"name\":\"Fiskentra offline\",\"sources\":{},\"layers\":[{\"id\":\"neutral-background\",\"type\":\"background\",\"paint\":{\"background-color\":\"#092f3e\"}}]}";
-        map.setStyle(new Style.Builder().fromJson(json), loaded -> { if (destroyed || token != styleGeneration) return; renderer.style(loaded,false); renderData(); overlay.invalidate(); });
+    public org.maplibre.android.geometry.LatLngBounds visibleBounds() {
+        if(map==null)return null;
+        LatLngBounds bounds=map.getProjection().getVisibleRegion().latLngBounds;
+        return org.maplibre.android.geometry.LatLngBounds.from(bounds.northeast.latitude,bounds.northeast.longitude,bounds.southwest.latitude,bounds.southwest.longitude);
     }
-    public LatLngBounds visibleBounds() { return map == null ? null : map.getProjection().getVisibleRegion().latLngBounds; }
     public void lookAt(double lat, double lon) {
         if (destroyed || !FieldNavigation.validCoordinate(lat, lon)) return;
         overviewBounds=null;insetGeneration++;
@@ -322,7 +483,7 @@ public final class MapTilerMapView extends FrameLayout {
         if (map == null) { pendingCenter = new LatLng(lat, lon); return; }
         selectionRestore=null;selectionCamera=null;selectionGeneration++;
         follow = false; camera.gesture(); notifyMode(); positioned = true;
-        map.setCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(lat, lon)).zoom(15).build());
+        movePosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(lat, lon)).zoom(15).build());
     }
     public void locate() {
         if (!positionLive || !FiskentraLocationManager.isFresh(location) || map==null)return;
@@ -331,7 +492,7 @@ public final class MapTilerMapView extends FrameLayout {
         selectionRestore=null;selectionGeneration++;
         updateOrientation();camera.locate(camera.orientationAvailable());animatedFix=0;animatedBearing=Double.NaN;positioned=true;selectionCamera=null;notifyMode();updateCamera();
     }
-    public void north() { overviewBounds=null;insetGeneration++;camera.north();notifyMode();if(map!=null){map.cancelTransitions();map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).bearing(0).build()),350);} }
+    public void north() { overviewBounds=null;insetGeneration++;camera.north();notifyMode();if(map!=null){map.stopAnimation();map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).bearing(0).build()),350,null);} }
     public void setData(Location location, List<SavedPoint> points, List<double[]> track, SavedPoint selectedPoint) {
         this.location = location;
         this.points = points == null ? Collections.emptyList() : points;
@@ -342,34 +503,36 @@ public final class MapTilerMapView extends FrameLayout {
     }
     private void updateCamera() {
         if (map == null||destroyed) return;
-        // Point sheets may open before MapLibre is ready; restore the saved viewport first,
+        // Point sheets may open before Google Maps is ready; restore the saved viewport first,
         // then apply the still-current selection with measured sheet padding.
         if(pendingSelectedId!=Long.MIN_VALUE&&selected!=null&&selected.id==pendingSelectedId&&selected.hasLocation()){selectPoint(selected);return;}
         if(selectionRestore!=null)return;
         if(overviewBounds!=null&&camera.mode()==MapCameraPolicy.Mode.FREE){if(overviewPending)fitOverview();return;}
         if (pendingCenter != null) {
             LatLng center = pendingCenter; pendingCenter = null; positioned = true;
-            lookAt(center.getLatitude(), center.getLongitude()); return;
+            lookAt(center.latitude, center.longitude); return;
         }
         boolean fresh=positionLive&&FiskentraLocationManager.isFresh(location);
         if(camera.mode()!=MapCameraPolicy.Mode.FREE && fresh){
             double bearing=camera.mode()==MapCameraPolicy.Mode.FOLLOW_HEADING&&Double.isFinite(orientation)?orientation:0;
             if(animatedFix==location.getElapsedRealtimeNanos()&&Double.isFinite(animatedBearing)&&Math.abs(MapCameraPolicy.delta(animatedBearing,bearing))<5)return;
-            animatedFix=location.getElapsedRealtimeNanos();animatedBearing=bearing;map.cancelTransitions();
-            map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(location.getLatitude(),location.getLongitude())).bearing(bearing).padding(cameraPadding()).build()),450);
+            animatedFix=location.getElapsedRealtimeNanos();animatedBearing=bearing;map.stopAnimation();
+            map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).target(new LatLng(location.getLatitude(),location.getLongitude())).bearing((float)bearing).build()),450,null);
         } else if(!positioned){
             SavedPoint p=null;for(SavedPoint candidate:points)if(Double.isFinite(candidate.latitude)&&Double.isFinite(candidate.longitude)){p=candidate;break;}
-            if(fresh||p!=null){map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(new LatLng(fresh?location.getLatitude():p.latitude,fresh?location.getLongitude():p.longitude),13));positioned=true;}
+            if(fresh||p!=null){map.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(fresh?location.getLatitude():p.latitude,fresh?location.getLongitude():p.longitude),13));positioned=true;}
         }
     }
-    public void start() { if (!destroyed && !started) { mapView.onStart(); started = true; } }
-    public void resume() { if (!destroyed && !resumed) { mapView.onResume(); resumed = true; } }
-    public void pause() { if (!destroyed && resumed) { persistCamera(); mapView.onPause(); resumed = false; } }
-    public void stop() { if (!destroyed && started) { mapView.onStop(); started = false; } }
-    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(renderer!=null)renderer.close();listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();mapView.onDestroy(); } }
-    public void onLowMemory() { if (!destroyed) mapView.onLowMemory(); }
+    public void start() { if (!destroyed && !started) { if(mapView!=null)mapView.onStart(); started = true; } }
+    public void resume() { if (!destroyed && !resumed) { if(mapView!=null)mapView.onResume(); resumed = true; refreshWind(); } }
+    public void pause() { if (!destroyed && resumed) { persistCamera(); if(mapView!=null)mapView.onPause(); resumed = false; refreshWind(); } }
+    public void stop() { if (!destroyed && started) { if(mapView!=null)mapView.onStop(); started = false; } }
+    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(marineLayers!=null)marineLayers.close();if(fishingLayers!=null)fishingLayers.close();if(windLayer!=null)windLayer.close();if(renderer!=null)renderer.close();clearHazards();hazardIcon=null;listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();if(mapView!=null)mapView.onDestroy(); } }
+    public void onLowMemory() { if (!destroyed) if(mapView!=null)mapView.onLowMemory(); }
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); start(); resume(); }
     @Override protected void onDetachedFromWindow() { destroy(); super.onDetachedFromWindow(); }
+    private void movePosition(CameraPosition position) { if(map!=null)map.moveCamera(CameraUpdateFactory.newCameraPosition(position)); }
+    private PointF toScreen(LatLng coordinate) { android.graphics.Point p=map.getProjection().toScreenLocation(coordinate);return new PointF(p.x,p.y); }
     private float dp(float value) { return value * getResources().getDisplayMetrics().density; }
 
     private final class MarkerOverlay extends View {
@@ -379,13 +542,24 @@ public final class MapTilerMapView extends FrameLayout {
         private final Map<Long,Bitmap> preparedMarkers=new HashMap<>();
         private final RectF markerBounds=new RectF();
         private final Path accuracyPath=new Path();
+        private final Path coveragePath=new Path(),directionPath=new Path();
+        private final DashPathEffect guidanceDash=new DashPathEffect(new float[]{dp(7),dp(6)},0);
+        private final SavedPoint[] emphasizedPoints=new SavedPoint[3];
+        private final Hit[] emphasizedHits=new Hit[3];
         private LatLng[] accuracyVertices;
         private double accuracyLat=Double.NaN,accuracyLon=Double.NaN,accuracyMeters=Double.NaN;
         MarkerOverlay(Context context) {
             super(context); setWillNotDraw(false); setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
             markerImages=new MapMarkerImages(context);
         }
-        void prepareMarkers(){preparedMarkers.clear();for(SavedPoint point:new SavedPoint[]{selected,preview,destination})if(point!=null)preparedMarkers.put(point.id,markerImages.get(point));}
+        void prepareMarkers(){
+            preparedMarkers.clear();hits.clear();emphasizedPoints[0]=selected;emphasizedPoints[1]=preview;emphasizedPoints[2]=destination;
+            for(int i=0;i<emphasizedPoints.length;i++){
+                SavedPoint point=emphasizedPoints[i];emphasizedHits[i]=null;
+                if(point==null)continue;preparedMarkers.put(point.id,markerImages.get(point));
+                if(point.id>0&&point.hasLocation()){Hit hit=new Hit(point,new PointF(Float.NaN,Float.NaN));emphasizedHits[i]=hit;hits.add(hit);}
+            }
+        }
         void prepareAccuracy(){
             if(location==null||!location.hasAccuracy()||!LocationQualityPolicy.accuracy(location.getAccuracy())){accuracyVertices=null;return;}
             double lat=location.getLatitude(),lon=location.getLongitude(),meters=location.getAccuracy();
@@ -393,7 +567,7 @@ public final class MapTilerMapView extends FrameLayout {
             accuracyLat=lat;accuracyLon=lon;accuracyMeters=meters;accuracyVertices=new LatLng[65];
             for(int i=0;i<=64;i++){double[] point=LocationQualityPolicy.offset(lat,lon,meters,i*360d/64);accuracyVertices[i]=new LatLng(point[0],point[1]);}
         }
-        private PointF project(double lat, double lon) { return map.getProjection().toScreenLocation(new LatLng(lat, lon)); }
+        private PointF project(double lat, double lon) { return toScreen(new LatLng(lat, lon)); }
         Hit hit(PointF position) {
             for (int i = hits.size() - 1; i >= 0; i--) {
                 Hit hit = hits.get(i);
@@ -407,40 +581,41 @@ public final class MapTilerMapView extends FrameLayout {
             paint.setStyle(Paint.Style.FILL); paint.setPathEffect(null);
             if(coverage!=null){
                 PointF a=project(coverage[0],coverage[3]),b=project(coverage[0],coverage[1]),d=project(coverage[2],coverage[1]),e=project(coverage[2],coverage[3]);
-                Path box=new Path();box.moveTo(a.x,a.y);box.lineTo(b.x,b.y);box.lineTo(d.x,d.y);box.lineTo(e.x,e.y);box.close();paint.setColor(0x2235dfd1);canvas.drawPath(box,paint);
-                paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setColor(coverageReady?0xff35dfd1:0xffffb53e);canvas.drawPath(box,paint);paint.setStyle(Paint.Style.FILL);
+                coveragePath.rewind();coveragePath.moveTo(a.x,a.y);coveragePath.lineTo(b.x,b.y);coveragePath.lineTo(d.x,d.y);coveragePath.lineTo(e.x,e.y);coveragePath.close();paint.setColor(0x2235dfd1);canvas.drawPath(coveragePath,paint);
+                paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setColor(coverageReady?0xff35dfd1:0xffffb53e);canvas.drawPath(coveragePath,paint);paint.setStyle(Paint.Style.FILL);
             }
             if (destination != null) {
                 PointF target = project(destination.latitude, destination.longitude);
                 paint.setColor(0xff00a7ff); paint.setStrokeWidth(dp(3));
-                if (location != null && directGuidance && roadRoute==null) {
+                if (location != null && positionLive && directGuidance && roadRoute==null
+                        && LocationQualityPolicy.guidance(location.getElapsedRealtimeNanos(), android.os.SystemClock.elapsedRealtimeNanos(),
+                        location.hasAccuracy() ? location.getAccuracy() : Double.NaN)) {
                     PointF start = project(location.getLatitude(), location.getLongitude());
-                    paint.setPathEffect(new DashPathEffect(new float[]{dp(7), dp(6)}, 0));
+                    paint.setPathEffect(guidanceDash);
                     canvas.drawLine(start.x, start.y, target.x, target.y, paint); paint.setPathEffect(null);
                 }
                 paint.setStyle(Paint.Style.STROKE); canvas.drawCircle(target.x, target.y, dp(28), paint); paint.setStyle(Paint.Style.FILL);
             }
-            hits.clear();
-            for(SavedPoint p:new SavedPoint[]{selected,preview,destination})if(p!=null&&Double.isFinite(p.latitude)&&Double.isFinite(p.longitude)){
+            for(int i=0;i<emphasizedPoints.length;i++){SavedPoint p=emphasizedPoints[i];if(p!=null&&p.hasLocation()){
                 PointF origin=project(p.latitude,p.longitude);float radius=dp(Math.max(13,p.size*.72f));
                 int fill=p.color==0?colorFor(p.type):p.color;int ink=markerInk(fill);
-                if(p.id>0)hits.add(new Hit(p,origin));paint.setColor(0xff00cce8);canvas.drawCircle(origin.x,origin.y,radius+dp(3),paint);paint.setColor(fill);canvas.drawCircle(origin.x,origin.y,radius,paint);
+                if(emphasizedHits[i]!=null)emphasizedHits[i].screen.set(origin);paint.setColor(0xff00cce8);canvas.drawCircle(origin.x,origin.y,radius+dp(3),paint);paint.setColor(fill);canvas.drawCircle(origin.x,origin.y,radius,paint);
                 Bitmap glyph=preparedMarkers.get(p.id);if(glyph!=null&&!glyph.isRecycled()){float half=dp(12)*p.size/18f;markerBounds.set(origin.x-half,origin.y-half,origin.x+half,origin.y+half);paint.setFilterBitmap(true);canvas.drawBitmap(glyph,null,markerBounds,paint);}
-            }
+            }}
             if(!backtrack.isEmpty()){double[] start=backtrack.get(backtrack.size()-1);if(start.length>=2&&Double.isFinite(start[0])){PointF p=project(start[0],start[1]);paint.setColor(0xff001e2e);canvas.drawRoundRect(p.x-dp(28),p.y-dp(27),p.x+dp(28),p.y-dp(4),dp(5),dp(5),paint);paint.setColor(0xff35dfd1);paint.setTextAlign(Paint.Align.CENTER);paint.setTextSize(dp(13));canvas.drawText(getContext().getString(com.fiskentra.app.R.string.map_track_start),p.x,p.y-dp(11),paint);}}
             if (location != null) {
                 PointF current = project(location.getLatitude(), location.getLongitude());
                 boolean fresh=positionLive&&FiskentraLocationManager.isFresh(location);
                 if(accuracyVertices!=null){
-                    accuracyPath.reset();for(int i=0;i<accuracyVertices.length;i++){PointF p=map.getProjection().toScreenLocation(accuracyVertices[i]);if(i==0)accuracyPath.moveTo(p.x,p.y);else accuracyPath.lineTo(p.x,p.y);}accuracyPath.close();
+                    accuracyPath.reset();for(int i=0;i<accuracyVertices.length;i++){PointF p=toScreen(accuracyVertices[i]);if(i==0)accuracyPath.moveTo(p.x,p.y);else accuracyPath.lineTo(p.x,p.y);}accuracyPath.close();
                     paint.setColor(fresh?0x4435dfd1:0x33778899);canvas.drawPath(accuracyPath,paint);paint.setStyle(Paint.Style.STROKE);paint.setColor(fresh?0xff35dfd1:0xff8899aa);paint.setStrokeWidth(dp(1.5f));canvas.drawPath(accuracyPath,paint);paint.setStyle(Paint.Style.FILL);
                 }
-                if (fresh && Double.isFinite(orientation)) {
+                if (fresh && camera.orientationAvailable() && Double.isFinite(orientation)) {
                     canvas.save(); canvas.rotate((float)(orientation - map.getCameraPosition().bearing), current.x, current.y);
                     paint.setColor(Color.rgb(0, 130, 175));
-                    Path arrow = new Path(); arrow.moveTo(current.x, current.y - dp(28));
-                    arrow.lineTo(current.x - dp(8), current.y - dp(14)); arrow.lineTo(current.x + dp(8), current.y - dp(14)); arrow.close();
-                    canvas.drawPath(arrow, paint); canvas.restore();
+                    directionPath.rewind();directionPath.moveTo(current.x,current.y-dp(28));
+                    directionPath.lineTo(current.x-dp(8),current.y-dp(14));directionPath.lineTo(current.x+dp(8),current.y-dp(14));directionPath.close();
+                    canvas.drawPath(directionPath,paint);canvas.restore();
                 }
                 paint.setColor(Color.WHITE); canvas.drawCircle(current.x, current.y, dp(12), paint);
                 paint.setColor(fresh?0xff0059e8:0xff778899); canvas.drawCircle(current.x, current.y, dp(8), paint);

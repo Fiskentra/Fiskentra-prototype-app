@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Serial)
 $ErrorActionPreference='Stop'
-$adb='C:\Users\Gebruiker\AppData\Local\Android\Sdk\platform-tools\adb.exe'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$adb=(Resolve-FiskentraAdb '')
 $peak=(& $adb -s $Serial shell settings get system peak_refresh_rate | Out-String).Trim()
 $minimum=(& $adb -s $Serial shell settings get system min_refresh_rate | Out-String).Trim()
 if($LASTEXITCODE -ne 0){throw 'Cannot read original refresh settings'}

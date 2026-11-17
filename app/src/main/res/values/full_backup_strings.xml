@@ -1,0 +1,27 @@
+<resources>
+    <string name="cloud_sync_and_backup_status">%1$s\n%2$s</string>
+    <string name="backup_dialog_title">Cloud sync &amp; backup</string>
+    <string name="backup_scope_notice">Full backups include original photos, saved points, recorded routes and their links. Changes are backed up while Fiskentra is running after you enable backup. Completed copies stay in your account; deleting something on this phone does not erase earlier backups. Unfinished tracks restore as saved routes without starting recording.</string>
+    <string name="backup_all_action">BACK UP PHOTOS &amp; TRIPS</string>
+    <string name="backup_restore_action">RESTORE A FULL BACKUP</string>
+    <string name="backup_pause_action">PAUSE AUTOMATIC BACKUPS</string>
+    <string name="backup_point_sync_notice">Point details can also sync separately. Use a full backup to recover photos, trips and point links on another phone. Records linked to a different account stay separate.</string>
+    <string name="backup_points_upload">SYNC POINT DETAILS ONLY</string>
+    <string name="backup_points_restore">RESTORE POINT DETAILS ONLY</string>
+    <string name="backup_result_title">Cloud backup</string>
+    <string name="backup_attention_title">Backup needs attention</string>
+    <string name="backup_loading_history">Loading completed backups from your account…</string>
+    <string name="backup_no_history">No completed backups on this page. Create a full backup on your original phone first.</string>
+    <string name="backup_choose_copy">Choose a completed backup</string>
+    <string name="backup_counts">%1$s · %2$s · %3$s</string>
+    <string name="backup_copy_label">%1$s\n%2$s\n%3$s</string>
+    <string name="backup_saved_copy">Saved backup</string>
+    <string name="backup_other_phone">Another phone</string>
+    <string name="backup_older_copies">OLDER BACKUPS</string>
+    <string name="backup_restore_confirm_title">Restore this backup?</string>
+    <string name="backup_restore_confirm">%1$s\n\nOriginal files are verified before import. Existing edits are kept and conflicts are reported. Recording will not start automatically. The cloud backup remains available.</string>
+    <string name="backup_restore_confirm_action">RESTORE</string>
+    <plurals name="backup_point_count"><item quantity="one">%d point</item><item quantity="other">%d points</item></plurals>
+    <plurals name="backup_photo_count"><item quantity="one">%d photo</item><item quantity="other">%d photos</item></plurals>
+    <plurals name="backup_trip_count"><item quantity="one">%d trip</item><item quantity="other">%d trips</item></plurals>
+</resources>

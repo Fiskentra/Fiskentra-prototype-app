@@ -22,23 +22,28 @@ import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
+import com.fiskentra.app.location.HazardAlerts;
+import com.fiskentra.app.model.FieldAccessPolicy;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.weather.WeatherClient;
 
+import timber.log.Timber;
 
-/** Keeps Flic 2, GPS, local point capture and active trip recording alive screen-off. */
+/** Keeps Flic 2, GPS, local capture and hazard alerts available with the screen off. */
 public final class FiskentraFlicService extends Service implements
         FiskentraFlic2Manager.Listener, FiskentraLocationManager.Listener {
 
     private static final int NOTIFICATION_ID = 620;
     private static final String CHANNEL_ID = "fiskentra_field_button";
     private static volatile boolean running;
+    private static volatile boolean foregroundLocation;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private static final java.util.concurrent.ExecutorService CAPTURE_IO = java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private FiskentraFlic2Manager flicManager;
     private FiskentraLocationManager locationManager;
+    private HazardAlerts hazardAlerts;
     private PointStore pointStore;
     private TrackStore trackStore;
     private PointSyncQueue syncQueue;
@@ -67,7 +72,8 @@ public final class FiskentraFlicService extends Service implements
 
     public static void start(Context context) {
         Intent intent = new Intent(context, FiskentraFlicService.class);
-        context.startForegroundService(intent);
+        if (running) context.startService(intent);
+        else context.startForegroundService(intent);
     }
 
     public static void stop(Context context) {
@@ -78,11 +84,16 @@ public final class FiskentraFlicService extends Service implements
         return running;
     }
 
+    public static boolean hasForegroundLocation() {
+        return foregroundLocation;
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         FiskentraApplication application = (FiskentraApplication) getApplication();
         flicManager = application.getFlicManager();
         locationManager = new FiskentraLocationManager(this, this);
+        hazardAlerts = application.getHazardAlerts();
         pointStore = new PointStore(this);
         trackStore = new TrackStore(this);
         syncQueue = PointSyncQueue.get(this);
@@ -91,10 +102,18 @@ public final class FiskentraFlicService extends Service implements
 
         createNotificationChannel();
         try {
-            enterForeground("Starting Flic 2 and GPS…");
-        } catch (SecurityException error) {
+            String status = hazardAlerts.isMonitoringNeeded()
+                    ? getString(R.string.hazard_monitoring_status) : "Starting Flic 2 and GPS…";
+            if (!enterForeground(status)) {
+                flicManager.reportActionResult(null, false,
+                        "Background capture needs Location enabled or a permitted paired Flic 2");
+                stopSelf();
+                return;
+            }
+        } catch (RuntimeException error) {
+            // Foreground-service type/start restrictions can fail here, after start() returned.
             flicManager.reportActionResult(null, false,
-                    "Background service needs Location and Nearby devices permissions");
+                    "Background capture unavailable · check permissions and reopen Fiskentra");
             stopSelf();
             return;
         }
@@ -108,11 +127,20 @@ public final class FiskentraFlicService extends Service implements
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        if (running && !foregroundLocation && hazardAlerts.isMonitoringNeeded()
+                && locationManager.isEnabled()) {
+            try {
+                if (enterForeground(getString(R.string.hazard_monitoring_status))) locationManager.start();
+            } catch (RuntimeException error) {
+                Timber.w(error, "Could not add foreground location");
+            }
+        }
+        return running ? START_STICKY : START_NOT_STICKY;
     }
 
     @Override public void onDestroy() {
         running = false;
+        foregroundLocation = false;
         handler.removeCallbacksAndMessages(null);
         if (locationManager != null) locationManager.stop();
         if (flicManager != null) flicManager.removeListener(this);
@@ -127,6 +155,7 @@ public final class FiskentraFlicService extends Service implements
 
     @Override public void onLocation(Location location) {
         lastLocation = location;
+        hazardAlerts.onLocation(location);
         Location copy = new Location(location);
         CAPTURE_IO.execute(() -> {
             if (trackStore != null && trackStore.add(copy))
@@ -212,24 +241,31 @@ public final class FiskentraFlicService extends Service implements
     private void createNotificationChannel() {
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID, "Fiskentra field activity", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Keeps Flic 2 capture and active trip recording available while locked");
+        channel.setDescription("Keeps Flic 2, trip recording and hazard monitoring available while locked");
         channel.setShowBadge(false);
         notificationManager.createNotificationChannel(channel);
     }
 
-    private void enterForeground(String status) {
+    private boolean enterForeground(String status) {
+        int capabilities = FieldAccessPolicy.backgroundCapabilities(
+                locationManager.hasPermission(), locationManager.isEnabled(),
+                flicManager != null && flicManager.hasPermissions(),
+                flicManager != null && flicManager.pairedButtonCount() > 0);
+        // Android 14+ rejects type NONE. Stop gracefully and keep Activity capture available.
+        if (capabilities == 0) return false;
         Notification notification = notification(status);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int types = locationManager.hasPermission() && locationManager.isEnabled()
+            int types = (capabilities & FieldAccessPolicy.LOCATION) != 0
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION : 0;
-            if (flicManager != null && flicManager.hasPermissions()
-                    && flicManager.pairedButtonCount() > 0) {
+            if ((capabilities & FieldAccessPolicy.CONNECTED_DEVICE) != 0) {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
             }
             startForeground(NOTIFICATION_ID, notification, types);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
+        foregroundLocation = (capabilities & FieldAccessPolicy.LOCATION) != 0;
+        return true;
     }
 
     private void updateNotification(String status) {
@@ -242,10 +278,15 @@ public final class FiskentraFlicService extends Service implements
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String title = "Fiskentra field button active";
+        if (trackStore != null && trackStore.isActive()) {
+            title = trackStore.isPaused() ? "Fiskentra trip paused" : "Fiskentra trip recording";
+        } else if (hazardAlerts.isMonitoringNeeded()) {
+            title = getString(R.string.hazard_monitoring_title);
+        }
         return new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(trackStore != null && trackStore.isActive()
-                        ? (trackStore.isPaused() ? "Fiskentra trip paused" : "Fiskentra trip recording") : "Fiskentra field button active")
+                .setSmallIcon(R.drawable.ic_stat_fiskentra)
+                .setContentTitle(title)
                 .setContentText(status)
                 .setContentIntent(contentIntent)
                 .setCategory(Notification.CATEGORY_SERVICE)

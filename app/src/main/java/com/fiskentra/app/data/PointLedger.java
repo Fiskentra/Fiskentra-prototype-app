@@ -107,6 +107,19 @@ public final class PointLedger {
     }
     public synchronized boolean isDeleted(long id) { return state.optJSONObject("deleted").has(String.valueOf(id)); }
 
+    /** Cleanup shares the record monitor with insert/edit so a live photo reference cannot be raced. */
+    public synchronized boolean deleteUnreferencedPhoto(File photoRoot, String path) {
+        if (photoRoot == null || path == null || path.isEmpty()) return false;
+        try {
+            File expected = new File(photoRoot.getParentFile().getCanonicalFile(), photoRoot.getName());
+            File root = photoRoot.getCanonicalFile(), file = new File(path).getCanonicalFile();
+            if (!expected.equals(root) || !file.getPath().startsWith(root.getPath() + File.separator) || !file.isFile()) return false;
+            for (SavedPoint point : snapshot.points) if (point.catchDetails != null && !point.catchDetails.localPhotoPath.isEmpty()
+                    && file.equals(new File(point.catchDetails.localPhotoPath).getCanonicalFile())) return false;
+            return file.delete();
+        } catch (IOException error) { return false; } // Uncertain ownership always retains the bytes.
+    }
+
     public synchronized SavedPoint insert(SavedPoint candidate) {
         SavedPoint existing = findEvent(candidate.eventId);
         if (existing != null) return existing;
@@ -144,6 +157,18 @@ public final class PointLedger {
             if (point.hasLocation()) append(next, point, "upsert");
             bumpData(next); commit(next); return find(id);
         } catch (Exception error) { throw failure(error); }
+    }
+
+    /** A cloud snapshot must not replace an edit made after its local comparison. */
+    public synchronized SavedPoint editIfRevision(long id, long expectedRevision, Edit edit) {
+        SavedPoint current = find(id);
+        if (current == null || current.revision != expectedRevision) return null;
+        return edit(id, edit);
+    }
+
+    public synchronized boolean deleteIfRevision(long id, long expectedRevision) {
+        SavedPoint current = find(id);
+        return current != null && current.revision == expectedRevision && delete(id);
     }
 
     public synchronized boolean delete(long id) {

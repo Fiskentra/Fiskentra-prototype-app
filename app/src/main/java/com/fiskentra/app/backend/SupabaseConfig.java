@@ -10,7 +10,7 @@ import com.fiskentra.app.BuildConfig;
  * sb_secret key in an Android application.
  */
 public final class SupabaseConfig {
-    public static final String PROJECT_REF = "dwlbefpmwzmhutlvqfmu";
+    public static final String PROJECT_REF = "ihrguwrdicwixbimunje";
 
     private SupabaseConfig() {}
 

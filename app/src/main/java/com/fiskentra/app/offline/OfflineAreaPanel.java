@@ -1,5 +1,6 @@
 package com.fiskentra.app.offline;
 
+import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
@@ -20,6 +21,8 @@ import com.fiskentra.app.ui.MapTilerMapView;
 import java.util.Locale;
 
 /** Embeddable bottom-sheet content; the existing map remains the area picker and geographic canvas. */
+// Download state and geographic actions are provided by the map owner, not XML inflation.
+@SuppressLint("ViewConstructor")
 public final class OfflineAreaPanel extends ScrollView {
     public interface Host {
         void chooseCenterOnMap();
@@ -96,7 +99,7 @@ public final class OfflineAreaPanel extends ScrollView {
         boolean compactReady=ready!=null&&ready.state==OfflineMapController.State.READY&&snapshot.checked&&!snapshot.creating&&snapshot.areas.size()==1;
         title.setText(compactReady?ready.name:getContext().getString(R.string.offline_title));
         summary.setVisibility(compactReady?VISIBLE:GONE);
-        if(compactReady)summary.setText(ready.styleName+" · "+radiusText(ready.radiusKm)+" · "+formatBytes(getContext(),ready.completedBytes));
+        if(compactReady)summary.setText(getContext().getString(R.string.ui_three_values,ready.styleName,radiusText(ready.radiusKm),formatBytes(getContext(),ready.completedBytes)));
         // A controller failure still takes precedence over a previously downloaded area's READY state.
         status.setText(snapshot.status);status.setTextColor(compactReady&&snapshot.status.equals(ready.status)?Color.rgb(53,223,209):MUTED);
         changeArea.setText(editing?R.string.offline_cancel:R.string.offline_change_area);
@@ -115,7 +118,7 @@ public final class OfflineAreaPanel extends ScrollView {
     private void updateCoverage(){
         OfflineMapController.Area ready=controller.snapshot().readyArea;
         OfflineAreaPolicy.Coverage value=ready==null?OfflineAreaPolicy.Coverage.NO_AREA:ready.coverage(mapStyle,mapLatitude,mapLongitude,mapZoom);
-        coverage.setText(getContext().getString(R.string.offline_coverage_title)+" · "+getContext().getString(coverageResource(value)));
+        coverage.setText(getContext().getString(R.string.ui_label_value,getContext().getString(R.string.offline_coverage_title),getContext().getString(coverageResource(value))));
         coverage.setTextColor(value==OfflineAreaPolicy.Coverage.AVAILABLE?TEXT:Color.rgb(255,183,62));
         route.setText(cachedRoute?R.string.offline_route_saved:R.string.offline_route_not_saved);
     }
@@ -123,7 +126,7 @@ public final class OfflineAreaPanel extends ScrollView {
         draft=null;validation.setText("");
         if(hasCenter){try{draft=OfflineMapController.draft(latitude,longitude,radius,styleId);}catch(IllegalArgumentException invalid){validation.setText(OfflineMapController.invalidAreaResource(invalid));}}
         center.setText(hasCenter?getContext().getString(R.string.offline_center,latitude,longitude):getContext().getString(R.string.offline_choose_center_first));
-        style.setText(getContext().getString(R.string.offline_style)+" · "+MapTilerMapView.styleName(styleId));
+        style.setText(getContext().getString(R.string.ui_label_value,getContext().getString(R.string.offline_style),MapTilerMapView.styleName(styleId)));
         for(int i=0;i<draftBody.getChildCount();i++){View child=draftBody.getChildAt(i);if(child instanceof LinearLayout){LinearLayout row=(LinearLayout)child;for(int j=0;j<row.getChildCount();j++){View view=row.getChildAt(j);if(view instanceof Button&&view.getTag() instanceof Integer){int km=(Integer)view.getTag();((Button)view).setText(radiusText(km));view.setSelected(km==(int)radius);view.setBackground(background(km==(int)radius?BLUE:NAVY,LINE,12));}}}}
         if(editing)host.previewDraft(draft);refresh();
     }

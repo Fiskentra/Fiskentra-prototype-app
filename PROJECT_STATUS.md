@@ -1,8 +1,20 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-07
+The current Android candidate is **0.29.0 / versionCode 45**. It includes personal map hazards and locked-screen proximity alerts. See the [Android 0.29.0 notes](README.md#android-0290-versioncode-45) for the alert behavior and device test. APK file `artifacts/Fiskentra-0.29.0-hazards-debug.apk`.
 
-## Current stage
+## Android 0.28.3 full backup
+
+Checked 7 November 2026. See [full-backup behavior and verification](RELEASE_NOTES_0.28.3.md), the agreed [Free and Premium split](PRODUCT_TIERS.md) and [closed-beta plan](BETA_ROADMAP.md). APK file `artifacts/Fiskentra-0.28.3-full-backup-debug.apk`.
+
+Private immutable full backups now include original saved photos, routes, point details and their links, with an explicit enable action and restore from version history. Unfinished tracks restore as saved routes without auto-starting GPS. Account ownership, checksums, staged immutable jobs and local-conflict protection guard the transfer; missing files fail the new copy rather than disappear from it. Background work runs while the process is alive. Old cloud versions survive local deletion; deletion UI, retention pruning and object garbage collection are not implemented.
+
+Debug assembly and debug/release Lint (**0 errors / 0 warnings**) pass; final core runner: **28/28 PASS**. Focused checks: ledger 84, byte reconstruction 52, fresh-local import 77, intercepted HTTP transport 543, isolated SQL 61 and smoke fixtures 10, all PASS. The APK is installed on Galaxy A33/API 36 with **26/26 original private files identical immediately after upgrade**. After the initial missing bucket was corrected, the same staged job survived actual process relaunch and APK update and completed. **Real full upload → history → restore passes for the real dataset: 3 points, 0 photos, 0 trips.** Final jobs 0, restore journal complete 1, unchanged point-ledger/legacy-queue SHA, FATAL 0; account and enabled backup state persist after relaunch.
+
+Live role smoke: **32/32 PASS with ROLLBACK**, no Auth/Storage writes, two temporary backup rows rolled back, original backup unchanged. A's own commit/replay and B/anonymous negative access, bucket configuration and complete inventories are checked; B positive own-CRUD and SQL-side JWT signature validation are excluded. Independent anonymous HTTP manifest/public/private routes all deny access. The current requested implementation/live gates are complete. Physical second-device/clean-install photo-and-route recovery is not claimed: it is covered by fresh local fixtures, not a second phone. Wider beta acceptance, physical Flic and field navigation remain separate work.
+
+The rest of this file preserves status through v0.20, last updated 2026-09-07. Its old install, cloud, offline-map and road-routing statements do not establish readiness of 0.28.3.
+
+## Historical stage (v0.20)
 
 - Version: `v0.20` (versionCode 28)
 - Stage: Offline GPX trip export — implemented, built, installed and regression-tested; final document-picker test awaits a recorded trip on the phone
