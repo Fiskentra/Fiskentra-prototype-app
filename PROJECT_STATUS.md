@@ -1,6 +1,8 @@
 # Fiskentra Project Status
 
-Last updated: 2026-09-07
+Active Android map development continues on the [field map branch](https://github.com/Fiskentra/Fiskentra-prototype-app/blob/codex/field-map-v021/README.md). See the [0.28.1 recovery release notes](https://github.com/Fiskentra/Fiskentra-prototype-app/blob/codex/field-map-v021/RELEASE_NOTES_0.28.1.md), [Free and Premium](https://github.com/Fiskentra/Fiskentra-prototype-app/blob/codex/field-map-v021/PRODUCT_TIERS.md) and the [closed-beta plan](https://github.com/Fiskentra/Fiskentra-prototype-app/blob/codex/field-map-v021/BETA_ROADMAP.md).
+
+Historical status last updated on 2026-09-07.
 
 ## Current stage
 

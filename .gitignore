@@ -1,5 +1,8 @@
 # Android / Gradle
 .gradle/
+.gradle-codex/
+.android-codex/
+.jtmp/
 **/build/
 *.iml
 .idea/
