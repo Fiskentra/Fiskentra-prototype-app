@@ -1,10 +1,12 @@
 <resources>
     <string name="map_debug_readonly">Debug fixture · no changes to saved data</string>
-    <string name="map_catch_count">%1$d catches</string>
+    <plurals name="map_catch_count">
+        <item quantity="one">%1$d catch</item>
+        <item quantity="other">%1$d catches</item>
+    </plurals>
     <string name="map_replace_backtrack">Stop return guidance and navigate to this point?</string>
     <string name="map_choose_destination_on_map">Choose the destination on the map</string>
     <string name="map_save_failed">Could not save. Please try again.</string>
-    <string name="map_delete_confirm">Remove this point from this phone and queue its cloud deletion?</string>
     <string name="map_track_start">Start</string>
     <string name="map_close">Close</string>
     <string name="map_expand">Expand panel</string>
@@ -39,14 +41,20 @@
     <string name="map_filter_favorites">Favorites only</string>
     <string name="map_filter_catches">Only catches</string>
     <string name="map_filter_reset">Reset filters</string>
-    <string name="map_filter_count">Show %1$d points · %2$d without location</string>
+    <plurals name="map_filter_count">
+        <item quantity="one">Show %1$d point · %2$d without location</item>
+        <item quantity="other">Show %1$d points · %2$d without location</item>
+    </plurals>
     <string name="map_filter_empty">No points match these filters</string>
     <string name="map_filter_no_trip">No active trip. Choose All points to see your history.</string>
     <string name="map_filter_hidden">Selected point hidden by filters</string>
     <string name="map_filter_bad_dates">Choose an end date on or after the start date</string>
     <string name="map_layers_filter">Filters and visible points</string>
     <string name="map_visible_points">Visible points</string>
-    <string name="map_visible_count">%1$d on map · %2$d without location</string>
+    <plurals name="map_visible_count">
+        <item quantity="one">%1$d on map · %2$d point without location</item>
+        <item quantity="other">%1$d on map · %2$d points without location</item>
+    </plurals>
     <string name="map_camera_free">Free map · follow my position</string>
     <string name="map_camera_position">Following position · follow heading</string>
     <string name="map_camera_heading">Following heading · follow position</string>
@@ -59,13 +67,10 @@
     <string name="map_gps_permission">Location permission required</string>
     <string name="map_gps_disabled">Location is turned off</string>
     <string name="map_gps_unknown">GPS accuracy unavailable</string>
-    <string name="map_gps_unavailable">Location unavailable</string>
-    <string name="map_compass_poor">Compass direction unavailable</string>
     <string name="map_offline_choose">Move the map, then use this center</string>
     <string name="map_use_center">Use map center</string>
     <string name="map_target_deleted">Navigation stopped: destination was deleted</string>
     <string name="map_retry_sync">Retry sync</string>
-    <string name="map_outdoor">Outdoor</string>
     <string name="map_return">Return along track</string>
     <string name="map_return_saved">Return along saved trip</string>
     <string name="map_cancel">Cancel</string>

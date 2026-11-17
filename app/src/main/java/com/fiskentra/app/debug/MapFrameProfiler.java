@@ -7,7 +7,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.util.AtomicFile;
-import android.util.Log;
+import timber.log.Timber;
 import android.view.FrameMetrics;
 import android.view.Window;
 import com.fiskentra.app.BuildConfig;
@@ -41,7 +41,7 @@ public final class MapFrameProfiler implements AutoCloseable {
         FrameTimingStats capture=stats;running=true;
         listener=(window,metrics,dropped)->capture.add(metrics.getMetric(FrameMetrics.TOTAL_DURATION),metrics.getMetric(FrameMetrics.FIRST_DRAW_FRAME)==1,dropped);
         activity.getWindow().addOnFrameMetricsAvailableListener(listener,handler);
-        Log.i(TAG,"START "+this.label);
+        Timber.tag(TAG).i("START %s", this.label);
     }
     /** UI thread. Writing/aggregation occur on the collector thread after queued frame callbacks. */
     public void stop(){
@@ -70,8 +70,8 @@ public final class MapFrameProfiler implements AutoCloseable {
             File directory=new File(activity.getFilesDir(),"qa");if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Cannot create QA directory");
             StringBuilder csv=new StringBuilder("sample,total_duration_ns\n");long[]raw=capture.rawNanos();for(int i=0;i<raw.length;i++)csv.append(i).append(',').append(raw[i]).append('\n');
             atomic(new File(directory,"map-profile.csv"),csv.toString());atomic(new File(directory,"map-profile.json"),report.toString(2));
-            Log.i(TAG,"REPORT "+report);
-        }catch(Exception failure){Log.e(TAG,"Profile report could not be saved",failure);}
+            Timber.tag(TAG).i("REPORT %s", report);
+        }catch(Exception failure){Timber.tag(TAG).e(failure, "Profile report could not be saved");}
     }
     private static Object finite(double value){return Double.isFinite(value)?value:JSONObject.NULL;}
     private static void atomic(File path,String value)throws Exception{

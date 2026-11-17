@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="catch_released_label">Released back into the water</string>
+    <string name="data_local_storage_title">Local storage</string>
+    <string name="data_storage_info">Storage information</string>
+    <string name="data_delete_from_phone">Delete from this phone</string>
+    <string name="data_local_beta">Saved on this phone · cloud transfer off</string>
+    <string name="data_local_storage_summary">Points, photos and tracks stay on this phone. This beta does not create a cloud backup.</string>
+    <string name="data_previous_cloud_notice">Copies sent by an earlier version may still exist on the server. This beta does not read, change or delete those copies.</string>
+    <string name="data_local_account_notice">Sign-in manages your profile only. It does not upload, restore or transfer points, photos or tracks.</string>
+    <string name="data_cloud_transfer_disabled">Cloud transfer is off in this local beta. Your records and any pending transfer intentions remain on this phone.</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.fiskentra.app.ui;
 
+import android.annotation.SuppressLint;
 import android.app.DatePickerDialog;
 import android.content.Context;
 import android.view.View;
@@ -9,6 +10,8 @@ import com.fiskentra.app.model.*;
 import java.time.*;
 import java.util.*;
 
+// Constructed by the map owner with its current data and actions; not an XML-inflatable widget.
+@SuppressLint("ViewConstructor")
 final class MapFilterPanel extends LinearLayout implements MapSheet.FooterContent {
     interface Actions { void apply(MapFilterPolicy filter);void list(); }
     private MapFilterPolicy initial;
@@ -42,5 +45,5 @@ final class MapFilterPanel extends LinearLayout implements MapSheet.FooterConten
     private void adapter(Spinner view,String[] labels){ArrayAdapter<String> a=new ArrayAdapter<>(getContext(),android.R.layout.simple_spinner_item,labels);a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);view.setAdapter(a);view.setMinimumHeight(MapUi.dp(getContext(),48));}
     private void date(boolean start){LocalDate d=start?first:last;new DatePickerDialog(getContext(),(v,y,m,day)->{if(start)first=LocalDate.of(y,m+1,day);else last=LocalDate.of(y,m+1,day);refresh();},d.getYear(),d.getMonthValue()-1,d.getDayOfMonth()).show();}
     private MapFilterPolicy value(){if(last.isBefore(first)&&scope.getSelectedItemPosition()==3)return null;long[] range=MapFilterPolicy.dates(first,last.isBefore(first)?first:last,ZoneId.systemDefault());ArrayList<String> chosen=new ArrayList<>();for(int i=0;i<types.length;i++)if(types[i].isChecked())chosen.add(MapFilterPolicy.TYPES[i]);int selected=trip.getSelectedItemPosition();return new MapFilterPolicy(new String[]{"all","current","trip","dates"}[Math.max(0,scope.getSelectedItemPosition())],selected>=0&&selected<trips.size()?Long.toString(trips.get(selected).id):"",range[0],range[1],chosen,favorites.isChecked());}
-    private void refresh(){if(!ready)return;boolean dates=scope.getSelectedItemPosition()==3;zone.setVisibility(dates?VISIBLE:GONE);from.setVisibility(dates?VISIBLE:GONE);to.setVisibility(dates?VISIBLE:GONE);trip.setVisibility(scope.getSelectedItemPosition()==2?VISIBLE:GONE);from.setText(getContext().getString(R.string.map_filter_from,first.toString()));to.setText(getContext().getString(R.string.map_filter_to,last.toString()));MapFilterPolicy f=value();apply.setEnabled(f!=null);if(f==null){message.setText(R.string.map_filter_bad_dates);return;}List<SavedPoint> filtered=f.apply(points,currentTrip);int missing=0;for(SavedPoint p:filtered)if(!Double.isFinite(p.latitude)||!Double.isFinite(p.longitude))missing++;apply.setText(getContext().getString(R.string.map_filter_count,filtered.size()-missing,missing));message.setText("current".equals(f.scope)&&("0".equals(currentTrip)||currentTrip.isEmpty())?R.string.map_filter_no_trip:filtered.isEmpty()?R.string.map_filter_empty:R.string.map_filter_types);}
+    private void refresh(){if(!ready)return;boolean dates=scope.getSelectedItemPosition()==3;zone.setVisibility(dates?VISIBLE:GONE);from.setVisibility(dates?VISIBLE:GONE);to.setVisibility(dates?VISIBLE:GONE);trip.setVisibility(scope.getSelectedItemPosition()==2?VISIBLE:GONE);from.setText(getContext().getString(R.string.map_filter_from,first.toString()));to.setText(getContext().getString(R.string.map_filter_to,last.toString()));MapFilterPolicy f=value();apply.setEnabled(f!=null);if(f==null){message.setText(R.string.map_filter_bad_dates);return;}List<SavedPoint> filtered=f.apply(points,currentTrip);int missing=0;for(SavedPoint p:filtered)if(!Double.isFinite(p.latitude)||!Double.isFinite(p.longitude))missing++;int visible=filtered.size()-missing;apply.setText(getResources().getQuantityString(R.plurals.map_filter_count,visible,visible,missing));message.setText("current".equals(f.scope)&&("0".equals(currentTrip)||currentTrip.isEmpty())?R.string.map_filter_no_trip:filtered.isEmpty()?R.string.map_filter_empty:R.string.map_filter_types);}
 }

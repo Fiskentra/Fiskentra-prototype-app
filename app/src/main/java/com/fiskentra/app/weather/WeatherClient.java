@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities;
 import com.fiskentra.app.model.WeatherSnapshot;
 import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.WeatherForecast;
+import com.fiskentra.app.model.WindLayerPolicy;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -218,6 +219,42 @@ public final class WeatherClient {
 
     public void close() {
         executor.shutdownNow();
+    }
+
+    /** Saved wind may outlive the normal current-weather cache, but keeps its observation time/place. */
+    public static final class CachedWind {
+        public final WeatherSnapshot weather;
+        public final double latitude, longitude;
+
+        private CachedWind(WeatherSnapshot weather, double latitude, double longitude) {
+            this.weather = weather; this.latitude = latitude; this.longitude = longitude;
+        }
+    }
+
+    /** Read-only fallback for the map layer; never refreshes cache age or bypasses fetch freshness. */
+    public CachedWind cachedWind(double latitude, double longitude) {
+        try {
+            double savedLatitude = Double.longBitsToDouble(prefs.getLong(KEY_LATITUDE, Double.doubleToLongBits(Double.NaN)));
+            double savedLongitude = Double.longBitsToDouble(prefs.getLong(KEY_LONGITUDE, Double.doubleToLongBits(Double.NaN)));
+            if (!validCoordinate(latitude, longitude) || !validCoordinate(savedLatitude, savedLongitude)) return null;
+            JSONObject stored = new JSONObject(prefs.getString(KEY_WEATHER, ""));
+            // Generic snapshots allow missing wind fields; this layer must not turn missing data into calm wind.
+            if (!WindLayerPolicy.usable(stored.getLong("observed_at"), stored.getDouble("wind_speed_kmh"),
+                    stored.getInt("wind_direction_degrees"), System.currentTimeMillis())) return null;
+            WeatherSnapshot saved = WeatherSnapshot.fromJson(stored);
+            if (saved == null) return null;
+            float[] distance = new float[1];
+            android.location.Location.distanceBetween(latitude, longitude, savedLatitude, savedLongitude, distance);
+            return Float.isFinite(distance[0]) && distance[0] <= CACHE_MAX_DISTANCE_METERS
+                    ? new CachedWind(saved, savedLatitude, savedLongitude) : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static boolean validCoordinate(double latitude, double longitude) {
+        return Double.isFinite(latitude) && Double.isFinite(longitude)
+                && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
     }
 
     private WeatherSnapshot cached(double latitude, double longitude) {

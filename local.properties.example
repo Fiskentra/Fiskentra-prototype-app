@@ -1,7 +1,7 @@
 # Copy to local.properties on your development computer. Keep real values out of Git.
 sdk.dir=C:\\Users\\YOUR_NAME\\AppData\\Local\\Android\\Sdk
 
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_URL=https://ihrguwrdicwixbimunje.supabase.co
 SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 # Enable Maps SDK for Android in the associated Google Cloud project.
 # Restrict this Android key to com.fiskentra.app and your signing certificate SHA-1.

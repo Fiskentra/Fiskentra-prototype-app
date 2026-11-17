@@ -1,5 +1,8 @@
 # Android / Gradle
 .gradle/
+.gradle-codex/
+.android-codex/
+.jtmp/
 **/build/
 *.iml
 .idea/
@@ -23,3 +26,4 @@ Thumbs.db
 /qa/*
 !/qa/*.ps1
 !/qa/*.py
+supabase.local.properties

@@ -2,6 +2,8 @@ package com.fiskentra.app;
 
 import android.Manifest;
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -33,6 +35,8 @@ import com.fiskentra.app.backend.SupabaseConnection;
 import com.fiskentra.app.backend.SupabaseAuthManager;
 import com.fiskentra.app.backend.SupabaseConfig;
 import com.fiskentra.app.backend.PointSyncQueue;
+import com.fiskentra.app.backend.CloudDataPolicy;
+import com.fiskentra.app.backend.AccountBackupManager;
 import com.fiskentra.app.data.FishingDayStore;
 import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
@@ -41,6 +45,7 @@ import com.fiskentra.app.export.GpxExporter;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
 import com.fiskentra.app.model.FishingDay;
+import com.fiskentra.app.model.FieldAccessPolicy;
 import com.fiskentra.app.model.CatchDetails;
 import com.fiskentra.app.model.ForecastDay;
 import com.fiskentra.app.model.SavedPoint;
@@ -70,7 +75,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-public final class MainActivity extends Activity implements
+public final class MainActivity extends ComponentActivity implements
         FiskentraLocationManager.Listener, FiskentraFlic2Manager.Listener {
 
     private static final int REQUEST_PERMISSIONS = 1001;
@@ -101,6 +106,7 @@ public final class MainActivity extends Activity implements
     private static final String MAP_STYLE = "selected_map_style";
 
     private FrameLayout content;
+    private OnBackPressedCallback appBackCallback;
     private DesignScreens design;
     private LinearLayout nav;
     private PointStore pointStore;
@@ -111,6 +117,10 @@ public final class MainActivity extends Activity implements
     private SupabaseConnection supabaseConnection;
     private SupabaseAuthManager authManager;
     private PointSyncQueue syncQueue;
+    private AccountBackupManager backupManager;
+    private final AccountBackupManager.Observer backupObserver = () -> runOnUiThread(() -> {
+        if (!this.destroyed && ("saved".equals(this.screen) || "device".equals(this.screen) || "profile".equals(this.screen) || "beta".equals(this.screen))) render(this.screen);
+    });
     private WeatherClient weatherClient;
     private com.fiskentra.app.debug.MapFrameProfiler mapFrameProfiler;
     private String debugMapDataset="off";
@@ -124,8 +134,8 @@ public final class MainActivity extends Activity implements
     private String connectedDevice = "";
     private boolean flicConnected = false;
     private boolean cloudConnected = false;
-    private String cloudStatus = "Checking Fiskentra cloud…";
-    private String cloudSyncStatus = "Saved points sync after each new moment";
+    private String cloudStatus = "Local beta · cloud transfer off";
+    private String cloudSyncStatus = "Saved on this phone · no cloud backup";
     private TextView deviceStatusText;
     private TextView buttonEventText;
     private String lastButtonEvent = "No button event yet";
@@ -157,6 +167,7 @@ public final class MainActivity extends Activity implements
         }
         fieldPanel = new BoatMapPanel(this, selectedMapPoint(), new BoatMapPanel.Actions() {
             @Override public void saved(SavedPoint point) { syncPoint(point); }
+            @Override public void sync(SavedPoint point) { if (syncQueue.transferEnabled()) syncPoint(point); else syncPendingPoints(); }
             @Override public void details(SavedPoint point) { showPointDetails(point); }
             @Override public void editDetails(SavedPoint point) { showCatchDetailsDialog(point); }
             @Override public void delete(SavedPoint point) { deletePoint(point); }
@@ -217,7 +228,11 @@ public final class MainActivity extends Activity implements
         if (destroyed) return;
         runOnUiThread(() -> {
             if (destroyed) return;
-            if (PointSyncQueue.STATE_SYNCED.equals(state)) {
+            if (CloudDataPolicy.accountSyncAvailable()) {
+                cloudSyncStatus = message == null || message.isEmpty() ? syncQueue.accountStatus() : message;
+            } else if (CloudDataPolicy.isLocalOnlyBeta()) {
+                cloudSyncStatus = "deleted_local".equals(state) ? message : getString(R.string.data_local_beta);
+            } else if (PointSyncQueue.STATE_SYNCED.equals(state)) {
                 cloudSyncStatus = pending == 0
                         ? getString(R.string.data_no_cloud_operations)
                         : "Point synced · " + pending + " still queued";
@@ -241,6 +256,10 @@ public final class MainActivity extends Activity implements
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        appBackCallback = new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { handleBackNavigation(); }
+        };
+        getOnBackPressedDispatcher().addCallback(this, appBackCallback);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
@@ -250,8 +269,9 @@ public final class MainActivity extends Activity implements
         trackStore = new TrackStore(this);
         locationManager = new FiskentraLocationManager(this, this);
         supabaseConnection = new SupabaseConnection();
-        authManager = new SupabaseAuthManager(this);
+        authManager = ((FiskentraApplication) getApplication()).getAuthManager();
         syncQueue = PointSyncQueue.get(this);
+        backupManager = AccountBackupManager.get(this);
         weatherClient = new WeatherClient(this);
         syncPrefs = getSharedPreferences(SYNC_PREFS, MODE_PRIVATE);
         weatherPrefs = getSharedPreferences(WEATHER_PREFS, MODE_PRIVATE);
@@ -305,7 +325,7 @@ public final class MainActivity extends Activity implements
                 if ("home".equals(screen) || "profile".equals(screen)) render(screen);
             }));
         }
-        supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
+        if (CloudDataPolicy.allowsPersonalDataRequests()) supabaseConnection.check((connected, message) -> runOnUiThread(() -> {
             cloudConnected = connected;
             cloudStatus = message;
             if ("home".equals(screen) || "beta".equals(screen)) render(screen);
@@ -313,7 +333,7 @@ public final class MainActivity extends Activity implements
         if (!showOnboarding) requestNeededPermissions();
     }
 
-    @Override protected void onNewIntent(Intent intent) {
+    @Override public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         applyDebugUiOptions(intent);
@@ -338,6 +358,7 @@ public final class MainActivity extends Activity implements
         super.onStart();
         flicManager.addListener(this);
         syncQueue.addObserver(syncObserver);
+        backupManager.addObserver(backupObserver);
 
 
         syncQueue.retryPending();
@@ -374,6 +395,7 @@ public final class MainActivity extends Activity implements
         if (activeMapView != null) activeMapView.stop();
         flicManager.removeListener(this);
         syncQueue.removeObserver(syncObserver);
+        backupManager.removeObserver(backupObserver);
 
     }
 
@@ -383,7 +405,6 @@ public final class MainActivity extends Activity implements
         super.onDestroy();
         if (activeMapView != null) activeMapView.destroy();
         supabaseConnection.close();
-        authManager.close();
         weatherClient.close();
     }
 
@@ -394,8 +415,9 @@ public final class MainActivity extends Activity implements
 
     private void requestNeededPermissions() {
         ArrayList<String> permissions = new ArrayList<>();
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        for (String permission : FieldAccessPolicy.locationPermissionsToRequest(
+                checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)) {
+            permissions.add(permission);
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
@@ -413,10 +435,10 @@ public final class MainActivity extends Activity implements
             requestPermissions(permissions.toArray(new String[0]), REQUEST_PERMISSIONS);
         }
     }
-    @Override public void onBackPressed() {
+    private void handleBackNavigation() {
         if ("map".equals(screen) && fieldPanel != null && fieldPanel.handleBack()) return;
         switch(screen){
-            case "home":super.onBackPressed();break;
+            case "home":if (Build.VERSION.SDK_INT >= 31 && isTaskRoot()) moveTaskToBack(true); else finish();break;
             case "mapTools":case "tripActive":render("map");break;
             case "offlineMaps":render("mapTools");break;
             case "pointEdit":case "catchEdit":render("saved");break;
@@ -440,8 +462,10 @@ public final class MainActivity extends Activity implements
         boolean buttonNeeded = flicManager != null && flicManager.pairedButtonCount() > 0;
         boolean navigationNeeded = getSharedPreferences("field_map", MODE_PRIVATE).contains("nav_lat");
         if (!trackNeeded && !buttonNeeded && !navigationNeeded) return;
-        if (!locationManager.hasPermission()) return;
-        if (!trackNeeded && !navigationNeeded && !flicManager.hasPermissions()) return;
+        int capabilities = FieldAccessPolicy.backgroundCapabilities(
+                locationManager.hasPermission(), locationManager.isEnabled(),
+                flicManager.hasPermissions(), buttonNeeded);
+        if (capabilities == 0) return;
         if (FiskentraFlicService.isRunning()) return;
         try {
             FiskentraFlicService.start(this);
@@ -463,6 +487,8 @@ public final class MainActivity extends Activity implements
     private void render(String next) {
         if (fieldPanel != null) { selectedMapStyle = fieldPanel.map().getBaseStyle(); mapPrefs.edit().putString(MAP_STYLE, selectedMapStyle).apply(); }
         screen = next;
+        // Leave the root screen to the system so predictive back-to-home remains available.
+        if (appBackCallback != null) appBackCallback.setEnabled(!"home".equals(screen));
         getWindow().setStatusBarColor("map".equals(screen) ? 0xff001e2e : BG);
         getWindow().setNavigationBarColor("map".equals(screen) ? 0xff001e2e : BG);
         updateFlicTestMode();
@@ -512,7 +538,7 @@ public final class MainActivity extends Activity implements
             s.active=trackStore.isActive();s.paused=trackStore.isPaused();s.tripStarted=trackStore.startedAt();s.tripStopped=trackStore.stoppedAt();
             if("tripSummary".equals(screen)&&designSummaryDay!=null){s.tripStarted=designSummaryDay.startedAt;s.tripStopped=designSummaryDay.effectiveEnd(System.currentTimeMillis());s.active=designSummaryDay.isActive();}
             FishingDay summaryDay="tripSummary".equals(screen)?designSummaryDay:null;List<double[]> track=routeFor(summaryDay,s.tripStarted,s.active?0L:s.tripStopped);s.tripTrack=track;float[] distance=new float[1];for(int i=1;i<track.size();i++){double[] p=track.get(i-1),q=track.get(i);if(!com.fiskentra.app.model.FieldNavigation.segmentBreak(p,q)){Location.distanceBetween(p[0],p[1],q[0],q[1],distance);s.distanceKm+=distance[0]/1000d;}}
-            s.pending=syncQueue.pendingCount();s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
+            s.pending=syncQueue.pendingCount();s.cloudStatus=getString(R.string.cloud_sync_and_backup_status,syncQueue.accountStatus(),backupManager.status());s.mapStyle=selectedMapStyle;s.imperial=userPreferences.usesImperialUnits();
             s.offlineStatus="Area downloads are unavailable with Google Maps";s.offlineChecked=true;
             s.setupStep=flicSetupStep;s.singleTest=flicSingleTested;s.doubleTest=flicDoubleTested;s.holdTest=flicHoldTested;return s;
         }
@@ -549,7 +575,7 @@ public final class MainActivity extends Activity implements
                 case "openEmail":try{startActivity(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN,Intent.CATEGORY_APP_EMAIL));}catch(Exception e){Toast.makeText(MainActivity.this,"Open your email app to continue",Toast.LENGTH_LONG).show();}break;
             }
         }
-        public void point(SavedPoint p,String action){switch(action){case "open":case "map":openPointOnMap(p);break;case "edit":design.edit(p);render("pointEdit");break;case "catchEdit":design.edit(p);render("catchEdit");break;case "photo":if(POINT_TYPE_CATCH.equals(p.type))chooseCatchPhoto(p);else comingSoon("Photos for this point type");break;case "weather":refreshPointWeather(p);break;case "delete":new AlertDialog.Builder(MainActivity.this).setTitle("Delete saved moment?").setMessage("This removes the point from this phone and queues its cloud deletion.").setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->deletePoint(p)).show();break;}}
+        public void point(SavedPoint p,String action){switch(action){case "open":case "map":openPointOnMap(p);break;case "edit":design.edit(p);render("pointEdit");break;case "catchEdit":design.edit(p);render("catchEdit");break;case "photo":if(POINT_TYPE_CATCH.equals(p.type))chooseCatchPhoto(p);else comingSoon("Photos for this point type");break;case "weather":refreshPointWeather(p);break;case "delete":new AlertDialog.Builder(MainActivity.this).setTitle(R.string.data_delete_from_phone).setMessage(syncQueue.deleteNotice(p)).setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->deletePoint(p)).show();break;}}
         public void savePoint(SavedPoint p,String title,String type,String note){try{SavedPoint updated=pointStore.updateMetadata(p.id,title,type,note);if(updated!=null)syncPoint(updated);render("saved");}catch(IllegalArgumentException error){new AlertDialog.Builder(MainActivity.this).setTitle("Check point details").setMessage(error.getMessage()).setPositiveButton("OK",null).show();}}
         public void saveCatch(SavedPoint p,CatchDetails details){SavedPoint updated=pointStore.updateCatchDetails(p.id,details);if(updated!=null)syncPoint(updated);render("saved");}
         public String syncLabel(SavedPoint p){return MainActivity.this.syncLabel(p.id);}
@@ -1020,10 +1046,10 @@ public final class MainActivity extends Activity implements
         body.addView(deviceCard, cardMargins());
 
         LinearLayout cloudCard = card();
-        cloudCard.addView(text(cloudConnected ? "●  CLOUD CONNECTED" : "○  CLOUD", 11,
+        cloudCard.addView(text("ACCOUNT POINT SYNC", 11,
                 cloudConnected ? ACCENT : MUTED, Typeface.BOLD));
         cloudCard.addView(spacer(6));
-        cloudCard.addView(text(cloudStatus, 13, TEXT, Typeface.NORMAL));
+        cloudCard.addView(text(syncQueue.accountStatus(), 13, TEXT, Typeface.NORMAL));
         cloudCard.addView(text(cloudSyncStatus, 12, cloudSyncColor(), Typeface.NORMAL));
         cloudCard.addView(spacer(12));
         LinearLayout accountRow = row();
@@ -1092,7 +1118,7 @@ public final class MainActivity extends Activity implements
         ready.addView(checkRow(flicConnected, "Flic 2 connected"));
         ready.addView(checkRow(lastLocation != null, "GPS and precise location"));
         ready.addView(checkRow(true, "Offline local storage ready"));
-        ready.addView(checkRow(cloudConnected, "Cloud sync available"));
+        ready.addView(text(syncQueue.accountStatus(), 12, MUTED, Typeface.NORMAL));
         body.addView(ready, cardMargins());
 
         LinearLayout options = card();
@@ -1168,7 +1194,7 @@ public final class MainActivity extends Activity implements
                     }
                     @Override public void onStyleError(String styleId) {
                         mapStatus.post(() -> {
-                            mapStatus.setText("Map unavailable · field capture still works offline");
+                            mapStatus.setText(R.string.ui_map_unavailable_offline);
                             mapStatus.setTextColor(WARNING);
                         });
                     }
@@ -1838,7 +1864,7 @@ public final class MainActivity extends Activity implements
         }
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    @Override public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_CREATE_GPX) {
             String document = pendingGpxDocument;
@@ -2069,8 +2095,7 @@ public final class MainActivity extends Activity implements
                     @Override public void onStyleLoading(String styleId) {
                         layerStatus.post(() -> {
                             layerStatus.setTextColor(MUTED);
-                            layerStatus.setText(
-                                    "Loading " + MapTilerMapView.styleName(styleId) + " layer…");
+                            layerStatus.setText(getString(R.string.ui_loading_map_layer, MapTilerMapView.styleName(styleId)));
                         });
                     }
 
@@ -2083,8 +2108,7 @@ public final class MainActivity extends Activity implements
 
                     @Override public void onStyleError(String styleId) {
                         layerStatus.post(() -> {
-                            layerStatus.setText("Could not load " + MapTilerMapView.styleName(styleId)
-                                    + " · check internet or choose another layer");
+                            layerStatus.setText(getString(R.string.ui_map_layer_failed, MapTilerMapView.styleName(styleId)));
                             layerStatus.setTextColor(DANGER);
                         });
                     }
@@ -2465,7 +2489,7 @@ public final class MainActivity extends Activity implements
         LinearLayout header = row();
         TextView type = text(point.type.toUpperCase(Locale.ROOT), 11, ACCENT, Typeface.BOLD);
         header.addView(type, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        boolean deleting = SYNC_DELETING.equals(syncPrefs.getString(syncKey(point.id, "state"), ""));
+        boolean deleting = SYNC_DELETING.equals(syncQueue.state(point.id));
         TextView delete = text(deleting ? "DELETING" : "DELETE", 10, deleting ? WARNING : DANGER, Typeface.BOLD);
         delete.setPadding(dp(8), dp(4), 0, dp(4));
         if (!deleting) {
@@ -2476,7 +2500,7 @@ public final class MainActivity extends Activity implements
                 }
                 new AlertDialog.Builder(this)
                         .setTitle("Delete this moment?")
-                        .setMessage("Fiskentra will remove this point from Supabase, then from this device.")
+                        .setMessage(syncQueue.deleteNotice(point))
                         .setNegativeButton("Cancel", null)
                         .setPositiveButton("Delete", (dialog, which) -> deletePoint(point))
                         .show();
@@ -2644,23 +2668,29 @@ public final class MainActivity extends Activity implements
             try {
                 File directory = new File(getFilesDir(), "catch_photos");
                 if (!directory.exists() && !directory.mkdirs()) throw new IllegalStateException("photo directory");
-                target = new File(directory, "catch-" + pointId + "-" + System.currentTimeMillis() + ".img");
+                target = File.createTempFile("catch-" + pointId + "-", ".img", directory);
                 try (InputStream input = getContentResolver().openInputStream(source);
                      FileOutputStream output = new FileOutputStream(target)) {
                     if (input == null) throw new IllegalStateException("photo input");
                     byte[] buffer = new byte[8_192];
                     int count;
                     while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                    output.getFD().sync();
                 }
+                java.io.FileDescriptor photoDirectory = android.system.Os.open(directory.getAbsolutePath(),
+                        android.system.OsConstants.O_RDONLY, 0);
+                try { android.system.Os.fsync(photoDirectory); } finally { android.system.Os.close(photoDirectory); }
                 SavedPoint latest = pointStore.find(pointId);
                 if (latest == null || latest.catchDetails == null) throw new IllegalStateException("catch missing");
                 String previous = latest.catchDetails.localPhotoPath;
-                SavedPoint updated = pointStore.updateCatchDetails(
-                        pointId, latest.catchDetails.withLocalPhotoPath(target.getAbsolutePath()));
+                String newPhotoPath = target.getAbsolutePath();
+                SavedPoint updated = pointStore.ledger().editIfRevision(pointId, latest.revision,
+                        point -> point.withCatchDetails(point.catchDetails.withLocalPhotoPath(newPhotoPath)));
                 if (updated == null) throw new IllegalStateException("catch update");
                 if (!previous.isEmpty() && !previous.equals(target.getAbsolutePath())) {
                     deleteLocalCatchPhoto(previous);
                 }
+                syncQueue.enqueue(updated);
                 runOnUiThread(() -> {
                     if (destroyed) return;
                     Toast.makeText(this, "Catch photo saved on this device", Toast.LENGTH_SHORT).show();
@@ -2701,19 +2731,26 @@ public final class MainActivity extends Activity implements
 
     private void removeCatchPhoto(SavedPoint point) {
         if (point.catchDetails == null || point.catchDetails.localPhotoPath.isEmpty()) return;
-        deleteLocalCatchPhoto(point.catchDetails.localPhotoPath);
-        pointStore.updateCatchDetails(point.id, point.catchDetails.withLocalPhotoPath(""));
-        Toast.makeText(this, "Local catch photo removed", Toast.LENGTH_SHORT).show();
+        try {
+            SavedPoint current = pointStore.find(point.id);
+            if (current == null || current.catchDetails == null
+                    || !point.catchDetails.localPhotoPath.equals(current.catchDetails.localPhotoPath)) throw new IllegalStateException("photo changed");
+            SavedPoint updated = pointStore.ledger().editIfRevision(current.id, current.revision,
+                    value -> value.withCatchDetails(value.catchDetails.withLocalPhotoPath("")));
+            if (updated == null) throw new IllegalStateException("photo changed");
+            deleteLocalCatchPhoto(current.catchDetails.localPhotoPath);
+            syncQueue.enqueue(updated);
+            Toast.makeText(this, "Local catch photo removed", Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException failure) {
+            Toast.makeText(this, "Photo was kept; reopen this point and retry", Toast.LENGTH_LONG).show();
+        }
         render("saved");
     }
 
     private void deleteLocalCatchPhoto(String path) {
         if (path == null || path.isEmpty()) return;
         try {
-            File root = new File(getFilesDir(), "catch_photos").getCanonicalFile();
-            File target = new File(path).getCanonicalFile();
-            String prefix = root.getPath() + File.separator;
-            if (target.getPath().startsWith(prefix) && target.isFile()) target.delete();
+            pointStore.ledger().deleteUnreferencedPhoto(new File(getFilesDir(), "catch_photos"), path);
         } catch (Exception ignored) { }
     }
 
@@ -2810,7 +2847,8 @@ public final class MainActivity extends Activity implements
                 15, MUTED, Typeface.NORMAL));
         body.addView(spacer(22));
         body.addView(onboardingInfoCard("LOCAL FIRST",
-                "Every point is saved on this phone before cloud sync. Fishing still works without mobile data."), cardMargins());
+                "Points are saved on this phone first. Sign in to sync details or enable a full backup of original photos, trips and point links."), cardMargins());
+        body.addView(text(getString(R.string.data_previous_cloud_notice), 12, MUTED, Typeface.NORMAL));
         body.addView(onboardingInfoCard("BUILT FOR THE WATER",
                 "Large actions, quick map access and button capture keep phone handling to a minimum."), cardMargins());
     }
@@ -2864,7 +2902,7 @@ public final class MainActivity extends Activity implements
                 Color.rgb(197, 155, 255)));
         body.addView(mapping, cardMargins());
         body.addView(onboardingInfoCard("OFFLINE IS OK",
-                "The press is saved locally. Pending points sync automatically when Android validates internet access."), cardMargins());
+                "The press is saved on this phone. Connected account points retry when internet returns."), cardMargins());
     }
 
     private void addOnboardingReady(LinearLayout body) {
@@ -2879,7 +2917,7 @@ public final class MainActivity extends Activity implements
         ready.addView(checkRow(locationManager.hasPermission(), "GPS access"));
         ready.addView(checkRow(flicManager.pairedButtonCount() > 0, "Flic 2 paired (optional)"));
         ready.addView(checkRow(true, "Offline local storage ready"));
-        ready.addView(checkRow(SupabaseConfig.isConfigured(), "Cloud connection configured"));
+        ready.addView(text(syncQueue.accountStatus(), 12, MUTED, Typeface.NORMAL));
         body.addView(ready, cardMargins());
         body.addView(text("Account registration is optional. Existing local points, journal entries and Flic pairing remain on this phone when you sign in or out.",
                 12, MUTED, Typeface.NORMAL));
@@ -3131,14 +3169,14 @@ public final class MainActivity extends Activity implements
         LinearLayout safety = card();
         safety.addView(text("SAFETY", 11, ACCENT, Typeface.BOLD));
         CheckBox confirmDelete = new CheckBox(this);
-        confirmDelete.setText("Confirm before deleting a saved point");
+        confirmDelete.setText(R.string.ui_confirm_delete);
         confirmDelete.setTextColor(TEXT);
         confirmDelete.setTextSize(13);
         confirmDelete.setChecked(userPreferences.confirmDelete());
         confirmDelete.setOnCheckedChangeListener((button, checked) ->
                 userPreferences.setConfirmDelete(checked));
         safety.addView(confirmDelete, matchWrap());
-        safety.addView(text("Turning this off makes DELETE act immediately. Cloud deletion still keeps the point locally if it fails.",
+        safety.addView(text("Turning this off deletes the local record immediately. Any server copy sent by an earlier version remains unchanged.",
                 11, MUTED, Typeface.NORMAL));
         body.addView(safety, cardMargins());
 
@@ -3167,14 +3205,14 @@ public final class MainActivity extends Activity implements
         List<SavedPoint> points = pointStore.all();
         int pending = pendingSyncCount(points);
         LinearLayout data = card();
-        data.addView(text("LOCAL DATA & SYNC", 11, ACCENT, Typeface.BOLD));
+        data.addView(text("LOCAL DATA", 11, ACCENT, Typeface.BOLD));
         data.addView(spacer(7));
         data.addView(text(points.size() + " saved moments on this phone", 18, TEXT, Typeface.BOLD));
-        data.addView(text(pending == 0 ? getString(R.string.data_no_cloud_operations)
-                        : pending + (pending == 1 ? " point is waiting to sync" : " points are waiting to sync"),
-                12, pending == 0 ? SUCCESS : WARNING, Typeface.NORMAL));
+        data.addView(text(syncQueue.accountStatus(), 12, MUTED, Typeface.NORMAL));
+        data.addView(text("Point details sync separately. Enable full backup to recover original photos, trips and point links on another phone.", 12, MUTED, Typeface.NORMAL));
+        data.addView(text(getString(R.string.data_previous_cloud_notice), 12, MUTED, Typeface.NORMAL));
         data.addView(spacer(12));
-        Button sync = smallButton(pending == 0 ? "CHECK SYNC" : "SYNC NOW");
+        Button sync = smallButton("POINT SYNC");
         sync.setOnClickListener(v -> syncPendingPoints());
         data.addView(sync, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
@@ -3234,10 +3272,9 @@ public final class MainActivity extends Activity implements
         boolean notificationsReady = notificationPermissionReady();
         boolean buttonReady = flicManager.pairedButtonCount() > 0;
         boolean backgroundReady = buttonReady && FiskentraFlicService.isRunning();
-        boolean syncReady = pending == 0;
         boolean[] checks = new boolean[] {
                 locationReady, bluetoothReady, notificationsReady, buttonReady,
-                backgroundReady, cloudConnected, syncReady
+                backgroundReady
         };
         int readyCount = 0;
         for (boolean ready : checks) if (ready) readyCount++;
@@ -3253,9 +3290,9 @@ public final class MainActivity extends Activity implements
         readiness.addView(checkRow(notificationsReady, "Notification permission"));
         readiness.addView(checkRow(buttonReady, "Flic 2 paired"));
         readiness.addView(checkRow(backgroundReady, "Screen-off capture service active"));
-        readiness.addView(checkRow(cloudConnected, "Fiskentra cloud reachable"));
-        readiness.addView(checkRow(syncReady, pending == 0
-                ? "No points waiting to sync" : pending + " points waiting to sync"));
+        readiness.addView(text(syncQueue.accountStatus(), 12, MUTED, Typeface.NORMAL));
+        readiness.addView(text("Cloud sync and full backup are optional. Full backups include original photos and recorded trips.", 12, MUTED, Typeface.NORMAL));
+        readiness.addView(text(getString(R.string.data_previous_cloud_notice), 12, MUTED, Typeface.NORMAL));
         readiness.addView(spacer(14));
         LinearLayout readinessActions = row();
         Button recheck = smallButton("RECHECK NOW");
@@ -3286,7 +3323,7 @@ public final class MainActivity extends Activity implements
         LinearLayout expectations = card();
         expectations.addView(text("BETA EXPECTATIONS", 11, WARNING, Typeface.BOLD));
         expectations.addView(spacer(7));
-        expectations.addView(text("• Save test moments locally before relying on cloud sync.\n"
+        expectations.addView(text("• Use a completed full backup to restore original photos and trips.\n"
                         + "• Do not clear app data if the journal has not been backed up.\n"
                         + "• Open Fiskentra once after restarting the phone.\n"
                         + "• Force Stop disables background Flic capture until the app is opened again.",
@@ -3307,6 +3344,16 @@ public final class MainActivity extends Activity implements
     }
 
     private void runBetaChecks() {
+        if (CloudDataPolicy.accountSyncAvailable()) {
+            syncQueue.retryPending(); cloudSyncStatus = syncQueue.accountStatus(); render("beta"); return;
+        }
+        if (CloudDataPolicy.isLocalOnlyBeta()) {
+            cloudConnected = false;
+            cloudStatus = getString(R.string.data_cloud_transfer_disabled);
+            cloudSyncStatus = getString(R.string.data_local_beta);
+            render("beta");
+            return;
+        }
         cloudConnected = false;
         cloudStatus = "Checking Fiskentra cloud…";
         syncQueue.retryPending();
@@ -3360,7 +3407,8 @@ public final class MainActivity extends Activity implements
         report.append("Flic paired: ").append(flicManager.pairedButtonCount() > 0).append('\n');
         report.append("Flic connected: ").append(flicConnected).append('\n');
         report.append("Background capture: ").append(FiskentraFlicService.isRunning()).append('\n');
-        report.append("Cloud reachable: ").append(cloudConnected).append('\n');
+        report.append("Account point sync: ").append(syncQueue.transferEnabled() ? "connected" : "not connected").append('\n');
+        report.append("Cloud backup verified: false\n");
         report.append("Signed in: ").append(authManager.isSignedIn()).append('\n');
         report.append("Saved moments: ").append(points.size()).append('\n');
         report.append("Pending sync: ").append(pendingSyncCount(points)).append('\n');
@@ -3429,7 +3477,7 @@ public final class MainActivity extends Activity implements
         form.addView(spacer(7));
         form.addView(text(recover
                         ? "We’ll send a secure reset link to your email."
-                        : (signup ? "Create a private account for your fishing history."
+                        : (signup ? "Create an optional account for point sync and full backups of original photos and trips."
                         : "Sign in with your Fiskentra email and password."),
                 13, TEXT, Typeface.NORMAL));
         form.addView(spacer(14));
@@ -3461,7 +3509,7 @@ public final class MainActivity extends Activity implements
                 form.addView(confirm, matchWrap());
             }
             CheckBox showPassword = new CheckBox(this);
-            showPassword.setText("Show password");
+            showPassword.setText(R.string.ui_show_password);
             showPassword.setTextColor(MUTED);
             showPassword.setTextSize(12);
             EditText finalPassword = password;
@@ -3717,6 +3765,7 @@ public final class MainActivity extends Activity implements
             authBusy = false;
             authStatus = message;
             authStatusError = !success;
+            if (success) syncQueue.retryPending();
             if (success && "signup".equals(authFormMode) && authManager.session() == null) {
                 authFormMode = "checkEmail";
             } else if (success && "recover".equals(authFormMode)) {
@@ -4008,6 +4057,18 @@ public final class MainActivity extends Activity implements
     }
 
     private void syncPoint(SavedPoint point) {
+        if (CloudDataPolicy.accountSyncAvailable()) {
+            cloudSyncStatus = syncQueue.pointStatus(point);
+            syncQueue.enqueue(point);
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
+            return;
+        }
+        if (CloudDataPolicy.isLocalOnlyBeta()) {
+            cloudSyncStatus = getString(R.string.data_local_beta);
+            syncQueue.enqueue(point);
+            if ("home".equals(screen) || "saved".equals(screen) || "device".equals(screen)) render(screen);
+            return;
+        }
         boolean online = syncQueue.hasValidatedInternet();
         cloudSyncStatus = online
                 ? "Latest point queued for automatic sync"
@@ -4017,6 +4078,51 @@ public final class MainActivity extends Activity implements
     }
 
     private void syncPendingPoints() {
+        if (CloudDataPolicy.accountSyncAvailable()) {
+            if (!syncQueue.hasAccount()) {
+                Toast.makeText(this, "Sign in to sync or restore points and details", Toast.LENGTH_LONG).show();
+                render("profile");
+                return;
+            }
+            LinearLayout actions = vertical(); actions.setPadding(dp(20), dp(12), dp(20), dp(8));
+            actions.addView(text(backupManager.status(), 14, TEXT, Typeface.NORMAL));
+            actions.addView(text(getString(R.string.backup_scope_notice), 13, MUTED, Typeface.NORMAL));
+            Button fullBackup = primaryButton(getString(R.string.backup_all_action));
+            Button fullRestore = smallButton(getString(R.string.backup_restore_action));
+            actions.addView(fullBackup, matchWrap()); actions.addView(fullRestore, matchWrap());
+            Button pauseBackup = smallButton(getString(R.string.backup_pause_action));
+            if (backupManager.enabled()) actions.addView(pauseBackup, matchWrap());
+            actions.addView(text(getString(R.string.backup_point_sync_notice), 12, MUTED, Typeface.NORMAL));
+            Button upload = smallButton(getString(R.string.backup_points_upload));
+            upload.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_cloud_upload, 0, 0, 0);
+            Button restore = smallButton(getString(R.string.backup_points_restore));
+            restore.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_cloud_download, 0, 0, 0);
+            actions.addView(upload, matchWrap()); actions.addView(restore, matchWrap());
+            ScrollView actionScroll = new ScrollView(this); actionScroll.addView(actions);
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle(R.string.backup_dialog_title).setView(actionScroll)
+                    .setNegativeButton("CANCEL", null)
+                    .setNeutralButton(R.string.data_retry, (d, w) -> { syncQueue.retryPending(); if (backupManager.enabled()) backupManager.backup(backupResult()); })
+                    .create();
+            com.fiskentra.app.backend.SupabasePointSync.Listener result = (ok, message) -> runOnUiThread(() -> {
+                if (destroyed) return; cloudSyncStatus = message; Toast.makeText(this, message, Toast.LENGTH_LONG).show(); render(screen);
+            });
+            upload.setOnClickListener(v -> { dialog.dismiss(); syncQueue.syncWithCurrentAccount(result); });
+            restore.setOnClickListener(v -> { dialog.dismiss(); syncQueue.restoreFromCurrentAccount(result); });
+            fullBackup.setOnClickListener(v -> { dialog.dismiss(); backupManager.backup(backupResult()); });
+            fullRestore.setOnClickListener(v -> { dialog.dismiss(); showCloudBackups("", ""); });
+            pauseBackup.setOnClickListener(v -> { dialog.dismiss(); backupManager.pause(backupResult()); });
+            dialog.show();
+            return;
+        }
+        if (CloudDataPolicy.isLocalOnlyBeta()) {
+            cloudSyncStatus = getString(R.string.data_local_beta);
+            new AlertDialog.Builder(this).setTitle(R.string.data_local_storage_title)
+                    .setMessage(getString(R.string.data_cloud_transfer_disabled) + "\n\n"
+                            + getString(R.string.data_previous_cloud_notice) + "\n\n"
+                            + getString(R.string.data_local_account_notice))
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
         List<SavedPoint> points = pointStore.all();
         int pending = pendingSyncCount(points);
         if (pending == 0) {
@@ -4039,13 +4145,71 @@ public final class MainActivity extends Activity implements
         render("saved");
     }
 
+    private AccountBackupManager.Listener backupResult() {
+        return (complete, message) -> runOnUiThread(() -> {
+            if (destroyed) return;
+            cloudSyncStatus = message;
+            new AlertDialog.Builder(this).setTitle(complete ? R.string.backup_result_title : R.string.backup_attention_title)
+                    .setMessage(message).setPositiveButton(android.R.string.ok, null).show();
+            render(screen);
+        });
+    }
+
+    private void showCloudBackups(String beforeTime, String beforeId) {
+        AlertDialog loading = new AlertDialog.Builder(this).setTitle(R.string.backup_restore_action)
+                .setMessage(R.string.backup_loading_history).setNegativeButton(android.R.string.cancel, null).create();
+        loading.show();
+        backupManager.list(beforeTime, beforeId, (rows, error) -> runOnUiThread(() -> {
+            if (destroyed || !loading.isShowing()) return;
+            loading.dismiss();
+            if (!error.isEmpty()) { new AlertDialog.Builder(this).setTitle(R.string.backup_attention_title).setMessage(error).setPositiveButton(android.R.string.ok, null).show(); return; }
+            LinearLayout list = vertical(); list.setPadding(dp(18), dp(12), dp(18), dp(8));
+            if (rows.length() == 0) list.addView(text(getString(R.string.backup_no_history), 14, TEXT, Typeface.NORMAL));
+            AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(R.string.backup_choose_copy);
+            ScrollView scroll = new ScrollView(this); scroll.addView(list); builder.setView(scroll).setNegativeButton(android.R.string.cancel, null);
+            AlertDialog choices = builder.create();
+            for (int i = 0; i < rows.length(); i++) {
+                org.json.JSONObject row = rows.optJSONObject(i); if (row == null) continue;
+                String id = row.optString("backup_id"), created = row.optString("created_at");
+                org.json.JSONObject counts = row.optJSONObject("counts");
+                int points = counts == null ? 0 : counts.optInt("points"), photos = counts == null ? 0 : counts.optInt("photos"), trips = counts == null ? 0 : counts.optInt("trips");
+                String date;
+                try { date = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                        .format(new Date(java.time.OffsetDateTime.parse(created).toInstant().toEpochMilli())); }
+                catch (Exception invalidTime) { date = getString(R.string.backup_saved_copy); }
+                String summary = getString(R.string.backup_counts,
+                        getResources().getQuantityString(R.plurals.backup_point_count, points, points),
+                        getResources().getQuantityString(R.plurals.backup_photo_count, photos, photos),
+                        getResources().getQuantityString(R.plurals.backup_trip_count, trips, trips));
+                String label = getString(R.string.backup_copy_label, date, row.optString("device_label", getString(R.string.backup_other_phone)), summary);
+                Button choose = smallButton(label); choose.setAllCaps(false); choose.setSingleLine(false); choose.setMinHeight(dp(80));
+                list.addView(choose, matchWrap());
+                choose.setOnClickListener(v -> {
+                    choices.dismiss();
+                    new AlertDialog.Builder(this).setTitle(R.string.backup_restore_confirm_title)
+                            .setMessage(getString(R.string.backup_restore_confirm, label))
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .setPositiveButton(R.string.backup_restore_confirm_action, (d, w) -> backupManager.restore(id, backupResult())).show();
+                });
+            }
+            if (rows.length() == 30) {
+                org.json.JSONObject last = rows.optJSONObject(rows.length() - 1);
+                if (last != null) {
+                    Button older = smallButton(getString(R.string.backup_older_copies)); list.addView(older, matchWrap());
+                    older.setOnClickListener(v -> { choices.dismiss(); showCloudBackups(last.optString("created_at"), last.optString("backup_id")); });
+                }
+            }
+            choices.show();
+        }));
+    }
+
     private void deletePoint(SavedPoint point) {
         String requestedScreen = screen;
         syncQueue.delete(point, (deleted, message) -> runOnUiThread(() -> {
             if (destroyed) return;
             if (deleted) {
                 if (selectedMapPointId == point.id) selectedMapPointId = -1L;
-                cloudSyncStatus = getString(R.string.data_deleted_local);
+                cloudSyncStatus = message;
             }
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             if ("map".equals(screen)) updateField(); else if (screen.equals(requestedScreen)) render(screen);
@@ -4135,7 +4299,7 @@ public final class MainActivity extends Activity implements
     }
 
     private SavedPoint selectedMapPoint() {
-        if (selectedMapPointId < 0) return null;
+        if (selectedMapPointId < 0) { return null; }
         for (SavedPoint point : pointStore.all()) {
             if (point.id == selectedMapPointId) return point;
         }
@@ -4160,6 +4324,7 @@ public final class MainActivity extends Activity implements
     }
 
     private void recoverStaleSyncStates(List<SavedPoint> points) {
+        if (CloudDataPolicy.isLocalOnlyBeta()) return;
         long now = System.currentTimeMillis();
         for (SavedPoint point : points) {
             if (!SYNC_SYNCING.equals(syncPrefs.getString(syncKey(point.id, "state"), ""))) continue;
@@ -4362,7 +4527,7 @@ public final class MainActivity extends Activity implements
     private Button fieldAction(String title, String subtitle, int color) {
         Button action = new Button(this);
         action.setAllCaps(false);
-        action.setText(title + "\n" + subtitle);
+        action.setText(getString(R.string.ui_title_and_subtitle, title, subtitle));
         action.setTextColor(color);
         action.setTextSize(16);
         action.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
@@ -4513,7 +4678,7 @@ public final class MainActivity extends Activity implements
         if (POINT_TYPE_TACKLE_CHANGE.equals(type)) return "T";
         if ("Sighting".equals(type)) return "S";
         if ("Camp".equals(type)) return "P";
-        if ("Hazard".equals(type)) return "!";
+        if ("Hazard".equals(type)) { return "!"; }
         if ("Map".equals(type)) return "M";
         return "?";
     }

@@ -1,6 +1,18 @@
 # Fiskentra - Google Maps and boat navigation
 
-## Current release: 0.27
+## Current release: 0.28.3 (versionCode 44)
+
+The 7 November 2026 candidate adds private versioned backups of original photo bytes, point details, recorded routes and their links. Use **Saved → SYNC → BACK UP PHOTOS & TRIPS**; on the destination phone, sign into the same account and choose **RESTORE A FULL BACKUP**. Unfinished tracks restore as saved routes without starting recording. Explicit consent enables subsequent backups while Fiskentra is running. See [0.28.3 behavior and verification](RELEASE_NOTES_0.28.3.md).
+
+Current APK: `artifacts/Fiskentra-0.28.3-full-backup-debug.apk`. Debug assembly and debug/release Lint pass with **0 errors / 0 warnings**; the final core run passes **28/28 suites**. Focused checks pass: ledger 84, byte reconstruction 52, isolated fresh-local restore 77, transport 543, SQL 61 and 10 smoke-fixture cases. **Real full upload → history → restore and live 32/32 role checks with ROLLBACK pass.** The missing-bucket failure stopped completion; after correction, the same pending copy resumed across process relaunch and APK update. All **26/26 private files matched immediately after upgrade**. Final backup jobs: 0; restore complete: 1; point ledger and legacy queue unchanged; FATAL: 0. Anonymous manifest/public/private object routes are denied. Account and backup state persist after actual relaunch. Physical clean-install/second-phone photo/route recovery is not claimed: the real phone contains three points and no photos/archived trips; original photo/route/link recovery is verified in isolated fresh-local fixtures.
+
+Local edits and other-account records are protected; failed copies do not silently omit missing files or replace local data. Completed versions remain in history after local deletion. There is no backup-deletion UI or automatic retention/garbage collection. Size and quota limits, background-process limits and remaining field acceptance are recorded in the release notes. The separate points-only sync and wind below the compass from [0.28.2](RELEASE_NOTES_0.28.2.md) remain available; the legacy anonymous queue is not sent.
+
+Run `scripts/Build-Android.ps1` for debug assembly plus debug/release Lint, and `scripts/Test-AndroidCore.ps1` for standalone checks. Both resolve the local `.tools` installation or configured JDK/SDK environment variables. The candidate uses compile/target SDK 37 and minimum SDK 26. The sections below describe the 0.28 baseline and earlier history; their earlier installation and server claims do not validate 0.28.3.
+
+Product decisions and the closed-beta scope are recorded in [Free and Premium](PRODUCT_TIERS.md) and the [0.28 to closed beta plan](BETA_ROADMAP.md), dated 30 October 2026. The beta is free; a paid Premium launch has separate requirements. These documents do not mark the planned features or field acceptance as completed.
+
+Map layers now include wind at a selected/current location, EMODnet marine depths and contours, OpenSeaMap sea marks, a local catch heatmap and completed trip overlays. Layer choices, opacity, catch species and selected trips persist. See [RELEASE_NOTES_0.28.md](RELEASE_NOTES_0.28.md) for behavior, verification and coverage limits. APK: `artifacts/Fiskentra-0.28-map-layers-debug.apk` (versionCode 41).
 
 Compact Google map with top search, continuous compass, measured GPS speed (`km/h` / `mil/h`), settings-only unit selection and approximate boat arrival within 50 m. See [RELEASE_NOTES_0.27.md](RELEASE_NOTES_0.27.md) for the changes, validation and field-test limits.
 
@@ -326,7 +338,17 @@ GPX export does not upload the file or share it automatically. The user chooses 
 
 ## Supabase backend
 
-Fiskentra is prepared for Supabase project `dwlbefpmwzmhutlvqfmu`.
+Fiskentra now uses Supabase project `ihrguwrdicwixbimunje` (2026-10-25).
+
+The ignored `supabase.local.properties` overrides backend URL/key from `local.properties`.
+For an empty replacement database, apply `supabase/bootstrap.sql`. It creates the health,
+saved-point and private profile tables, enables RLS and grants the rights needed by REST upserts.
+Existing historical migrations below describe the previous database; do not apply them blindly.
+At first launch after changing projects, live local coordinates are queued for upload again,
+while local tombstones prevent deleted events from returning. Auth sessions are stored separately
+for this project. Users from the previous Supabase Auth database are not transferred automatically.
+The existing installation-header point policies are a prototype contract, not authenticated
+account ownership; use user-based RLS before public release. Profile rows already use auth.uid().
 
 1. Copy `local.properties.example` to `local.properties`.
 2. Keep your Android SDK path in `sdk.dir`.

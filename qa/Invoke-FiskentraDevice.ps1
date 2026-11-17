@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Serial
 )
 $ErrorActionPreference='Stop'
-$adb='C:\Users\Gebruiker\AppData\Local\Android\Sdk\platform-tools\adb.exe'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$adb=(Resolve-FiskentraAdb '')
 $dumpResult=(& $adb -s $Serial shell uiautomator dump /sdcard/fiskentra-qa.xml 2>&1 | Out-String)
 if($LASTEXITCODE -ne 0 -or $dumpResult -notmatch 'dumped to:' -or $dumpResult -match 'ERROR:') { throw 'Cannot inspect fresh device UI; refusing stale snapshot' }
 [xml]$ui=(& $adb -s $Serial shell cat /sdcard/fiskentra-qa.xml)

@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Serial,[string[]]$Only,[switch]$LowerSections)
 $ErrorActionPreference='Stop'
-$adb=Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$adb=Resolve-FiskentraAdb ''
 & $adb -s $Serial shell input keyevent 224
 $cases=@(
     @{Name='device';Activity='MainActivity';Extras='--ez qa_keep_awake true --es qa_route device';Expected='Flic 2 button mapping'},

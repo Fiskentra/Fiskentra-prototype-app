@@ -1,0 +1,8 @@
+<resources>
+    <string name="cloud_points_title">Cloud sync &amp; backup</string>
+    <string name="cloud_sign_in_to_sync">Sign in to sync</string>
+    <string name="cloud_points_ready">Points and details available for sync</string>
+    <string name="cloud_points_scope_notice">Enable full backup to recover original photos and trips on another phone.</string>
+    <string name="cloud_points_sync_action">SYNC</string>
+    <string name="cloud_points_location_storage">On this phone; account copy after upload</string>
+</resources>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="catch_released">Released</string>
+    <string name="forecast_activity_empty">Load forecast to see activity</string>
+</resources>

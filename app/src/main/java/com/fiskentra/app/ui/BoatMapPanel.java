@@ -23,14 +23,18 @@ import com.fiskentra.app.model.BoatSpeedPolicy;
 import com.fiskentra.app.model.FishingDay;
 import com.fiskentra.app.search.PlaceResult;
 import com.fiskentra.app.backend.PointSyncQueue;
+import com.fiskentra.app.backend.CloudDataPolicy;
 import java.util.concurrent.*;
 import org.maplibre.android.geometry.LatLng;
 import java.util.*;
 
 /** Compact field workspace; dialogs contain secondary controls so the map stays usable. */
+// Constructed programmatically with its Activity and action owner; never inflated by Android.
+@android.annotation.SuppressLint("ViewConstructor")
 public final class BoatMapPanel extends LinearLayout implements SensorEventListener {
     public interface Actions {
         void saved(SavedPoint point);
+        default void sync(SavedPoint point) { saved(point); }
         void details(SavedPoint point);void editDetails(SavedPoint point);void delete(SavedPoint point);void setLocation(SavedPoint point);
         void requestLocation();
         void toggleTrip(); void history(); void offline(); void export(); void navigationChanged(); void forecast();
@@ -53,6 +57,8 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private MapFilterPolicy filter;
     private List<SavedPoint> allPoints=Collections.emptyList(),filteredPoints=Collections.emptyList(),mapPoints=Collections.emptyList();
     private List<double[]> trackSnapshot=Collections.emptyList();
+    private List<FishingDay> historyTrips=Collections.emptyList();
+    private long historyRevision=Long.MIN_VALUE;
     private long dataRevision=-1;
     private String currentTrip="0", appliedTrip="";
     private List<SavedPoint> tripEvents=Collections.emptyList();
@@ -81,6 +87,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private final LinearLayout card, thirdMetric, tools, guidance;
     private final Button primary, secondary;
     private final CompassDial compass;
+    private final FrameLayout windHud;
     private final ImageView bluetoothIcon;
     private String mode;
     private final BoatNavigationHud hud;
@@ -99,6 +106,13 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private final BoatArrivalPolicy arrivalPolicy=new BoatArrivalPolicy();
     private final BoatSpeedPolicy.Measurement speedMeasurement=new BoatSpeedPolicy.Measurement();
     private final boolean[] layers;
+    private static final String[] LAYER_KEYS={"points","track","labels","layer_wind","layer_depths","layer_seamarks","layer_heatmap","layer_history"};
+    private static final String[] LAYER_NAMES={"Saved points","Trip track","Point labels","Wind","Depth contours","Sea marks","Catch heatmap","Past trips"};
+    private float depthOpacity,heatOpacity;
+    private String heatSpecies;
+    private Set<String> historyIds;
+    private TextView layerNotice,layerAttribution,layerDialogStatus;
+    private AlertDialog layerOptionsDialog;
     private static final int INK = 0xffeff4ff, MUTED = 0xffb7c9e6, NAVY = 0xff001e2e,
             BLUE = 0xff00a7ff, BUTTON = 0xff0059e8, LINE = 0xff53778f, AQUA = 0xff35dfd1;
     public BoatMapPanel(Activity activity, SavedPoint selected, Actions actions) {
@@ -108,7 +122,9 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         // Previously selected walking/driving destinations resume with offline boat guidance.
         // Road routing code is retained elsewhere for a later release, with no active entrypoint.
         prefs.edit().putString("route_profile", "direct").apply();
-        layers = new boolean[]{prefs.getBoolean("points", true), prefs.getBoolean("track", true), prefs.getBoolean("labels", true)};
+        layers = new boolean[LAYER_KEYS.length];for(int i=0;i<layers.length;i++)layers[i]=prefs.getBoolean(LAYER_KEYS[i],i<3);
+        depthOpacity=Math.max(.2f,Math.min(1f,prefs.getFloat("depth_opacity",.60f)));heatOpacity=Math.max(.2f,Math.min(1f,prefs.getFloat("heat_opacity",.70f)));
+        heatSpecies=prefs.getString("heat_species","");historyIds=new HashSet<>(prefs.getStringSet("history_ids",Collections.emptySet()));
         mode = prefs.getString("panel_mode", "Trip");
         imperial=new UserPreferences(activity).usesImperialUnits();compact=prefs.getBoolean("compact_hud",true);
         filter=new MapFilterPolicy(prefs.getString("filter_scope","all"),prefs.getString("filter_trip",""),prefs.getLong("filter_from",0),prefs.getLong("filter_to",Long.MAX_VALUE),prefs.getStringSet("filter_types",new HashSet<>(Arrays.asList(MapFilterPolicy.TYPES))),prefs.getBoolean("filter_favorite",false));
@@ -152,12 +168,17 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         statusChip.addView(signals,new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL|Gravity.START));information.addView(statusChip,new LayoutParams(-1,-2));
         mapNotice=text("Loading map.",12);mapNotice.setPadding(dp(10),dp(6),dp(10),dp(6));mapNotice.setMaxLines(2);mapNotice.setEllipsize(android.text.TextUtils.TruncateAt.END);
         mapNotice.setBackground(surface(NAVY,12,LINE));mapNotice.setOnClickListener(v->signalDetails());information.addView(mapNotice,new LayoutParams(-1,-2));
+        layerNotice=text("",12);layerNotice.setPadding(dp(10),dp(6),dp(10),dp(6));layerNotice.setMaxLines(6);layerNotice.setEllipsize(android.text.TextUtils.TruncateAt.END);layerNotice.setMinHeight(dp(48));layerNotice.setBackground(surface(NAVY,12,LINE));layerNotice.setContentDescription("Map layer status and options");layerNotice.setOnClickListener(v->layerOptions());layerNotice.setVisibility(GONE);information.addView(layerNotice,new LayoutParams(-1,-2));
+        layerAttribution=text("",10);layerAttribution.setPadding(dp(6),dp(3),dp(6),dp(3));layerAttribution.setBackgroundColor(NAVY);layerAttribution.setOnClickListener(v->layerOptions());layerAttribution.setVisibility(GONE);information.addView(layerAttribution,new LayoutParams(-1,-2));
         filterBadge=MapUi.text(activity,"",12,false);filterBadge.setBackground(surface(NAVY,12,LINE));filterBadge.setPadding(dp(8),dp(6),dp(8),dp(6));filterBadge.setOnClickListener(v->filters());filterBadge.setMinHeight(dp(40));filterBadge.setMaxLines(1);filterBadge.setEllipsize(android.text.TextUtils.TruncateAt.END);filterBadge.setVisibility(GONE);
         information.addView(filterBadge,new LayoutParams(-2,-2));
         tripInfo=text("",12);tripInfo.setBackground(surface(NAVY,12,LINE));tripInfo.setPadding(dp(8),dp(6),dp(8),dp(6));tripInfo.setMinHeight(dp(40));tripInfo.setOnClickListener(v->trips());tripInfo.setVisibility(GONE);information.addView(tripInfo,new LayoutParams(-2,-2));
 
         compass=new CompassDial(activity);compass.setOnClickListener(v->map.north());compass.setContentDescription("Compass heading. Tap for north-up map");
         FrameLayout.LayoutParams compassLp=new FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP|Gravity.END);compassLp.setMargins(0,dp(76),dp(14),0);stage.addView(compass,compassLp);
+        windHud=new FrameLayout(activity);windHud.addView(map.windIndicator(),new FrameLayout.LayoutParams(-1,-2));
+        FrameLayout.LayoutParams windLp=new FrameLayout.LayoutParams(dp(76),-2,Gravity.TOP|Gravity.END);windLp.setMargins(0,dp(148),dp(8),0);stage.addView(windHud,windLp);
+        windHud.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
         hud=new BoatNavigationHud(activity,new BoatNavigationHud.Actions(){
             public void destination(){showDestination();}
             public void voice(){toggleVoice();}
@@ -214,6 +235,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
 
         map.setLayers(layers[0],layers[1],layers[2]);
         map.setListener(new MapTilerMapView.Listener(){
+            public void onLayersChanged(){updateLayerNotice();}
             public void onMapStatusChanged(){post(()->{if(!disposed)updateGps(lastPosition);});}
             public void onPlace(double latitude,double longitude){map.setTapToPlace(false);place(latitude,longitude);}
             public void onPoint(SavedPoint point){pointMenu(point);}
@@ -225,6 +247,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
                 new AlertDialog.Builder(activity).setTitle(group.size()+" points here").setItems(labels,(d,w)->pointMenu(group.get(w))).setNegativeButton("Close",null).show();
             }
         });
+        applyFishingLayers();
         sensors = activity.getSystemService(SensorManager.class); rotation = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         if (prefs.contains("nav_lat")) {
             try { destination = new SavedPoint(prefs.getLong("nav_id",-2), Double.parseDouble(prefs.getString("nav_lat", "0")), Double.parseDouble(prefs.getString("nav_lon", "0")), 0, "Waypoint", "", null, null, prefs.getString("nav_label", "Destination")); }
@@ -284,11 +307,11 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         long seconds = start > 0 ? Math.max(0, end - start) / 1000 : 0;
         int catches = 0, count = 0;
         for (SavedPoint p : tripEvents) { count++; if ("Catch".equals(p.type)) catches++; }
-        subtitle.setText(navMode ? "Boat guidance - direct distance and bearing" : compact&&start>0?duration(seconds)+" · "+(trackMode?distance:activity.getString(R.string.map_catch_count,catches)):trackMode ? "Saved locally · " + (paused ? "recording paused" : "GPS track") : start > 0 ? new java.text.SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(start)) : "Your next fishing trip");
+        subtitle.setText(navMode ? "Boat guidance - direct distance and bearing" : compact&&start>0?duration(seconds)+" · "+(trackMode?distance:getResources().getQuantityString(R.plurals.map_catch_count,catches,catches)):trackMode ? "Saved locally · " + (paused ? "recording paused" : "GPS track") : start > 0 ? new java.text.SimpleDateFormat("EEE, d MMM · HH:mm", Locale.getDefault()).format(new Date(start)) : "Your next fishing trip");
         metricOne.setText(trackMode ? distance : duration(seconds)); metricOneLabel.setText(trackMode ? "Distance" : "Duration");
-        metricTwo.setText(trackMode ? String.format(Locale.US, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : Integer.toString(catches));
+        metricTwo.setText(trackMode ? String.format(Locale.US, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : String.format(Locale.getDefault(),"%d",catches));
         metricTwoLabel.setText(trackMode ? "Trip elapsed" : "Catches");
-        metricThree.setText(Integer.toString(count)); thirdMetric.setVisibility(trackMode || navMode ? GONE : VISIBLE);
+        metricThree.setText(String.format(Locale.getDefault(),"%d",count)); thirdMetric.setVisibility(trackMode || navMode ? GONE : VISIBLE);
         secondary.setText(navMode ? "Show point" : trackMode ? (paused ? "▶ Resume" : "Ⅱ Pause") : "☷ Events · " + count);
         secondary.setEnabled(!navMode || destination != null); secondary.setAlpha(secondary.isEnabled() ? 1f : .45f);
         if (trackMode) { secondary.setEnabled(active); secondary.setAlpha(active ? 1f : .45f); }
@@ -337,6 +360,11 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     }
     private SavedPoint placePoint(PlaceResult p){return new SavedPoint(-3,p.latitude,p.longitude,0,"Waypoint","",null,null,p.name);}
     private boolean fresh() { return FiskentraLocationManager.isFresh(location); }
+    private boolean guidanceReady() {
+        return location != null && LocationQualityPolicy.guidance(location.getElapsedRealtimeNanos(),
+                android.os.SystemClock.elapsedRealtimeNanos(), location.hasAccuracy() ? location.getAccuracy() : Double.NaN);
+    }
+    private String guidanceWaitMessage() { return fresh() ? "Waiting for accurate GPS" : "Waiting for fresh GPS"; }
     private void addMenu() {
         if(debugReadOnly())return;
         new AlertDialog.Builder(activity).setTitle("Add point").setItems(new String[]{"At my GPS position", "At map center", "Tap anywhere on map", "Enter coordinates"}, (d, which) -> {
@@ -376,7 +404,25 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     }
     private void editSelected(){if(selected==null)return;SavedPoint p=selected;ArrayList<String> labels=new ArrayList<>();labels.add(activity.getString(R.string.map_point_appearance));labels.add(activity.getString(R.string.map_trip_binding));if("Catch".equals(p.type))labels.add(activity.getString(R.string.map_catch_editor));new AlertDialog.Builder(activity).setTitle(R.string.map_point_editor).setItems(labels.toArray(new String[0]),(d,w)->{if(w==0)edit(p,p.latitude,p.longitude);else if(w==1)assignTrip(p);else actions.editDetails(p);}).show();}
     private void assignTrip(SavedPoint p){List<FishingDay> trips=new FishingDayStore(activity).all();ArrayList<String> labels=new ArrayList<>();labels.add(activity.getString(R.string.map_unassigned));for(FishingDay trip:trips)labels.add(java.text.DateFormat.getDateTimeInstance().format(new Date(trip.startedAt)));new AlertDialog.Builder(activity).setTitle(R.string.map_trip_binding).setItems(labels.toArray(new String[0]),(d,w)->dataWorker.execute(()->{try{points.setTripId(p.id,w==0?0:trips.get(w-1).id);ui.post(()->update(lastPosition,lastSignals));}catch(Exception e){ui.post(()->toast(activity.getString(R.string.map_save_failed)));}})).show();}
-    private void pointMore(){if(selected==null)return;SavedPoint p=selected;new AlertDialog.Builder(activity).setItems(new String[]{activity.getString(R.string.map_set_location),activity.getString(R.string.map_retry_sync),activity.getString(R.string.map_delete)},(d,w)->{if(w==0)actions.setLocation(p);else if(w==1)actions.saved(p);else new AlertDialog.Builder(activity).setTitle(R.string.map_delete).setMessage(R.string.map_delete_confirm).setNegativeButton(R.string.map_cancel,null).setPositiveButton(R.string.map_delete,(q,n)->{closeOverlay();if(destination!=null&&destination.id==p.id){navigate(null);toast(activity.getString(R.string.map_target_deleted));}actions.delete(p);}).show();}).show();}
+    private void pointMore(){
+        if(selected==null)return;SavedPoint p=selected;
+        boolean localOnly=CloudDataPolicy.isLocalOnlyBeta();
+        int deleteLabel=localOnly?R.string.data_delete_from_phone:R.string.map_delete;
+        new AlertDialog.Builder(activity).setItems(new String[]{activity.getString(R.string.map_set_location),
+                activity.getString(localOnly?R.string.data_storage_info:R.string.map_retry_sync),activity.getString(deleteLabel)},(d,w)->{
+            if(w==0)actions.setLocation(p);
+            else if(w==1){
+                if(localOnly)new AlertDialog.Builder(activity).setTitle(R.string.data_local_storage_title)
+                        .setMessage(activity.getString(R.string.data_local_storage_summary)+"\n\n"+activity.getString(R.string.data_previous_cloud_notice))
+                        .setPositiveButton(android.R.string.ok,null).show();
+                else actions.sync(p);
+            }else new AlertDialog.Builder(activity).setTitle(deleteLabel)
+                    .setMessage(PointSyncQueue.get(activity).deleteNotice(p))
+                    .setNegativeButton(R.string.map_cancel,null).setPositiveButton(deleteLabel,(q,n)->{
+                        closeOverlay();if(destination!=null&&destination.id==p.id){navigate(null);toast(activity.getString(R.string.map_target_deleted));}actions.delete(p);
+                    }).show();
+        }).show();
+    }
     private void bindPoint(){if(pointSheet!=null&&selected!=null)pointSheet.bind(selected,location,imperial,debugFixture==null?PointSyncQueue.get(activity).pointStatus(selected):activity.getString(R.string.map_debug_readonly));}
     public void openPointForQa(long id){if(com.fiskentra.app.BuildConfig.DEBUG){SavedPoint p=points.find(id);if(p!=null){pointMenu(p);sheet.setExpanded(true);}}}
     private void edit(SavedPoint existing, double lat, double lon) {
@@ -404,7 +450,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         };
         icon.setOnItemSelectedListener(changed); color.setOnItemSelectedListener(changed); size.setOnItemSelectedListener(changed); update.run();
-        CheckBox defaults = new CheckBox(activity); defaults.setText("Use this appearance for new points of this type (including Flic)"); form.addView(defaults);
+        CheckBox defaults = new CheckBox(activity); defaults.setText(R.string.map_ui_default_appearance); form.addView(defaults);
         ScrollView scroll = new ScrollView(activity); scroll.addView(form);
         new AlertDialog.Builder(activity).setTitle(existing == null ? "New point" : "Point appearance").setView(scroll).setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
@@ -460,23 +506,24 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
             map.setNavigating(true);compass.setVisibility(VISIBLE);guidance.setVisibility(sheet==null?VISIBLE:GONE);hud.status(backtrackTitle);
             lower.setVisibility(GONE);backtrackDock.setVisibility(sheet==null?VISIBLE:GONE);updateMapInsets();return;
         }
-        updateNavigationState();
+        boolean ready=guidanceReady();
+        updateNavigationState(ready);
         hud.profile(destination!=null,voiceEnabled);
         hud.status(navigation.getText().toString());
-        if(destination!=null&&fresh()){
+        if(destination!=null&&ready){
             double meters=FieldNavigation.distance(location.getLatitude(),location.getLongitude(),destination.latitude,destination.longitude);
             double bearing=FieldNavigation.bearing(location.getLatitude(),location.getLongitude(),destination.latitude,destination.longitude);
             hud.summary(nearDestination?"Destination reached":BoatArrivalPolicy.distanceLabel(meters,imperial)+" - "+Math.round((bearing+360)%360)+"\u00b0",destination.title);
-        }else hud.summary(destination==null?"Choose destination":"Waiting for GPS",destination==null?"":destination.title);
+        }else hud.summary(destination==null?"Choose destination":guidanceWaitMessage(),destination==null?"":destination.title);
         updateMapInsets();
     }
     private void toggleVoice() { voiceEnabled=!voiceEnabled;prefs.edit().putBoolean("navigation_voice",voiceEnabled).apply();voice.setEnabled(voiceEnabled);updateNavigation(); }
-    private void updateNavigationState() {
+    private void updateNavigationState(boolean ready) {
         nearDestination=false;
         map.setNavigating(destination!=null);compass.setVisibility(VISIBLE);guidance.setVisibility(destination!=null&&sheet==null?VISIBLE:GONE);
         if(destination==null){compass.setTarget(Double.NaN);setTextIfChanged(navigation,"Choose a point on the water");return;}
         String name=destination.title.isEmpty()?"Destination":destination.title;
-        if(!fresh()){setTextIfChanged(navigation,"Waiting for fresh GPS\n"+name);compass.setTarget(Double.NaN);return;}
+        if(!ready){setTextIfChanged(navigation,guidanceWaitMessage()+"\n"+name);compass.setTarget(Double.NaN);return;}
         double meters=FieldNavigation.distance(location.getLatitude(),location.getLongitude(),destination.latitude,destination.longitude);
         double bearing=(FieldNavigation.bearing(location.getLatitude(),location.getLongitude(),destination.latitude,destination.longitude)+360)%360;
         nearDestination=arrivalPolicy.update(meters,location.hasAccuracy()?location.getAccuracy():Double.NaN);
@@ -485,11 +532,70 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         setTextIfChanged(navigation,(nearDestination?"Destination reached":BoatArrivalPolicy.distanceLabel(meters,imperial)+" to destination")+"\n"+name+direction);compass.setTarget(nearDestination?Double.NaN:bearing);
     }
     private void layers() {
-        new AlertDialog.Builder(activity).setTitle("Map layers").setMultiChoiceItems(new String[]{"Saved points", "Trip track", "Point labels"}, layers, (d, index, checked) -> {
+        new AlertDialog.Builder(activity).setTitle("Map layers").setMultiChoiceItems(LAYER_NAMES, layers, (d, index, checked) -> {
             layers[index] = checked; map.setLayers(layers[0], layers[1], layers[2]);
-            prefs.edit().putBoolean("points", layers[0]).putBoolean("track", layers[1]).putBoolean("labels", layers[2]).apply();
-        }).setNegativeButton("Tools",(d,w)->mapTools()).setNeutralButton("Base map", (d, w) -> new AlertDialog.Builder(activity).setTitle("Base map")
+            prefs.edit().putBoolean(LAYER_KEYS[index],checked).apply();applyFishingLayers();
+        }).setNegativeButton("Tools",(d,w)->mapTools()).setNeutralButton("Map types", (d, w) -> new AlertDialog.Builder(activity).setTitle("Base map")
                 .setItems(new String[]{"Normal", "Satellite", "Terrain", "Hybrid"}, (d2, which) -> map.setBaseStyle(new String[]{MapTilerMapView.STYLE_OUTDOOR, MapTilerMapView.STYLE_HYBRID, MapTilerMapView.STYLE_TOPO, MapTilerMapView.STYLE_OCEAN}[which])).show()).setPositiveButton("Done", null).show();
+    }
+    private void applyFishingLayers(){
+        List<SavedPoint> catches=mapPoints;
+        if(!heatSpecies.isEmpty()){
+            ArrayList<SavedPoint> chosen=new ArrayList<>();
+            for(SavedPoint point:mapPoints){String species=point.catchDetails==null?"":point.catchDetails.species;if(heatSpecies.equals(species))chosen.add(point);}catches=chosen;
+        }
+        map.setFishingLayers(layers[3],layers[4],layers[5],layers[6],layers[7],catches,historyTrips,historyIds,depthOpacity,heatOpacity,imperial);
+        updateLayerNotice();
+    }
+    private void updateLayerNotice(){
+        if(disposed||layerNotice==null)return;
+        String status=map.fishingLayerStatus();boolean active=layers[3]||layers[4]||layers[5]||layers[6]||layers[7];
+        setTextIfChanged(layerNotice,status);layerNotice.setVisibility(active?VISIBLE:GONE);
+        ArrayList<String> credits=new ArrayList<>();if(layers[3])credits.add("Weather data by Open-Meteo.com");if(layers[4])credits.add("EMODnet Bathymetry");if(layers[5])credits.add("© OpenSeaMap · © OpenStreetMap contributors");
+        setTextIfChanged(layerAttribution,android.text.TextUtils.join(" · ",credits));layerAttribution.setVisibility(credits.isEmpty()?GONE:VISIBLE);
+        if(layerDialogStatus!=null)setTextIfChanged(layerDialogStatus,status.isEmpty()?"Additional layers are off. Enable them in Map layers.":status);
+        updateMapInsets();
+    }
+    private void layerOptions(){
+        if(disposed)return;if(layerOptionsDialog!=null){layerOptionsDialog.dismiss();layerOptionsDialog=null;}
+        LinearLayout body=new LinearLayout(activity);body.setOrientation(VERTICAL);body.setPadding(dp(20),dp(4),dp(20),dp(12));
+        layerDialogStatus=MapUi.text(activity,"",13,false);body.addView(layerDialogStatus);updateLayerNotice();
+        addOpacityControl(body,"Depth opacity",depthOpacity,value->{depthOpacity=value;prefs.edit().putFloat("depth_opacity",value).apply();applyFishingLayers();});
+        addOpacityControl(body,"Catch heatmap opacity",heatOpacity,value->{heatOpacity=value;prefs.edit().putFloat("heat_opacity",value).apply();applyFishingLayers();});
+        Button species=MapUi.button(activity,R.string.map_filter_types,()->{layerOptionsDialog.dismiss();chooseHeatSpecies();},false);species.setText(activity.getString(R.string.map_ui_catch_species,heatSpecies.isEmpty()?activity.getString(R.string.map_ui_all_species):heatSpecies));body.addView(species);
+        Button history=MapUi.button(activity,R.string.map_return_saved,()->{layerOptionsDialog.dismiss();chooseHistoryTrips();},false);history.setText(activity.getString(R.string.map_ui_past_trips,historyIds.isEmpty()?activity.getString(R.string.map_ui_all_recent):historyIds.contains("__none__")?activity.getString(R.string.map_ui_none):getResources().getQuantityString(R.plurals.map_ui_selected_trips,historyIds.size(),historyIds.size())));body.addView(history);
+        Button pointFilters=MapUi.button(activity,R.string.map_filter_title,()->{layerOptionsDialog.dismiss();filters();},false);pointFilters.setText(R.string.map_ui_point_filters);body.addView(pointFilters);
+        TextView legendTitle=MapUi.text(activity,"Depth colour legend · metres relative to Lowest Astronomical Tide (LAT). The colour scale is non-linear.",13,true);legendTitle.setPadding(0,dp(14),0,dp(8));body.addView(legendTitle);
+        ImageView legend=new ImageView(activity);legend.setImageResource(R.drawable.depth_legend);legend.setScaleType(ImageView.ScaleType.FIT_CENTER);legend.setBackgroundColor(Color.WHITE);legend.setContentDescription("EMODnet depth scale: red at zero to ten metres, yellow near fifty, green near one hundred fifty to four hundred fifty, cyan near one thousand, blue at two to three thousand five hundred, dark at six thousand metres");LayoutParams legendLp=new LayoutParams(dp(198),dp(275));legendLp.gravity=Gravity.CENTER_HORIZONTAL;body.addView(legend,legendLp);
+        TextView details=MapUi.text(activity,"Wind applies at the selected point, otherwise your fresh GPS location or the map centre. The arrow points downwind.\n\nThe heatmap shows your recorded catches and follows point filters; it does not predict fish. Past trips show up to 12 completed routes, each in a different colour.\n\nDepth contours cover marine areas; inland and near-shore coverage may be missing. Depths and sea marks are reference information and do not check boat-route clearance.",13,false);details.setPadding(0,dp(12),0,dp(12));body.addView(details);
+        TextView sources=MapUi.text(activity,"",12,false);sources.setText(android.text.Html.fromHtml("Weather data by <a href=\"https://open-meteo.com/\">Open-Meteo.com</a> · <a href=\"https://creativecommons.org/licenses/by/4.0/\">CC BY 4.0</a><br><br>Depths: <a href=\"https://emodnet.ec.europa.eu/en/bathymetry\">EMODnet Bathymetry</a> · <a href=\"https://creativecommons.org/licenses/by/4.0/\">CC BY 4.0</a><br><br>Sea marks: © <a href=\"https://www.openseamap.org/\">OpenSeaMap</a> and © <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap contributors</a> · underlying data ODbL; rendered tiles <a href=\"https://creativecommons.org/licenses/by-sa/2.0/\">CC BY-SA 2.0</a>",android.text.Html.FROM_HTML_MODE_LEGACY));sources.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());sources.setLinkTextColor(BLUE);body.addView(sources);
+        ScrollView scroll=new ScrollView(activity);scroll.addView(body);
+        layerOptionsDialog=new AlertDialog.Builder(activity).setTitle("Layer options & sources").setView(scroll).setPositiveButton("Done",null).setNeutralButton("Retry online layers",(d,w)->map.retryFishingLayers()).create();
+        layerOptionsDialog.setOnDismissListener(d->{layerDialogStatus=null;layerOptionsDialog=null;});layerOptionsDialog.show();
+    }
+    private void addOpacityControl(LinearLayout body,String title,float initial,java.util.function.Consumer<Float> changed){
+        TextView label=MapUi.text(activity,title+" · "+Math.round(initial*100)+"%",14,true);label.setPadding(0,dp(14),0,0);body.addView(label);
+        SeekBar slider=new SeekBar(activity);slider.setMax(80);slider.setProgress(Math.round(initial*100)-20);slider.setContentDescription(title);slider.setMinimumHeight(dp(48));body.addView(slider);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar view,int progress,boolean user){label.setText(activity.getString(R.string.map_ui_opacity,title,progress+20));if(user)changed.accept((progress+20)/100f);}public void onStartTrackingTouch(SeekBar view){}public void onStopTrackingTouch(SeekBar view){}});
+    }
+    private void chooseHeatSpecies(){
+        TreeSet<String> found=new TreeSet<>();for(SavedPoint point:allPoints)if("Catch".equals(point.type)&&point.catchDetails!=null&&!point.catchDetails.species.isEmpty())found.add(point.catchDetails.species);
+        ArrayList<String> values=new ArrayList<>();values.add("");values.addAll(found);String[] labels=new String[values.size()];labels[0]="All species";for(int i=1;i<labels.length;i++)labels[i]=values.get(i);
+        new AlertDialog.Builder(activity).setTitle("Catch heatmap species").setSingleChoiceItems(labels,Math.max(0,values.indexOf(heatSpecies)),(d,w)->{heatSpecies=values.get(w);prefs.edit().putString("heat_species",heatSpecies).apply();applyFishingLayers();d.dismiss();}).setNegativeButton("Done",null).setOnDismissListener(d->{if(!disposed)layerOptions();}).show();
+    }
+    private void chooseHistoryTrips(){
+        ArrayList<FishingDay> available=new ArrayList<>();for(FishingDay day:historyTrips)if(!day.isActive()&&com.fiskentra.app.model.PastTripGeometry.hasLine(day.route))available.add(day);
+        available.sort((a,b)->Long.compare(b.startedAt,a.startedAt));
+        if(available.isEmpty()){new AlertDialog.Builder(activity).setTitle("Past trips").setMessage("No completed trips with recorded tracks yet. Completed recorded trips will appear here.").setPositiveButton("Done",null).setOnDismissListener(d->{if(!disposed)layerOptions();}).show();return;}
+        String[] labels=new String[available.size()+1];boolean[] checked=new boolean[labels.length];labels[0]="All recent trips (up to 12)";checked[0]=historyIds.isEmpty();
+        java.text.DateFormat date=java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM,java.text.DateFormat.SHORT);
+        for(int i=0;i<available.size();i++){FishingDay day=available.get(i);labels[i+1]=date.format(new Date(day.startedAt));checked[i+1]=historyIds.isEmpty()||historyIds.contains(Long.toString(day.id));}
+        new AlertDialog.Builder(activity).setTitle("Choose past trips").setMultiChoiceItems(labels,checked,(dialog,index,on)->{
+            AlertDialog chooser=(AlertDialog)dialog;
+            if(index==0){historyIds.clear();if(!on)historyIds.add("__none__");for(int i=1;i<checked.length;i++){checked[i]=on;chooser.getListView().setItemChecked(i,on);}}
+            else {if(historyIds.isEmpty())for(FishingDay day:available)historyIds.add(Long.toString(day.id));historyIds.remove("__none__");String id=Long.toString(available.get(index-1).id);if(on)historyIds.add(id);else historyIds.remove(id);if(historyIds.isEmpty())historyIds.add("__none__");checked[0]=false;chooser.getListView().setItemChecked(0,false);}
+            prefs.edit().putStringSet("history_ids",new HashSet<>(historyIds)).apply();applyFishingLayers();
+        }).setPositiveButton("Done",null).setOnDismissListener(d->{if(!disposed)layerOptions();}).show();
     }
     private void trips() {
         if(debugReadOnly())return;
@@ -512,7 +618,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     public void pauseSensors() { sensors.unregisterListener(this); listening = false; voice.setActive(false); invalidateHeading(); }
     private void invalidateHeading(){ui.removeCallbacks(headingExpired);heading=Double.NaN;compass.setHeading(heading);map.setHeading(heading);if(!disposed)updateNavigation();}
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); resumeSensors(); }
-    @Override protected void onDetachedFromWindow() { disposed=true;dataGeneration++;dataWorker.shutdownNow();ui.removeCallbacksAndMessages(null);if(backtrack!=null)backtrack.close();pauseSensors(); voice.close(); super.onDetachedFromWindow(); }
+    @Override protected void onDetachedFromWindow() { disposed=true;if(layerOptionsDialog!=null)layerOptionsDialog.dismiss();dataGeneration++;dataWorker.shutdownNow();ui.removeCallbacksAndMessages(null);if(backtrack!=null)backtrack.close();pauseSensors(); voice.close(); super.onDetachedFromWindow(); }
     @Override public void onSensorChanged(SensorEvent event) {
         long now = android.os.SystemClock.elapsedRealtime();
         if(!listening)return;
@@ -535,16 +641,18 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         final com.fiskentra.app.debug.MapDebugFixture fixture=debugFixture;
         dataWorker.execute(()->{
             PointLedger.Snapshot snapshot=points.snapshot();List<SavedPoint> source=fixture==null?snapshot.points:fixture.points;String trip=Long.toString(fixture==null?points.currentTripId():fixture.tripId);List<double[]> line=fixture==null?tracks.points():fixture.track;double distance=FieldNavigation.distanceMeters(line);
-            List<SavedPoint> events=com.fiskentra.app.model.TripEventPolicy.forTrack(source,new FishingDayStore(activity).all(),tracks.startedAt(),tracks.isActive()?Long.MAX_VALUE:tracks.stoppedAt());
+            List<FishingDay> days=fixture!=null&&"layers".equals(fixture.name)?fixture.pastTrips:new FishingDayStore(activity).all();
+            long nextHistoryRevision=historySignature(days);
+            List<SavedPoint> events=com.fiskentra.app.model.TripEventPolicy.forTrack(source,days,tracks.startedAt(),tracks.isActive()?Long.MAX_VALUE:tracks.stoppedAt());
             List<SavedPoint> filtered=selectedFilter.apply(source,trip);ArrayList<SavedPoint> placed=new ArrayList<>();for(SavedPoint p:filtered)if(p.hasLocation())placed.add(p);
             ui.post(()->{if(disposed||request!=dataGeneration)return;
                 if(dataRevision!=snapshot.revision||appliedFilter!=selectedFilter||!appliedTrip.equals(trip)||allPoints!=source){dataRevision=snapshot.revision;allPoints=source;filteredPoints=filtered;mapPoints=Collections.unmodifiableList(placed);appliedFilter=selectedFilter;appliedTrip=trip;}
-                currentTrip=trip;tripEvents=events;if(!sameTrack(trackSnapshot,line))trackSnapshot=line;trackDistance=distance;
+                currentTrip=trip;tripEvents=events;if(historyRevision!=nextHistoryRevision){historyTrips=days;historyRevision=nextHistoryRevision;}if(!sameTrack(trackSnapshot,line))trackSnapshot=line;trackDistance=distance;
                 if(selected!=null){SavedPoint latest=fixture!=null?selected:points.find(selected.id);if(latest==null){closeOverlay();}else if(!selectedFilter.matches(latest,trip)){closeOverlay();toast(activity.getString(R.string.map_filter_hidden));}else selected=latest;}
                 if(destination!=null&&destination.id>0&&points.find(destination.id)==null){navigate(null);toast(activity.getString(R.string.map_target_deleted));}
                 if(destination!=null&&destination.id>0){SavedPoint latest=points.find(destination.id);if(latest!=null&&latest.hasLocation()){if(latest.latitude!=destination.latitude||latest.longitude!=destination.longitude)navigate(latest);else{destination=latest;map.setDestination(latest);}}}
-                map.setData(lastPosition,mapPoints,trackSnapshot,selected);bindPoint();
-                filterBadge.setText(activity.getString(R.string.map_visible_count,mapPoints.size(),filteredPoints.size()-mapPoints.size()));filterBadge.setVisibility(filter.active()||filteredPoints.isEmpty()?VISIBLE:GONE);
+                map.setData(lastPosition,mapPoints,trackSnapshot,selected);applyFishingLayers();bindPoint();
+                filterBadge.setText(getResources().getQuantityString(R.plurals.map_visible_count,filteredPoints.size()-mapPoints.size(),mapPoints.size(),filteredPoints.size()-mapPoints.size()));filterBadge.setVisibility(filter.active()||filteredPoints.isEmpty()?VISIBLE:GONE);
                 renderPanel();updateMapInsets();
             });
         });
@@ -553,14 +661,15 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         if(!com.fiskentra.app.BuildConfig.DEBUG||disposed)return;
         final int request=++debugDatasetGeneration;++dataGeneration;
         closeOverlay();if("off".equals(name)){debugFixture=null;if(realFilter!=null)filter=realFilter;if(realMode!=null)mode=realMode;realFilter=null;realMode=null;map.endDebugCamera();dataRevision=-1;update(lastPosition,lastSignals);return;}
-        if(!"standard".equals(name)&&!"stress".equals(name))return;
-        dataWorker.execute(()->{try{com.fiskentra.app.debug.MapDebugFixture fixture=com.fiskentra.app.debug.MapDebugFixture.create(name);ui.post(()->{if(disposed||request!=debugDatasetGeneration)return;if(realFilter==null){realFilter=filter;realMode=mode;map.beginDebugCamera();}debugFixture=fixture;filter=MapFilterPolicy.all();dataRevision=-1;mode="Map";map.lookAt(fixture.centerLatitude,fixture.centerLongitude);update(lastPosition,lastSignals);});}catch(IllegalArgumentException ignored){}});
+        if(!"standard".equals(name)&&!"stress".equals(name)&&!"layers".equals(name))return;
+        dataWorker.execute(()->{try{com.fiskentra.app.debug.MapDebugFixture fixture=com.fiskentra.app.debug.MapDebugFixture.create(name);ui.post(()->{if(disposed||request!=debugDatasetGeneration)return;if(realFilter==null){realFilter=filter;realMode=mode;map.beginDebugCamera();}debugFixture=fixture;filter=MapFilterPolicy.all();dataRevision=-1;mode="Map";map.lookAt(fixture.centerLatitude,fixture.centerLongitude);if("layers".equals(name))map.showBounds(54.215,12.16,54.145,12.04);update(lastPosition,lastSignals);});}catch(IllegalArgumentException ignored){}});
     }
     public void debugZoomBy(double delta){if(com.fiskentra.app.BuildConfig.DEBUG&&Double.isFinite(delta))map.zoomBy(Math.max(-1,Math.min(1,delta)));}
     private boolean debugReadOnly(){if(debugFixture==null)return false;toast(activity.getString(R.string.map_debug_readonly));return true;}
     private void startBacktrack(String id,List<double[]> line){Runnable start=()->{closeOverlay();updateGps(lastPosition);backtrack.update(location);backtrack.start(id,System.currentTimeMillis(),line);};if(destination!=null||backtrack.active())new AlertDialog.Builder(activity).setTitle(R.string.backtrack_replace_title).setMessage(R.string.backtrack_replace_message).setNegativeButton(R.string.map_cancel,null).setPositiveButton(R.string.map_return,(d,w)->start.run()).show();else start.run();}
     private void savedBacktrack(){List<FishingDay> trips=new FishingDayStore(activity).all();String[] names=new String[trips.size()];for(int i=0;i<trips.size();i++)names[i]=java.text.DateFormat.getDateTimeInstance().format(new Date(trips.get(i).startedAt));new AlertDialog.Builder(activity).setTitle(R.string.map_return_saved).setItems(names,(d,w)->{FishingDay trip=trips.get(w);startBacktrack(Long.toString(trip.id),trip.route);}).setNegativeButton(R.string.map_cancel,null).show();}
     private boolean sameTrack(List<double[]> a,List<double[]> b){if(a==b)return true;if(a.size()!=b.size())return false;return a.isEmpty()||Arrays.equals(a.get(0),b.get(0))&&Arrays.equals(a.get(a.size()-1),b.get(b.size()-1));}
+    private static long historySignature(List<FishingDay> trips){long hash=1;for(FishingDay day:trips){hash=31*hash+day.id;hash=31*hash+day.startedAt;hash=31*hash+day.endedAt;for(double[] point:day.route){hash=31*hash+point.length;for(double value:point)hash=31*hash+Double.doubleToLongBits(value);}}return hash;}
     private void updateSpeed(Location fix){
         if(fix==null)speedMeasurement.clear();
         double measured=fix!=null&&fix.hasSpeed()?fix.getSpeed():Double.NaN;
@@ -615,25 +724,29 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         int top=Math.max(dp(72),searchBar.getBottom()+dp(8));
         FrameLayout.LayoutParams infoLp=(FrameLayout.LayoutParams)information.getLayoutParams();if(infoLp.topMargin!=top){infoLp.topMargin=top;information.setLayoutParams(infoLp);}
         FrameLayout.LayoutParams compassLp=(FrameLayout.LayoutParams)compass.getLayoutParams();if(compassLp.topMargin!=top){compassLp.topMargin=top;compass.setLayoutParams(compassLp);}
-        int safeTop=Math.max(top+dp(64),information.getBottom())+dp(8);
         int bottom=sheet!=null?sheet.getHeight():backtrack!=null&&backtrack.active()?backtrackDock.getHeight():lower.getHeight();
+        int windTop=top+dp(64)+dp(8);
+        FrameLayout.LayoutParams windLp=(FrameLayout.LayoutParams)windHud.getLayoutParams();if(windLp.topMargin!=windTop){windLp.topMargin=windTop;windHud.setLayoutParams(windLp);}
+        boolean windFits=com.fiskentra.app.model.WindLayerPolicy.indicatorFits(windTop,windHud.getHeight(),stage.getHeight(),bottom+dp(12),sheet!=null);
+        windHud.setVisibility(windFits?VISIBLE:INVISIBLE);
+        int safeTop=Math.max(windFits?windTop+windHud.getHeight():top+dp(64),information.getBottom())+dp(8);
         if(sheet!=null){FrameLayout.LayoutParams sheetLp=(FrameLayout.LayoutParams)sheet.getLayoutParams();int minimumTop=top+dp(72);if(sheetLp.topMargin!=minimumTop){sheetLp.topMargin=minimumTop;sheet.setLayoutParams(sheetLp);}}
         FrameLayout.LayoutParams toolLp=(FrameLayout.LayoutParams)tools.getLayoutParams();int toolsBottom=bottom+dp(12);if(toolLp.bottomMargin!=toolsBottom){toolLp.bottomMargin=toolsBottom;tools.setLayoutParams(toolLp);}
         tools.setVisibility(sheet==null?VISIBLE:GONE);map.setControlInsets(safeTop,bottom+dp(8));
     }
     private void mapTools(){
-        new AlertDialog.Builder(activity).setTitle("Map tools").setItems(new String[]{"Point filters","Trip & recording","Trip details","Trip events","Map workspace","Weather & forecast","Connections & GPS","Offline maps"},(d,w)->{
+        new AlertDialog.Builder(activity).setTitle("Map tools").setItems(new String[]{"Point filters","Trip & recording","Trip details","Trip events","Map workspace","Weather & forecast","Connections & GPS","Offline maps","Layer options & sources"},(d,w)->{
             if(w==0)filters();else if(w==1)trips();else if(w==2){mode=tracks.isActive()?"Track":"Trip";renderPanel();if(card.getParent() instanceof ViewGroup)((ViewGroup)card.getParent()).removeView(card);showOverlay("TRIP",card);}
-            else if(w==3)events();else if(w==4)modeMenu();else if(w==5)actions.forecast();else if(w==6)signalDetails();else offline();
+            else if(w==3)events();else if(w==4)modeMenu();else if(w==5)actions.forecast();else if(w==6)signalDetails();else if(w==7)offline();else layerOptions();
         }).show();
     }
     private void filters(){MapFilterPanel body=new MapFilterPanel(activity,filter,allPoints,currentTrip,new FishingDayStore(activity).all(),new MapFilterPanel.Actions(){public void apply(MapFilterPolicy value){applyFilter(value);}public void list(){visiblePoints();}});showOverlay("FILTERS",body);}
     private void applyFilter(MapFilterPolicy value){filter=value;if(debugFixture==null)prefs.edit().putString("filter_scope",value.scope).putString("filter_trip",value.tripId).putLong("filter_from",value.fromUtc).putLong("filter_to",value.toUtc).putStringSet("filter_types",value.types).putBoolean("filter_favorite",value.favorite).apply();closeOverlay();update(lastPosition,lastSignals);}
     private void visiblePoints(){
-        LinearLayout body=MapUi.column(activity);body.addView(MapUi.text(activity,activity.getString(R.string.map_visible_count,mapPoints.size(),filteredPoints.size()-mapPoints.size()),18,true));
+        LinearLayout body=MapUi.column(activity);body.addView(MapUi.text(activity,getResources().getQuantityString(R.plurals.map_visible_count,filteredPoints.size()-mapPoints.size(),mapPoints.size(),filteredPoints.size()-mapPoints.size()),18,true));
         if(filteredPoints.isEmpty())body.addView(MapUi.button(activity,R.string.map_filter_reset,()->{filter=MapFilterPolicy.all();filters();},true));
         List<SavedPoint> listing=filteredPoints;ArrayAdapter<SavedPoint> adapter=new ArrayAdapter<SavedPoint>(activity,android.R.layout.simple_list_item_1,listing){
-            @Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView row=(TextView)super.getView(position,convert,parent);SavedPoint p=getItem(position);row.setText((p.title.isEmpty()?p.type:p.title)+(p.hasLocation()?"":" · "+activity.getString(R.string.map_no_location)));row.setTextColor(INK);row.setMinHeight(dp(48));return row;}
+            @Override public View getView(int position,View convert,android.view.ViewGroup parent){TextView row=(TextView)super.getView(position,convert,parent);SavedPoint p=getItem(position);String name=p.title.isEmpty()?p.type:p.title;row.setText(p.hasLocation()?name:activity.getString(R.string.map_ui_point_without_location,name,activity.getString(R.string.map_no_location)));row.setTextColor(INK);row.setMinHeight(dp(48));return row;}
         };
         ListView list=new ListView(activity);list.setAdapter(adapter);list.setOnItemClickListener((p,v,index,id)->pointMenu(listing.get(index)));body.addView(list,new LayoutParams(-1,dp(240)));showOverlay("FILTERS",body);
     }

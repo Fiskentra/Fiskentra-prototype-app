@@ -13,9 +13,11 @@ param(
     [ValidateRange(60,300)][int]$MaxSeconds=240,
     [ValidateRange(0,6000)][int]$MinimumCycleMs=5000,
     [string]$OutputDirectory,
-    [string]$Adb='C:\Users\Gebruiker\AppData\Local\Android\Sdk\platform-tools\adb.exe'
+    [string]$Adb=''
 )
 $ErrorActionPreference='Stop'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Android-Environment.ps1')
+$Adb = Resolve-FiskentraAdb $Adb
 $repo=Split-Path $PSScriptRoot -Parent
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo ('qa\map-lifecycle\'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

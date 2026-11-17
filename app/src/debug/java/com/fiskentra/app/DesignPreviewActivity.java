@@ -1,6 +1,7 @@
 package com.fiskentra.app;
 
-import android.app.Activity;
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 import android.location.Location;
 import android.os.Bundle;
 import android.view.View;
@@ -11,13 +12,16 @@ import com.fiskentra.app.model.*;
 import java.util.*;
 
 /** Debug-only visual fixture. Does not read or change the user's account or saved data. */
-public final class DesignPreviewActivity extends Activity implements DesignScreens.Host {
+public final class DesignPreviewActivity extends ComponentActivity implements DesignScreens.Host {
     private DesignScreens design;
     private final DesignScreens.State state=new DesignScreens.State();
     private LinearLayout root;
     private String route;
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { finish(); }
+        });
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setStatusBarColor(DesignScreens.BG);getWindow().setNavigationBarColor(DesignScreens.BG);
         state.authMode=getIntent().getStringExtra("mode");if(state.authMode==null)state.authMode="signin";
@@ -69,6 +73,5 @@ public final class DesignPreviewActivity extends Activity implements DesignScree
     public String syncLabel(SavedPoint p){return "Preview";}
     public int syncColor(SavedPoint p){return DesignScreens.MUTED;}
     public void auth(boolean signup,boolean recover,EditText name,EditText email,EditText password,EditText confirm){if(!email.getText().toString().contains("@")){email.setError("Enter a valid email address");return;}command("auth");}
-    public View legacy(String screen){TextView t=new TextView(this);t.setText("Debug visual fixture");return t;}
-    @Override public void onBackPressed(){finish();}
+    public View legacy(String screen){TextView t=new TextView(this);t.setText(R.string.ui_debug_fixture);return t;}
 }

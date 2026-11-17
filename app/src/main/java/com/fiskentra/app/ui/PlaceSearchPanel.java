@@ -1,5 +1,6 @@
 package com.fiskentra.app.ui;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -39,6 +40,8 @@ import java.util.concurrent.Executors;
 import org.json.JSONArray;
 
 /** Reusable content for the map's SEARCH overlay; the map owner controls camera and temporary markers. */
+// The map owner supplies search data and camera actions; framework XML inflation is unsupported.
+@SuppressLint("ViewConstructor")
 public final class PlaceSearchPanel extends LinearLayout implements AutoCloseable, MapSheet.FooterContent {
     public interface Actions {
         void selectPoint(SavedPoint point);
@@ -112,7 +115,7 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
         lastPlaces=java.util.Collections.emptyList();lastPlacesGeneration=-1;
         String query = input.getText().toString().trim();
         if (!online) {
-            controller.cancel(); status.setText(getContext().getString(R.string.map_search_local) + (scope.isChecked() ? "" : " · " + getContext().getString(R.string.map_search_filtered)));
+            controller.cancel(); status.setText(localSourceLabel());
             List<SavedPoint> values = scope.isChecked() ? all : filtered;
             localWorker.execute(() -> {
                 List<SavedPoint> matches = new ArrayList<>();
@@ -126,8 +129,8 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
     private void renderLocal(String query) {
         results.removeAllViews(); int first=localPage*50, end=Math.min(localMatches.size(),first+50);
         if(localMatches.isEmpty()){results.addView(text(getContext().getString(R.string.map_search_points_empty),15));return;}
-        String source=getContext().getString(R.string.map_search_local)+(scope.isChecked()?"":" · "+getContext().getString(R.string.map_search_filtered));
-        status.setText(source+"\n"+getContext().getString(R.string.map_search_page,first+1,end,localMatches.size()));
+        String page=getResources().getQuantityString(R.plurals.map_search_page,localMatches.size(),first+1,end,localMatches.size());
+        status.setText(getContext().getString(R.string.ui_two_lines,localSourceLabel(),page));
         for(int i=first;i<end;i++){SavedPoint point=localMatches.get(i);String label=point.title.isEmpty()?point.type:point.title;
             Button item=button(label+"\n"+point.type,()->{remember(query);actions.selectPoint(point);},false);item.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);results.addView(item,new LayoutParams(-1,-2));}
         if(localPage>0)results.addView(button(R.string.map_search_previous,()->{localPage--;renderLocal(query);},false),new LayoutParams(-1,-2));
@@ -144,7 +147,10 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
                 case TIMEOUT: label = R.string.map_search_timeout; break;
                 case CONFIGURATION: label = R.string.map_search_configuration; break;
                 case MALFORMED: label = R.string.map_search_malformed; break;
-                case RATE_LIMIT: status.setText(getContext().getString(R.string.map_search_rate_limit, Math.max(1, (state.failure.retryAfterMillis + 999) / 1000))); retry.setVisibility(VISIBLE); return;
+                case RATE_LIMIT:
+                    long seconds=Math.max(1, (state.failure.retryAfterMillis + 999) / 1000);
+                    status.setText(getResources().getQuantityString(R.plurals.map_search_rate_limit,(int)Math.min(Integer.MAX_VALUE,seconds),seconds));
+                    retry.setVisibility(VISIBLE); return;
                 default: label = R.string.map_search_service;
             }
             status.setText(label); retry.setVisibility(error == PlaceSearchProvider.Error.CONFIGURATION ? GONE : VISIBLE); return;
@@ -152,6 +158,7 @@ public final class PlaceSearchPanel extends LinearLayout implements AutoCloseabl
         lastPlaces=new ArrayList<>(state.results);lastPlacesGeneration=localGeneration;lastPlacesQuery=input.getText().toString().trim();lastPlacesScope=scope.isChecked();
         renderPlaces(lastPlaces);
     }
+    private String localSourceLabel(){return scope.isChecked()?getContext().getString(R.string.map_search_local):getContext().getString(R.string.ui_label_value,getContext().getString(R.string.map_search_local),getContext().getString(R.string.map_search_filtered));}
     private void renderPlaces(List<PlaceResult> values){
         resultScroll.scrollTo(0,0);
         results.removeAllViews();retry.setVisibility(GONE);attribution.setText("");

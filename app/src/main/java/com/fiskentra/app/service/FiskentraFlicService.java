@@ -22,6 +22,7 @@ import com.fiskentra.app.data.PointStore;
 import com.fiskentra.app.data.TrackStore;
 import com.fiskentra.app.flic.FiskentraFlic2Manager;
 import com.fiskentra.app.location.FiskentraLocationManager;
+import com.fiskentra.app.model.FieldAccessPolicy;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.weather.WeatherClient;
 
@@ -91,10 +92,16 @@ public final class FiskentraFlicService extends Service implements
 
         createNotificationChannel();
         try {
-            enterForeground("Starting Flic 2 and GPS…");
-        } catch (SecurityException error) {
+            if (!enterForeground("Starting Flic 2 and GPS…")) {
+                flicManager.reportActionResult(null, false,
+                        "Background capture needs Location enabled or a permitted paired Flic 2");
+                stopSelf();
+                return;
+            }
+        } catch (RuntimeException error) {
+            // Foreground-service type/start restrictions can fail here, after start() returned.
             flicManager.reportActionResult(null, false,
-                    "Background service needs Location and Nearby devices permissions");
+                    "Background capture unavailable · check permissions and reopen Fiskentra");
             stopSelf();
             return;
         }
@@ -108,7 +115,7 @@ public final class FiskentraFlicService extends Service implements
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        return running ? START_STICKY : START_NOT_STICKY;
     }
 
     @Override public void onDestroy() {
@@ -217,19 +224,25 @@ public final class FiskentraFlicService extends Service implements
         notificationManager.createNotificationChannel(channel);
     }
 
-    private void enterForeground(String status) {
+    private boolean enterForeground(String status) {
+        int capabilities = FieldAccessPolicy.backgroundCapabilities(
+                locationManager.hasPermission(), locationManager.isEnabled(),
+                flicManager != null && flicManager.hasPermissions(),
+                flicManager != null && flicManager.pairedButtonCount() > 0);
+        // Android 14+ rejects type NONE. Stop gracefully and keep Activity capture available.
+        if (capabilities == 0) return false;
         Notification notification = notification(status);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int types = locationManager.hasPermission() && locationManager.isEnabled()
+            int types = (capabilities & FieldAccessPolicy.LOCATION) != 0
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION : 0;
-            if (flicManager != null && flicManager.hasPermissions()
-                    && flicManager.pairedButtonCount() > 0) {
+            if ((capabilities & FieldAccessPolicy.CONNECTED_DEVICE) != 0) {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
             }
             startForeground(NOTIFICATION_ID, notification, types);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
+        return true;
     }
 
     private void updateNotification(String status) {
@@ -243,7 +256,7 @@ public final class FiskentraFlicService extends Service implements
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_fiskentra)
                 .setContentTitle(trackStore != null && trackStore.isActive()
                         ? (trackStore.isPaused() ? "Fiskentra trip paused" : "Fiskentra trip recording") : "Fiskentra field button active")
                 .setContentText(status)

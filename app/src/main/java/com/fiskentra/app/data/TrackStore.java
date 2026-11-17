@@ -156,6 +156,39 @@ public final class TrackStore {
         synchronized (LOCK) { return readPoints(); }
     }
 
+    /** A consistent, strict, read-only capture; upload never changes recording or pause state. */
+    public JSONObject snapshotForBackup() {
+        synchronized (LOCK) {
+            try {
+                long started = prefs.getLong(KEY_STARTED_AT, 0), stopped = prefs.getLong(KEY_STOPPED_AT, 0);
+                boolean active = prefs.getBoolean(KEY_ACTIVE, false), paused = prefs.getBoolean("paused", false);
+                JSONArray points = new JSONArray(prefs.getString(KEY_POINTS, "[]"));
+                if (started == 0 && !active && points.length() == 0) return null;
+                if (started <= 0 || (stopped != 0 && stopped < started) || (!active && stopped == 0))
+                    throw new IllegalArgumentException("Invalid recording times");
+                for (int i = 0; i < points.length(); i++) {
+                    JSONObject p = points.getJSONObject(i);
+                    double lat = p.getDouble("lat"), lon = p.getDouble("lon"), time = p.getDouble("time");
+                    if (!Double.isFinite(lat) || !Double.isFinite(lon) || !Double.isFinite(time)
+                            || Math.abs(lat) > 90 || Math.abs(lon) > 180 || time <= 0)
+                        throw new IllegalArgumentException("Invalid recording geometry");
+                    p.put("segment", p.optBoolean("segment"));
+                }
+                JSONObject result = new JSONObject().put("started_at", started).put("ended_at", active ? 0 : stopped)
+                        .put("was_active", active).put("was_paused", paused).put("route", points);
+                for (String key : new String[]{KEY_START_WEATHER, KEY_END_WEATHER}) {
+                    String raw = prefs.getString(key, "");
+                    if (raw.isEmpty()) continue;
+                    JSONObject value = new JSONObject(raw);
+                    WeatherSnapshot weather = WeatherSnapshot.fromJson(value);
+                    if (weather == null) throw new IllegalArgumentException("Invalid recording weather");
+                    result.put(key, weather.toJson());
+                }
+                return result;
+            } catch (Exception error) { throw new IllegalStateException("Track storage needs recovery before cloud backup", error); }
+        }
+    }
+
     private List<double[]> readPoints() {
         String serialized = prefs.getString(KEY_POINTS, "[]");
         if (serialized.equals(cachedJson)) return cachedPoints;

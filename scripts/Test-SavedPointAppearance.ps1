@@ -1,5 +1,8 @@
-param([string]$Jdk='C:\Users\Gebruiker\.jdks\jbr-21.0.11', [string]$AndroidJar='C:\Users\Gebruiker\AppData\Local\Android\Sdk\platforms\android-35\android.jar')
+param([string]$Jdk='', [string]$AndroidJar='')
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'Android-Environment.ps1')
+$Jdk = Resolve-FiskentraJdk $Jdk
+$AndroidJar = Resolve-FiskentraAndroidJar $AndroidJar
 $repo=Split-Path $PSScriptRoot -Parent
 $output=Join-Path $repo 'build\point-appearance-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null

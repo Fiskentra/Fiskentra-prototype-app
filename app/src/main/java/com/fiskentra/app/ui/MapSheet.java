@@ -2,12 +2,13 @@ package com.fiskentra.app.ui;
 
 import android.content.Context;
 import android.graphics.drawable.GradientDrawable;
+import android.util.AttributeSet;
 import android.view.*;
 import android.widget.*;
 import com.fiskentra.app.R;
 
 /** A single scrollable, bounded overlay host; map remains interactive above it. */
-final class MapSheet extends LinearLayout {
+public final class MapSheet extends LinearLayout {
     interface Expandable { void setExpanded(boolean expanded); }
     interface FooterContent { View footer(); default void prepareWidth(int widthPx) {} }
     private View body;
@@ -16,15 +17,31 @@ final class MapSheet extends LinearLayout {
     private final ScrollView scroll;
     private final Button handle;
     private boolean expanded;
-    private float downY;
-    MapSheet(Context c,Runnable close) {
-        super(c);setOrientation(VERTICAL);setPadding(dp(14),0,dp(14),dp(12));
+    public MapSheet(Context c) { this(c, null, null); }
+    public MapSheet(Context c, AttributeSet attributes) { this(c, attributes, null); }
+    MapSheet(Context c,Runnable close) { this(c, null, close); }
+    private MapSheet(Context c, AttributeSet attributes, Runnable close) {
+        super(c, attributes);setOrientation(VERTICAL);setPadding(dp(14),0,dp(14),dp(12));
         GradientDrawable bg=new GradientDrawable();bg.setColor(0xff001e2e);bg.setCornerRadius(dp(18));bg.setStroke(dp(1),0xff53778f);setBackground(bg);setElevation(dp(6));
         head=new LinearLayout(c);head.setGravity(Gravity.CENTER_VERTICAL);
-        handle=MapUi.button(c,R.string.map_expand,()->setExpanded(!expanded),false);handle.setText("━");handle.setTextSize(24);handle.setTextColor(0xff94bce6);handle.setBackgroundColor(android.graphics.Color.TRANSPARENT);handle.setContentDescription(c.getString(R.string.map_expand));head.addView(handle,new LayoutParams(0,dp(48),1));
-        ImageButton done=new ImageButton(c);done.setImageResource(R.drawable.ic_nav_close);done.setContentDescription(c.getString(R.string.map_close));done.setBackgroundColor(android.graphics.Color.TRANSPARENT);done.setPadding(dp(12),dp(12),dp(12),dp(12));done.setOnClickListener(v->close.run());head.addView(done,new LayoutParams(dp(48),dp(48)));addView(head);
-        handle.setOnTouchListener((v,e)->{if(e.getAction()==MotionEvent.ACTION_DOWN)downY=e.getRawY();if(e.getAction()==MotionEvent.ACTION_UP&&Math.abs(e.getRawY()-downY)>dp(24)){setExpanded(e.getRawY()<downY);return true;}return false;});
+        handle=new SheetHandle(c);handle.setOnClickListener(v->setExpanded(!expanded));handle.setText("━");handle.setTextSize(24);handle.setTextColor(0xff94bce6);handle.setBackgroundColor(android.graphics.Color.TRANSPARENT);handle.setContentDescription(c.getString(R.string.map_expand));head.addView(handle,new LayoutParams(0,dp(48),1));
+        ImageButton done=new ImageButton(c);done.setImageResource(R.drawable.ic_nav_close);done.setContentDescription(c.getString(R.string.map_close));done.setBackgroundColor(android.graphics.Color.TRANSPARENT);done.setPadding(dp(12),dp(12),dp(12),dp(12));done.setOnClickListener(v->{if(close!=null)close.run();else setVisibility(GONE);});head.addView(done,new LayoutParams(dp(48),dp(48)));addView(head);
         scroll=new ScrollView(c);scroll.setFillViewport(false);addView(scroll,new LayoutParams(-1,-2));
+    }
+    private final class SheetHandle extends Button {
+        private float downY;
+        SheetHandle(Context context) { super(context); setAllCaps(false); }
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) downY = event.getRawY();
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                if (Math.abs(event.getRawY() - downY) > dp(24)) setExpanded(event.getRawY() < downY);
+                else if (isPressed()) performClick();
+                setPressed(false);
+                return true;
+            }
+            return super.onTouchEvent(event);
+        }
+        @Override public boolean performClick() { return super.performClick(); }
     }
     void content(View body){this.body=body;if(footer!=null){removeView(footer);footer=null;}scroll.removeAllViews();scroll.addView(body);if(body instanceof FooterContent){footer=((FooterContent)body).footer();addView(footer,new LayoutParams(-1,-2));}if(body instanceof Expandable)((Expandable)body).setExpanded(expanded);scroll.scrollTo(0,0);}
     void setExpanded(boolean value){expanded=value;handle.setContentDescription(getContext().getString(expanded?R.string.map_collapse:R.string.map_expand));if(body instanceof Expandable)((Expandable)body).setExpanded(expanded);requestLayout();}

@@ -56,7 +56,6 @@
     <string name="offline_retry">Retry</string>
     <string name="offline_save">Save</string>
     <string name="offline_cancel">Cancel</string>
-    <string name="offline_close">Close</string>
     <string name="offline_delete_title">Remove downloaded map?</string>
     <string name="offline_delete_message">Remove “%1$s” (%2$s downloaded)? Its map will no longer be guaranteed available without internet. Your points, trips and GPX are kept. Shared cached resources may remain in use by another area.</string>
     <string name="offline_route_saved">Saved route geometry available</string>

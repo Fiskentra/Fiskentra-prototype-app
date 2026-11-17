@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wind_hud_title">Wind</string>
+    <string name="wind_choose_location">Wind: choose a location on the map</string>
+    <string name="wind_too_old">Wind data is too old</string>
+    <string name="wind_service_unavailable">Weather service unavailable</string>
+    <string name="wind_loading">Wind: loading for this location…</string>
+    <string name="wind_failure">Wind: %1$s</string>
+    <string name="wind_unavailable">Unavailable</string>
+    <string name="wind_saved_offline">Saved wind (offline)</string>
+    <string name="wind_saved_older">Saved wind (older data)</string>
+    <string name="wind_saved_failed">Saved wind (update failed)</string>
+    <string name="wind_status">%1$s: %2$s · %3$s</string>
+    <string name="wind_speed_from">%1$s from %2$s</string>
+    <string name="wind_updating_status">%1$s · updating</string>
+    <string name="wind_calm">Calm</string>
+    <string name="wind_offline">Offline</string>
+    <string name="wind_older">Older data</string>
+    <string name="wind_saved">Saved</string>
+    <string name="wind_updating">Updating</string>
+    <string name="wind_live">Current</string>
+    <string name="wind_cached">Saved wind</string>
+    <string name="wind_from">From %1$s</string>
+    <plurals name="wind_age"><item quantity="one">%1$d min ago</item><item quantity="other">%1$d min ago</item></plurals>
+    <string name="wind_no_speed">—</string>
+    <string name="wind_no_direction">—</string>
+    <string name="wind_no_age">—</string>
+    <string name="wind_source">Open-Meteo</string>
+    <string name="wind_waiting">Waiting</string>
+    <string name="wind_full_details">%1$s\n\nSource: Open-Meteo. The indicator is north-up; its arrow points downwind. Wind is sampled at the selected point, otherwise your fresh GPS location or the map centre.</string>
+    <string name="map_ui_default_appearance">Use this appearance for new points of this type (including Flic)</string>
+    <string name="map_ui_catch_species">Catch species: %1$s</string>
+    <string name="map_ui_all_species">All species</string>
+    <string name="map_ui_past_trips">Choose past trips · %1$s</string>
+    <string name="map_ui_all_recent">All recent</string>
+    <string name="map_ui_none">None</string>
+    <plurals name="map_ui_selected_trips"><item quantity="one">%1$d selected</item><item quantity="other">%1$d selected</item></plurals>
+    <string name="map_ui_point_filters">Catch date &amp; point filters</string>
+    <string name="map_ui_opacity">%1$s · %2$d%%</string>
+    <string name="map_ui_point_without_location">%1$s · %2$s</string>
+    <string name="map_ui_remaining">Remaining</string>
+    <string name="map_ui_travel_time">Travel time</string>
+    <string name="map_ui_dash">—</string>
+    <string name="map_ui_route_attribution">Valhalla · © OpenStreetMap</string>
+    <string name="map_ui_guidance_paused">Waiting for accurate GPS\nRoute guidance paused</string>
+    <string name="map_ui_gps">GPS</string>
+    <string name="map_ui_building_route">Building route…</string>
+    <string name="map_ui_recalculating_route">Recalculating route…</string>
+    <string name="map_ui_loading">Loading</string>
+    <string name="map_ui_choose_route">Choose a route · tap for options</string>
+    <string name="map_ui_retry_error">%1$s\nTap to retry</string>
+    <string name="map_ui_no_route">No route</string>
+    <string name="map_ui_off_route_detail">Off route · %1$s\n%2$s</string>
+    <string name="map_ui_recalculate_online">Internet needed to recalculate</string>
+    <string name="map_ui_recalculate_gps">Recalculating when GPS settles</string>
+    <string name="map_ui_off_route">Off route</string>
+    <string name="map_ui_eta_paused">ETA paused · off route</string>
+    <string name="map_ui_route_ends">Route ends here\nPoint is %1$s away</string>
+    <string name="map_ui_arrived">You have arrived</string>
+    <string name="map_ui_turn">%1$s  In %2$s\n%3$s</string>
+    <plurals name="map_ui_minutes"><item quantity="one">%1$d min</item><item quantity="other">%1$d min</item></plurals>
+    <string name="map_ui_eta">ETA %1$s · no live traffic%2$s%3$s</string>
+    <string name="map_ui_destination_gap">\nRoute ends %1$s from point</string>
+    <string name="map_ui_saved_route"> · saved route</string>
+    <string name="map_ui_route_end">Route end</string>
+    <string name="map_ui_arrived_state">Arrived</string>
+    <string name="map_ui_active">● Active</string>
+    <string name="map_ui_distance">Distance</string>
+    <string name="map_ui_bearing">Bearing</string>
+    <string name="map_ui_waiting_gps">%1$s\nWaiting for fresh GPS</string>
+    <string name="map_ui_guidance_detail">%1$s\n%2$s%3$s</string>
+    <string name="map_ui_near">Near destination</string>
+    <string name="map_ui_distance_to">%1$s to destination</string>
+    <string name="map_ui_degrees">%1$d°</string>
+    <string name="map_ui_direct_distance">Direct distance</string>
+    <string name="map_ui_true_bearing">True bearing</string>
+</resources>

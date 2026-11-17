@@ -1,5 +1,7 @@
-param([string]$Jdk='C:\Users\Gebruiker\.jdks\jbr-21.0.11')
+param([string]$Jdk='')
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'Android-Environment.ps1')
+$Jdk = Resolve-FiskentraJdk $Jdk
 $repo=Split-Path $PSScriptRoot -Parent
 $output=Join-Path $repo 'build\track-point-policy-tests'
 New-Item -ItemType Directory -Force -Path $output | Out-Null

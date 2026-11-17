@@ -81,6 +81,21 @@ public final class SupabaseAuthManager {
         return current != null && !current.accessToken.isEmpty() && !current.refreshToken.isEmpty();
     }
 
+    /** Serialize token refresh with sign-in/sign-out; never expose tokens to UI callers. */
+    Session sessionForCloud(boolean forceRefresh) throws Exception {
+        return executor.submit(() -> {
+            Session current = session;
+            if (current == null) throw new IllegalStateException("Sign in to sync points");
+            Session valid = forceRefresh ? refresh(current) : validSession(current);
+            if (session == null || !current.userId.equals(session.userId)) throw new IllegalStateException("Account changed; sync paused");
+            return valid;
+        }).get(30, java.util.concurrent.TimeUnit.SECONDS);
+    }
+    boolean isCurrentAccount(String owner) {
+        Session current = session;
+        return current != null && current.userId.equals(owner) && isSignedIn();
+    }
+
     public void restore(Listener listener) {
         Session current = session;
         if (current == null) {
@@ -501,7 +516,8 @@ public final class SupabaseAuthManager {
         private final SharedPreferences prefs;
 
         SecureSessionStore(Context context) {
-            prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            // Sessions from another Supabase project must never be sent to this server.
+            prefs = context.getSharedPreferences(PREFS + "_" + SupabaseConfig.PROJECT_REF, Context.MODE_PRIVATE);
         }
 
         void write(Session session) {
