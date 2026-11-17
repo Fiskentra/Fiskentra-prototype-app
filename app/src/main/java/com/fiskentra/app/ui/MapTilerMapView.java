@@ -3,10 +3,13 @@ package com.fiskentra.app.ui;
 import android.content.Context;
 import android.graphics.*;
 import android.location.Location;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.widget.FrameLayout;
 import com.fiskentra.app.BuildConfig;
 import com.fiskentra.app.R;
+import com.fiskentra.app.model.HazardPolygonGeometry;
 import com.fiskentra.app.model.MapHazard;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.FishingDay;
@@ -23,6 +26,7 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.GoogleMapOptions;
 import com.google.android.gms.maps.MapView;
+import com.google.android.gms.maps.Projection;
 import com.google.android.gms.maps.model.BitmapDescriptor;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
@@ -34,8 +38,6 @@ import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.Polygon;
 import com.google.android.gms.maps.model.PolygonOptions;
-import com.google.android.gms.maps.model.Polyline;
-import com.google.android.gms.maps.model.PolylineOptions;
 import java.util.*;
 
 /** Google Maps host. The historical class name retains the existing screen contract. */
@@ -64,6 +66,7 @@ public final class MapTilerMapView extends FrameLayout {
         void onPlace(double latitude, double longitude);
         void onPoint(SavedPoint point);
         default void onHazard(MapHazard hazard) {}
+        default void onHazardStroke(List<MapHazard.Vertex> samples) {}
         default void onCluster(List<SavedPoint> points) { onPoint(points.get(0)); }
         default void onCameraMode(MapCameraPolicy.Mode mode, boolean orientationAvailable) {}
         default void onCameraIdle() {}
@@ -72,6 +75,7 @@ public final class MapTilerMapView extends FrameLayout {
     }
     private final MapView mapView;
     private final MarkerOverlay overlay;
+    private final HazardStrokeOverlay strokeOverlay;
     private final ExecutorService geometryWorker = Executors.newSingleThreadExecutor();
     private long geometryGeneration, overviewGeneration;
     private int styleGeneration;
@@ -87,10 +91,7 @@ public final class MapTilerMapView extends FrameLayout {
     private final List<Polygon> hazardPolygons = new ArrayList<>();
     private BitmapDescriptor hazardIcon;
     private List<MapHazard.Vertex> hazardDraft = Collections.emptyList();
-    private final List<Marker> hazardDraftMarkers = new ArrayList<>();
     private Polygon hazardDraftPolygon;
-    private Polyline hazardDraftLine;
-    private BitmapDescriptor hazardVertexIcon;
     private List<double[]> track = Collections.emptyList();
     private SavedPoint selected, destination;
     private RoadRoute roadRoute;
@@ -189,6 +190,7 @@ public final class MapTilerMapView extends FrameLayout {
         this.styleListener = styleListener;
         baseStyle = normalizeStyleId(requestedStyle);
         overlay = new MarkerOverlay(context);
+        strokeOverlay = new HazardStrokeOverlay(context);
         windLayer = new MapWindLayer(context, this::notifyLayers);
         if (BuildConfig.GOOGLE_MAPS_API_KEY.trim().isEmpty()) {
             mapView = null;
@@ -207,6 +209,7 @@ public final class MapTilerMapView extends FrameLayout {
         mapView.onCreate(null);
         addView(mapView, new LayoutParams(-1, -1));
         addView(overlay, new LayoutParams(-1, -1));
+        addView(strokeOverlay, new LayoutParams(-1, -1));
         mapView.getMapAsync(value -> {
             if (destroyed) return;
             map = value; renderer=new GoogleMapFeatureRenderer(context,map);
@@ -229,6 +232,7 @@ public final class MapTilerMapView extends FrameLayout {
             map.setOnCameraMoveListener(overlay::invalidate);
             map.setOnCameraIdleListener(() -> { renderer.refreshCamera();overlay.invalidate(); persistCamera(); if(marineLayers!=null)marineLayers.refreshView();refreshWind(); if(listener!=null)listener.onCameraIdle(); });
             map.setOnCameraMoveStartedListener(reason -> {
+                strokeOverlay.cancelStroke();
                 if (reason == GoogleMap.OnCameraMoveStartedListener.REASON_GESTURE) { follow = false; camera.gesture(); notifyMode(); selectionCamera=null;selectionRestore=null;pendingSelectedId=Long.MIN_VALUE;selectionGeneration++;overviewBounds=null;insetGeneration++;overviewGeneration++; positioned = true; }
             });
             map.setOnMapLongClickListener(coordinate -> {
@@ -260,6 +264,18 @@ public final class MapTilerMapView extends FrameLayout {
     }
     public void setListener(Listener value) { listener = value; notifyMode(); notifyMapStatus(); }
     private void notifyMapStatus() { if(listener!=null)listener.onMapStatusChanged(); }
+    public void setHazardDrawing(boolean enabled) {
+        if (destroyed || enabled == (strokeOverlay.getVisibility() == VISIBLE)) return;
+        strokeOverlay.cancelStroke();
+        strokeOverlay.setVisibility(enabled ? VISIBLE : GONE);
+        if (enabled) {
+            if (map != null) map.stopAnimation();
+            camera.gesture();
+            follow = false;
+            positioned = true;
+            notifyMode();
+        }
+    }
     public void setTapToPlace(boolean enabled) {
         tapToPlace = enabled;
         if (enabled) {
@@ -337,39 +353,14 @@ public final class MapTilerMapView extends FrameLayout {
         clearHazardDraft();
         List<LatLng> boundary = new ArrayList<>();
         for (MapHazard.Vertex vertex : hazardDraft) {
-            LatLng coordinate = new LatLng(vertex.latitude, vertex.longitude);
-            boundary.add(coordinate);
-            Marker marker = map.addMarker(new MarkerOptions().position(coordinate)
-                    .title(getContext().getString(R.string.map_hazard_corner, boundary.size()))
-                    .icon(hazardVertexIcon()).anchor(.5f, .5f).zIndex(8));
-            if (marker != null) hazardDraftMarkers.add(marker);
+            boundary.add(new LatLng(vertex.latitude, vertex.longitude));
         }
         if (boundary.size() >= 3) {
             hazardDraftPolygon = map.addPolygon(new PolygonOptions().addAll(boundary).geodesic(true)
                     .strokeColor(0xffef5044).fillColor(0x40ef5044).strokeWidth(dp(2.5f)).zIndex(5));
-        } else if (boundary.size() == 2) {
-            hazardDraftLine = map.addPolyline(new PolylineOptions().addAll(boundary).geodesic(true)
-                    .color(0xffef5044).width(dp(2.5f)).zIndex(5));
         }
-    }
-    private BitmapDescriptor hazardVertexIcon() {
-        if (hazardVertexIcon == null) {
-            int size = Math.round(dp(14));
-            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(bitmap);
-            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            paint.setColor(Color.WHITE);
-            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint);
-            paint.setColor(0xffef5044);
-            canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(2), paint);
-            hazardVertexIcon = BitmapDescriptorFactory.fromBitmap(bitmap);
-        }
-        return hazardVertexIcon;
     }
     private void clearHazardDraft() {
-        for (Marker marker : hazardDraftMarkers) marker.remove();
-        hazardDraftMarkers.clear();
-        if (hazardDraftLine != null) { hazardDraftLine.remove(); hazardDraftLine = null; }
         if (hazardDraftPolygon != null) { hazardDraftPolygon.remove(); hazardDraftPolygon = null; }
     }
     public void setHeading(double degrees) { if(destroyed)return;heading=degrees; headingSampleMillis=Double.isFinite(degrees)?android.os.SystemClock.elapsedRealtime():0; updateOrientation(); updateCamera(); overlay.invalidate(); }
@@ -574,7 +565,7 @@ public final class MapTilerMapView extends FrameLayout {
         updateOrientation(); renderData(); updateCamera(); overlay.invalidate();
     }
     private void updateCamera() {
-        if (map == null||destroyed) return;
+        if (map == null || destroyed || strokeOverlay.getVisibility() == VISIBLE) return;
         // Point sheets may open before Google Maps is ready; restore the saved viewport first,
         // then apply the still-current selection with measured sheet padding.
         if(pendingSelectedId!=Long.MIN_VALUE&&selected!=null&&selected.id==pendingSelectedId&&selected.hasLocation()){selectPoint(selected);return;}
@@ -597,15 +588,152 @@ public final class MapTilerMapView extends FrameLayout {
     }
     public void start() { if (!destroyed && !started) { if(mapView!=null)mapView.onStart(); started = true; } }
     public void resume() { if (!destroyed && !resumed) { if(mapView!=null)mapView.onResume(); resumed = true; refreshWind(); } }
-    public void pause() { if (!destroyed && resumed) { persistCamera(); if(mapView!=null)mapView.onPause(); resumed = false; refreshWind(); } }
+    public void pause() { if (!destroyed && resumed) { strokeOverlay.cancelStroke(); persistCamera(); if(mapView!=null)mapView.onPause(); resumed = false; refreshWind(); } }
     public void stop() { if (!destroyed && started) { if(mapView!=null)mapView.onStop(); started = false; } }
-    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(marineLayers!=null)marineLayers.close();if(fishingLayers!=null)fishingLayers.close();if(windLayer!=null)windLayer.close();if(renderer!=null)renderer.close();clearHazards();clearHazardDraft();hazardIcon=null;hazardVertexIcon=null;listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();if(mapView!=null)mapView.onDestroy(); } }
+    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(marineLayers!=null)marineLayers.close();if(fishingLayers!=null)fishingLayers.close();if(windLayer!=null)windLayer.close();if(renderer!=null)renderer.close();clearHazards();clearHazardDraft();hazardIcon=null;listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();if(mapView!=null)mapView.onDestroy(); } }
     public void onLowMemory() { if (!destroyed) if(mapView!=null)mapView.onLowMemory(); }
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); start(); resume(); }
     @Override protected void onDetachedFromWindow() { destroy(); super.onDetachedFromWindow(); }
     private void movePosition(CameraPosition position) { if(map!=null)map.moveCamera(CameraUpdateFactory.newCameraPosition(position)); }
     private PointF toScreen(LatLng coordinate) { android.graphics.Point p=map.getProjection().toScreenLocation(coordinate);return new PointF(p.x,p.y); }
     private float dp(float value) { return value * getResources().getDisplayMetrics().density; }
+
+    private final class HazardStrokeOverlay extends View {
+        private final Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path trace = new Path();
+        private final Point pixel = new Point();
+        private final List<MapHazard.Vertex> samples = new ArrayList<>();
+        private final float spacing = dp(2);
+        private final int touchSlop;
+        private final float closureRadius;
+        private int pointerId = MotionEvent.INVALID_POINTER_ID;
+        private float startX, startY, lastX, lastY;
+        private int samplesThroughLastOutside;
+        private double doubleArea, pathLength, farthestFromStart;
+        private Projection projection;
+        private boolean invalid;
+
+        HazardStrokeOverlay(Context context) {
+            super(context);
+            setVisibility(GONE);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+            closureRadius = Math.min(touchSlop, dp(10));
+            ink.setStyle(Paint.Style.STROKE);
+            ink.setStrokeJoin(Paint.Join.ROUND);
+            ink.setStrokeCap(Paint.Cap.ROUND);
+            ink.setStrokeWidth(dp(3));
+            ink.setColor(0xffef5044);
+        }
+
+        // A stroke is a continuous drawing gesture. A single tap has no drawing action.
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    cancelStroke();
+                    if (map != null && !destroyed) {
+                        pointerId = event.getPointerId(0);
+                        projection = map.getProjection();
+                        startX = event.getX();
+                        startY = event.getY();
+                        append(startX, startY, true);
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                    }
+                    return true;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                case MotionEvent.ACTION_CANCEL:
+                    cancelStroke();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                case MotionEvent.ACTION_UP:
+                    if (pointerId == MotionEvent.INVALID_POINTER_ID) return true;
+                    int index = event.findPointerIndex(pointerId);
+                    if (index < 0) {
+                        cancelStroke();
+                        return true;
+                    }
+                    for (int h = 0; h < event.getHistorySize(); h++) {
+                        append(event.getHistoricalX(index, h), event.getHistoricalY(index, h), false);
+                    }
+                    boolean finished = event.getActionMasked() == MotionEvent.ACTION_UP;
+                    append(event.getX(index), event.getY(index), finished);
+                    if (finished) {
+                        List<MapHazard.Vertex> stroke = completedStroke(event.getX(index), event.getY(index));
+                        cancelStroke();
+                        if (listener != null) listener.onHazardStroke(stroke);
+                    } else {
+                        postInvalidateOnAnimation();
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        private List<MapHazard.Vertex> completedStroke(float x, float y) {
+            // A straight screen swipe can project to a slight geographic curve.
+            double perimeter = pathLength + Math.hypot(lastX - startX, lastY - startY);
+            if (invalid || farthestFromStart < touchSlop || Math.abs(doubleArea) <= dp(1) * perimeter) {
+                return Collections.emptyList();
+            }
+            // On a return to the starting fingertip, discard just the final in-radius samples.
+            // Leave small outlines and any earlier crossing in the trace for normal validation.
+            if (Math.hypot(x - startX, y - startY) <= closureRadius
+                    && farthestFromStart >= 3 * closureRadius && samplesThroughLastOutside >= 3) {
+                return new ArrayList<>(samples.subList(0, samplesThroughLastOutside));
+            }
+            return new ArrayList<>(samples);
+        }
+
+        private void append(float x, float y, boolean endpoint) {
+            if (invalid) return;
+            if (x < 0 || y < 0 || x >= getWidth() || y >= getHeight()) {
+                invalid = true;
+                return;
+            }
+            if (!samples.isEmpty() && Math.hypot(x - lastX, y - lastY) < (endpoint ? 1 : spacing)) return;
+            pixel.set(Math.round(x), Math.round(y));
+            LatLng location = projection.fromScreenLocation(pixel);
+            if (location == null || samples.size() == HazardPolygonGeometry.MAX_STROKE_SAMPLES) {
+                invalid = true;
+                return;
+            }
+            if (samples.isEmpty()) {
+                trace.moveTo(x, y);
+            } else {
+                trace.lineTo(x, y);
+                doubleArea += (lastX - startX) * (y - startY) - (lastY - startY) * (x - startX);
+                pathLength += Math.hypot(x - lastX, y - lastY);
+            }
+            samples.add(new MapHazard.Vertex(location.latitude, location.longitude));
+            double fromStart = Math.hypot(x - startX, y - startY);
+            farthestFromStart = Math.max(farthestFromStart, fromStart);
+            if (fromStart > closureRadius) samplesThroughLastOutside = samples.size();
+            lastX = x;
+            lastY = y;
+        }
+
+        void cancelStroke() {
+            if (pointerId == MotionEvent.INVALID_POINTER_ID) return;
+            pointerId = MotionEvent.INVALID_POINTER_ID;
+            projection = null;
+            samples.clear();
+            trace.rewind();
+            doubleArea = 0;
+            pathLength = 0;
+            invalid = false;
+            farthestFromStart = 0;
+            samplesThroughLastOutside = 0;
+            if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            canvas.drawPath(trace, ink);
+        }
+    }
 
     private final class MarkerOverlay extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);

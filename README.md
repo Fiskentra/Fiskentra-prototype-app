@@ -1,12 +1,12 @@
 # Fiskentra - Google Maps and boat navigation
 
-## Android 0.29.1 (versionCode 46)
+## Android 0.29.2 (versionCode 47)
 
-Use the map's **+** menu to mark a personal danger point or draw a danger zone. Tap successive corners of the boundary, undo a corner if needed, then choose **Done** and enter a name. The map displays the outlined and shaded area. Hazards are stored on the device.
+On the map, choose **+ → Add danger zone** and trace the boundary with one finger. Lifting your finger closes the outline. Review the shaded area, choose **Redraw** to try again or **Done** to name and save it. To mark a single location, choose **Add danger point** and tap the map. Hazards are stored on the device.
 
 Android alerts at 100 m from a point or the nearest edge of a drawn zone. The alert rearms at 130 m. Its rhythm is three 110 ms pulses with 75 ms gaps, followed by a 420 ms pause and one 170 ms pulse. Screen-off monitoring uses the Android location service and requires precise location and notifications.
 
-Build the APK with `scripts/Build-Android.ps1`. The on-device check used test GPS positions on a locked Samsung. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone. The zone samples approached the middle of a drawn polygon side. Drawing, undo, naming, persistence after relaunch and deletion were also checked on the phone.
+Build the APK with `scripts/Build-Android.ps1`. On a Samsung Galaxy A33, a continuous curved gesture produced a shaded zone that could be redrawn, named and reopened after an app restart with the same boundary. The phone rejected a self-crossing trace and resumed normal map panning after saving. A separate test on a locked Samsung running 0.29.1 used simulated GPS positions. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone, approaching the middle of a polygon side.
 
 ## Android 0.28.3 (versionCode 44)
 

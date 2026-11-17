@@ -15,6 +15,7 @@ import android.text.style.RelativeSizeSpan;
 import android.text.style.StyleSpan;
 import com.fiskentra.app.data.*;
 import com.fiskentra.app.location.*;
+import com.fiskentra.app.model.HazardPolygonGeometry;
 import com.fiskentra.app.model.MapHazard;
 import com.fiskentra.app.model.SavedPoint;
 import com.fiskentra.app.model.FieldNavigation;
@@ -90,8 +91,8 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private final MapHazardDialogs hazardDialogs;
     private final LinearLayout hazardPlacementBanner;
     private final TextView hazardPlacementHint;
-    private final Button undoHazardVertex, finishHazardZone;
-    private final List<MapHazard.Vertex> hazardVertices = new ArrayList<>();
+    private final Button redrawHazardZone, finishHazardZone;
+    private List<MapHazard.Vertex> hazardBoundary = Collections.emptyList();
     private Boolean placeHazardZone;
 
     private final TextView status, gps, speed, mapNotice, navigation, tripInfo, title, subtitle, state, metricOne, metricTwo, metricThree;
@@ -198,8 +199,8 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         hazardPlacementHint.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
         hazardPlacementBanner.addView(hazardPlacementHint, new LayoutParams(-1, -2));
         LinearLayout hazardControls = row();
-        undoHazardVertex = button(activity.getString(R.string.map_hazard_undo), this::undoHazardVertex);
-        hazardControls.addView(undoHazardVertex, new LayoutParams(0, dp(48), 1));
+        redrawHazardZone = button(activity.getString(R.string.map_hazard_redraw), this::redrawHazardZone);
+        hazardControls.addView(redrawHazardZone, new LayoutParams(0, dp(48), 1));
         Button cancelPlacement = button(activity.getString(R.string.map_cancel), this::cancelHazardPlacement);
         hazardControls.addView(cancelPlacement, new LayoutParams(0, dp(48), 1));
         finishHazardZone = button(activity.getString(R.string.map_hazard_finish), this::finishHazardZone);
@@ -291,9 +292,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
             public void onMapStatusChanged(){post(()->{if(!disposed)updateGps(lastPosition);});}
             public void onPlace(double latitude, double longitude) {
                 if (placeHazardZone != null) {
-                    if (placeHazardZone) {
-                        appendHazardVertex(latitude, longitude);
-                    } else {
+                    if (!placeHazardZone) {
                         cancelHazardPlacement();
                         hazardDialogs.addPoint(latitude, longitude);
                     }
@@ -301,6 +300,9 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
                     map.setTapToPlace(false);
                     place(latitude, longitude);
                 }
+            }
+            @Override public void onHazardStroke(List<MapHazard.Vertex> samples) {
+                acceptHazardStroke(samples);
             }
             public void onPoint(SavedPoint point){pointMenu(point);}
             public void onHazard(MapHazard hazard) { if (!debugReadOnly()) hazardDialogs.showDetails(hazard); }
@@ -455,49 +457,41 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         updateHazardDraft();
         hazardPlacementBanner.setVisibility(VISIBLE);
     }
-    private void appendHazardVertex(double latitude, double longitude) {
-        if (hazardVertices.size() >= MapHazard.MAX_POLYGON_VERTICES) {
-            toast(activity.getString(R.string.map_hazard_vertex_limit, MapHazard.MAX_POLYGON_VERTICES));
+    private void acceptHazardStroke(List<MapHazard.Vertex> samples) {
+        if (!Boolean.TRUE.equals(placeHazardZone) || !hazardBoundary.isEmpty()) return;
+        try {
+            hazardBoundary = HazardPolygonGeometry.fromFreehandStroke(samples);
+        } catch (IllegalArgumentException invalid) {
+            hazardPlacementHint.setText(R.string.map_hazard_invalid_boundary);
             return;
         }
-        if (!hazardVertices.isEmpty()) {
-            MapHazard.Vertex last = hazardVertices.get(hazardVertices.size() - 1);
-            if (FieldNavigation.distance(last.latitude, last.longitude, latitude, longitude) < 1) return;
-        }
-        hazardVertices.add(new MapHazard.Vertex(latitude, longitude));
         updateHazardDraft();
     }
-    private void undoHazardVertex() {
-        if (hazardVertices.isEmpty()) return;
-        hazardVertices.remove(hazardVertices.size() - 1);
+    private void redrawHazardZone() {
+        hazardBoundary = Collections.emptyList();
         updateHazardDraft();
     }
     private void updateHazardDraft() {
-        boolean drawing = Boolean.TRUE.equals(placeHazardZone);
-        hazardPlacementHint.setText(drawing
-                ? activity.getString(R.string.map_hazard_draw_zone, hazardVertices.size())
-                : activity.getString(R.string.map_hazard_place_point));
-        undoHazardVertex.setVisibility(drawing ? VISIBLE : GONE);
-        finishHazardZone.setVisibility(drawing ? VISIBLE : GONE);
-        undoHazardVertex.setEnabled(!hazardVertices.isEmpty());
-        finishHazardZone.setEnabled(hazardVertices.size() >= 3);
-        map.setHazardDraft(hazardVertices);
+        boolean zone = Boolean.TRUE.equals(placeHazardZone);
+        boolean ready = !hazardBoundary.isEmpty();
+        int hint = R.string.map_hazard_place_point;
+        if (zone) hint = ready ? R.string.map_hazard_review_zone : R.string.map_hazard_draw_zone;
+        hazardPlacementHint.setText(hint);
+        redrawHazardZone.setVisibility(ready ? VISIBLE : GONE);
+        finishHazardZone.setVisibility(zone ? VISIBLE : GONE);
+        finishHazardZone.setEnabled(ready);
+        map.setHazardDrawing(zone && !ready);
+        map.setHazardDraft(hazardBoundary);
     }
     private void finishHazardZone() {
-        if (hazardVertices.size() < 3) return;
-        try {
-            new MapHazard("draft", "Zone", hazardVertices);
-        } catch (IllegalArgumentException invalid) {
-            toast(activity.getString(R.string.map_hazard_invalid_boundary));
-            return;
-        }
-        hazardDialogs.addPolygon(hazardVertices, this::cancelHazardPlacement);
+        if (!hazardBoundary.isEmpty()) hazardDialogs.addPolygon(hazardBoundary, this::cancelHazardPlacement);
     }
     private void cancelHazardPlacement() {
         if (placeHazardZone == null) return;
         placeHazardZone = null;
-        hazardVertices.clear();
-        map.setHazardDraft(hazardVertices);
+        hazardBoundary = Collections.emptyList();
+        map.setHazardDrawing(false);
+        map.setHazardDraft(hazardBoundary);
         map.setTapToPlace(false);
         hazardPlacementBanner.setVisibility(GONE);
     }
@@ -520,7 +514,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
                     if (which == 0) edit(null, lat, lon);
                     else if (which == 1) navigate(new SavedPoint(-2, lat, lon, 0, "Waypoint", ""));
                     else if (which == 2) hazardDialogs.addPoint(lat, lon);
-                    else { beginHazardPlacement(true); appendHazardVertex(lat, lon); }
+                    else beginHazardPlacement(true);
                 }).setNegativeButton("Cancel", null).show();
     }
     private void pointMenu(SavedPoint point) {

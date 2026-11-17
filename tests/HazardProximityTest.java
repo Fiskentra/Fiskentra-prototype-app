@@ -1,4 +1,5 @@
 import com.fiskentra.app.location.HazardProximityMonitor;
+import com.fiskentra.app.model.HazardPolygonGeometry;
 import com.fiskentra.app.model.MapHazard;
 
 import java.util.Arrays;
@@ -184,6 +185,69 @@ public final class HazardProximityTest {
                 "Legacy point and circular-zone representations remain unchanged");
     }
 
+    private static MapHazard.Vertex sample(double eastMeters, double northMeters) {
+        return new MapHazard.Vertex(offset(northMeters), offset(eastMeters));
+    }
+
+    private static boolean rejectsStroke(List<MapHazard.Vertex> samples) {
+        try {
+            HazardPolygonGeometry.fromFreehandStroke(samples);
+            return false;
+        } catch (IllegalArgumentException expected) {
+            return true;
+        }
+    }
+
+    private static void freehandZones() {
+        List<MapHazard.Vertex> trace = new ArrayList<>();
+        for (int i = 0; i < 1024; i++) {
+            double angle = 2 * Math.PI * i / 1024;
+            trace.add(sample(100 * Math.cos(angle), 100 * Math.sin(angle)));
+        }
+        trace.add(trace.get(0));
+        trace.add(trace.get(0));
+        List<MapHazard.Vertex> outline = HazardPolygonGeometry.fromFreehandStroke(trace);
+        MapHazard drawn = new MapHazard("traced", "Drawn reef", outline);
+        check(outline.size() < 100 && outline.size() >= 3, "Dense round stroke fits the saved polygon format");
+        check(drawn.distanceMeters(0, 0) == 0, "Drawn circle includes its center");
+        check(drawn.distanceMeters(0, offset(201)) > 100 && drawn.distanceMeters(0, offset(199)) < 100,
+                "Freehand alerts still measure the nearest traced boundary");
+        for (int i = 0; i < 1024; i += 57) {
+            MapHazard.Vertex point = trace.get(i);
+            check(drawn.distanceMeters(point.latitude, point.longitude) <= .21, "Curved outline stays close to stroke");
+        }
+        List<MapHazard.Vertex> open = Arrays.asList(sample(0, 0), sample(50, 0), sample(50, 50),
+                sample(30, 50), sample(30, 20), sample(10, 20), sample(10, 50), sample(0, 50));
+        MapHazard concave = new MapHazard("open", "Inlet", HazardPolygonGeometry.fromFreehandStroke(open));
+        check(Math.abs(concave.distanceMeters(offset(35), offset(20)) - 10) < .02,
+                "Automatically closed concave outline preserves the inlet");
+        check(Math.abs(concave.distanceMeters(offset(25), offset(-5)) - 5) < .02,
+                "Open stroke adds the straight closing edge");
+        check(rejectsStroke(Collections.singletonList(sample(0, 0))), "One touch cannot create a zone");
+        check(rejectsStroke(Arrays.asList(sample(0, 0), sample(2, 0), sample(5, 0))),
+                "Straight stroke without area rejected");
+        check(rejectsStroke(Arrays.asList(sample(0, 0), sample(100, 100), sample(0, 100), sample(100, 0))),
+                "Figure-eight stroke rejected");
+        check(rejectsStroke(Arrays.asList(sample(0, 0), sample(1000, 0), sample(1000, 1000),
+                sample(300, 1000), sample(300.2, 999.8), sample(300.2, 1000.2), sample(299, 1000),
+                sample(0, 1000))), "Small loop is rejected before simplification can erase it");
+        check(rejectsStroke(Arrays.asList(sample(0, 0), sample(30, 0), sample(30, 30),
+                sample(-10, 30), sample(10, 50))), "A crossing introduced by auto-closure is rejected");
+        List<MapHazard.Vertex> serrated = new ArrayList<>();
+        for (int i = 0; i < 700; i++) {
+            double angle = 2 * Math.PI * i / 700;
+            double radius = i % 2 == 0 ? 10000 : 9500;
+            serrated.add(sample(radius * Math.cos(angle), radius * Math.sin(angle)));
+        }
+        check(rejectsStroke(serrated), "Unrepresentable intricate stroke is rejected instead of distorting its edge");
+        List<MapHazard.Vertex> dateline = Arrays.asList(new MapHazard.Vertex(.001, 179.999),
+                new MapHazard.Vertex(.001, 180), new MapHazard.Vertex(.001, -179.999),
+                new MapHazard.Vertex(-.001, -179.999), new MapHazard.Vertex(-.001, 179.999));
+        MapHazard wrapped = new MapHazard("wrapped", "Dateline", HazardPolygonGeometry.fromFreehandStroke(dateline));
+        check(wrapped.vertices.size() == 4 && wrapped.distanceMeters(0, 180) == 0,
+                "Simplification follows local geometry across the antimeridian");
+    }
+
     public static void main(String[] args) {
         pointApproach();
         zoneApproach();
@@ -193,6 +257,7 @@ public final class HazardProximityTest {
         polygonApproach();
         polygonGeography();
         polygonValidation();
+        freehandZones();
         System.out.println("HazardProximity: " + checks + " checks passed");
     }
 }

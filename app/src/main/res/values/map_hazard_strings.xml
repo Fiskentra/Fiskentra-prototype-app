@@ -6,12 +6,11 @@
     <string name="map_hazard_list_point">Point · %1$s</string>
     <string name="map_hazard_list_zone">Zone · %1$s</string>
     <string name="map_hazard_place_point">Tap the map to place the danger point.</string>
-    <string name="map_hazard_draw_zone">Tap around the zone boundary, then Done. Corners added %1$d.</string>
-    <string name="map_hazard_undo">Undo</string>
+    <string name="map_hazard_draw_zone">Trace the zone with one finger. Lift to close the outline.</string>
+    <string name="map_hazard_review_zone">Check the shaded area, then choose Done or Redraw.</string>
+    <string name="map_hazard_redraw">Redraw</string>
     <string name="map_hazard_finish">Done</string>
-    <string name="map_hazard_corner">Zone corner %1$d</string>
-    <string name="map_hazard_vertex_limit">The zone corner limit is %1$d. Choose Done or Undo.</string>
-    <string name="map_hazard_invalid_boundary">Draw a boundary with at least three distinct corners. The edges must enclose an area without crossing. Use Undo to adjust it.</string>
+    <string name="map_hazard_invalid_boundary">Trace the area again in one clear loop, keeping the outline from crossing itself.</string>
     <string name="map_hazard_name">Name</string>
     <string name="map_hazard_name_required">Enter a name</string>
     <string name="map_hazard_point_details">Danger point. Warns within %1$d m.</string>
