@@ -9,6 +9,10 @@ import android.location.Location;
 import android.view.*;
 import android.widget.*;
 import android.text.InputFilter;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import com.fiskentra.app.data.*;
 import com.fiskentra.app.location.*;
 import com.fiskentra.app.model.MapHazard;
@@ -86,6 +90,8 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
     private final MapHazardDialogs hazardDialogs;
     private final LinearLayout hazardPlacementBanner;
     private final TextView hazardPlacementHint;
+    private final Button undoHazardVertex, finishHazardZone;
+    private final List<MapHazard.Vertex> hazardVertices = new ArrayList<>();
     private Boolean placeHazardZone;
 
     private final TextView status, gps, speed, mapNotice, navigation, tripInfo, title, subtitle, state, metricOne, metricTwo, metricThree;
@@ -177,32 +183,46 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         View signalRule=rule();signals.addView(signalRule,new LayoutParams(dp(1),dp(16)));
         ImageView gpsIcon=new ImageView(activity);gpsIcon.setImageResource(R.drawable.ic_map_pin);gpsIcon.setColorFilter(MUTED);
         LayoutParams gpsIconLp=new LayoutParams(dp(16),dp(16));gpsIconLp.setMargins(dp(8),0,dp(4),0);signals.addView(gpsIcon,gpsIconLp);
-        gps=text("GPS...",12);gps.setSingleLine(true);gps.setEllipsize(android.text.TextUtils.TruncateAt.END);gps.setTextColor(MUTED);signals.addView(gps,new LayoutParams(0,-2,1));
-        View speedRule=rule();LayoutParams speedRuleLp=new LayoutParams(dp(1),dp(16));speedRuleLp.setMargins(dp(6),0,dp(6),0);signals.addView(speedRule,speedRuleLp);
-        ImageView speedIcon=new ImageView(activity);speedIcon.setImageResource(R.drawable.ic_gauge);speedIcon.setColorFilter(BLUE);speedIcon.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        signals.addView(speedIcon,new LayoutParams(dp(14),dp(14)));
-        speed=text("-- "+BoatSpeedPolicy.unit(imperial),12);speed.setSingleLine(true);speed.setTypeface(Typeface.DEFAULT_BOLD);speed.setPadding(dp(4),0,0,0);signals.addView(speed,new LayoutParams(-2,-2));
-        statusChip.addView(signals,new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL|Gravity.START));information.addView(statusChip,new LayoutParams(-1,-2));
+        gps=text("GPS...",12);gps.setSingleLine(true);gps.setEllipsize(android.text.TextUtils.TruncateAt.END);gps.setTextColor(MUTED);signals.addView(gps,new LayoutParams(-2,-2));
+        statusChip.addView(signals,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_VERTICAL|Gravity.START));information.addView(statusChip,new LayoutParams(-2,-2));
         mapNotice=text("Loading map.",12);mapNotice.setPadding(dp(10),dp(6),dp(10),dp(6));mapNotice.setMaxLines(2);mapNotice.setEllipsize(android.text.TextUtils.TruncateAt.END);
         mapNotice.setBackground(surface(NAVY,12,LINE));mapNotice.setOnClickListener(v->signalDetails());information.addView(mapNotice,new LayoutParams(-1,-2));
         filterBadge=MapUi.text(activity,"",12,false);filterBadge.setBackground(surface(NAVY,12,LINE));filterBadge.setPadding(dp(8),dp(6),dp(8),dp(6));filterBadge.setOnClickListener(v->filters());filterBadge.setMinHeight(dp(40));filterBadge.setMaxLines(1);filterBadge.setEllipsize(android.text.TextUtils.TruncateAt.END);filterBadge.setVisibility(GONE);
         information.addView(filterBadge,new LayoutParams(-2,-2));
         tripInfo=text("",12);tripInfo.setBackground(surface(NAVY,12,LINE));tripInfo.setPadding(dp(8),dp(6),dp(8),dp(6));tripInfo.setMinHeight(dp(40));tripInfo.setOnClickListener(v->trips());tripInfo.setVisibility(GONE);information.addView(tripInfo,new LayoutParams(-2,-2));
         hazardPlacementBanner = row();
+        hazardPlacementBanner.setOrientation(VERTICAL);
         hazardPlacementBanner.setBackground(surface(NAVY, 12, LINE));
-        hazardPlacementBanner.setPadding(dp(8), 0, dp(4), 0);
+        hazardPlacementBanner.setPadding(dp(8), dp(8), dp(8), 0);
         hazardPlacementHint = text("", 13);
         hazardPlacementHint.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
-        hazardPlacementBanner.addView(hazardPlacementHint, new LayoutParams(0, -2, 1));
+        hazardPlacementBanner.addView(hazardPlacementHint, new LayoutParams(-1, -2));
+        LinearLayout hazardControls = row();
+        undoHazardVertex = button(activity.getString(R.string.map_hazard_undo), this::undoHazardVertex);
+        hazardControls.addView(undoHazardVertex, new LayoutParams(0, dp(48), 1));
         Button cancelPlacement = button(activity.getString(R.string.map_cancel), this::cancelHazardPlacement);
-        hazardPlacementBanner.addView(cancelPlacement, new LayoutParams(-2, dp(48)));
+        hazardControls.addView(cancelPlacement, new LayoutParams(0, dp(48), 1));
+        finishHazardZone = button(activity.getString(R.string.map_hazard_finish), this::finishHazardZone);
+        hazardControls.addView(finishHazardZone, new LayoutParams(0, dp(48), 1));
+        hazardPlacementBanner.addView(hazardControls, new LayoutParams(-1, -2));
         hazardPlacementBanner.setVisibility(GONE);
         information.addView(hazardPlacementBanner, new LayoutParams(-1, -2));
 
         compass=new CompassDial(activity);compass.setOnClickListener(v->map.north());compass.setContentDescription("Compass heading. Tap for north-up map");
         FrameLayout.LayoutParams compassLp=new FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP|Gravity.END);compassLp.setMargins(0,dp(76),dp(14),0);stage.addView(compass,compassLp);
+        speed = text("", 20);
+        speed.setGravity(Gravity.CENTER);
+        speed.setBackground(surface(NAVY, 32, LINE));
+        speed.setPadding(dp(4), dp(4), dp(4), dp(4));
+        speed.setIncludeFontPadding(false);
+        speed.setMaxLines(2);
+        speed.setAutoSizeTextTypeUniformWithConfiguration(10, 20, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        FrameLayout.LayoutParams speedLp = new FrameLayout.LayoutParams(compassLp);
+        speedLp.topMargin = compassLp.topMargin + compassLp.height + dp(8);
+        stage.addView(speed, speedLp);
+        updateSpeed(null);
         windHud=new FrameLayout(activity);windHud.addView(map.windIndicator(),new FrameLayout.LayoutParams(-1,-2));
-        FrameLayout.LayoutParams windLp=new FrameLayout.LayoutParams(dp(76),-2,Gravity.TOP|Gravity.END);windLp.setMargins(0,dp(148),dp(8),0);stage.addView(windHud,windLp);
+        FrameLayout.LayoutParams windLp=new FrameLayout.LayoutParams(dp(76),-2,Gravity.TOP|Gravity.END);windLp.setMargins(0,speedLp.topMargin+speedLp.height+dp(8),dp(8),0);stage.addView(windHud,windLp);
         windHud.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
         hud=new BoatNavigationHud(activity,new BoatNavigationHud.Actions(){
             public void destination(){showDestination();}
@@ -260,6 +280,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         backtrackDock=new LinearLayout(activity);backtrackDock.setOrientation(VERTICAL);backtrackDock.setPadding(dp(14),0,dp(14),dp(12));backtrackDock.addView(backtrack.panel,new LayoutParams(-1,-2));backtrackDock.setVisibility(GONE);
         stage.addView(backtrackDock,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
         lower.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
+        tools.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
         information.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
         searchBar.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
         backtrackDock.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->updateMapInsets());
@@ -270,9 +291,12 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
             public void onMapStatusChanged(){post(()->{if(!disposed)updateGps(lastPosition);});}
             public void onPlace(double latitude, double longitude) {
                 if (placeHazardZone != null) {
-                    boolean zone = placeHazardZone;
-                    cancelHazardPlacement();
-                    hazardDialogs.add(zone, latitude, longitude);
+                    if (placeHazardZone) {
+                        appendHazardVertex(latitude, longitude);
+                    } else {
+                        cancelHazardPlacement();
+                        hazardDialogs.addPoint(latitude, longitude);
+                    }
                 } else {
                     map.setTapToPlace(false);
                     place(latitude, longitude);
@@ -428,12 +452,52 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         closeOverlay();
         placeHazardZone = zone;
         map.setTapToPlace(true);
-        hazardPlacementHint.setText(zone ? R.string.map_hazard_place_zone : R.string.map_hazard_place_point);
+        updateHazardDraft();
         hazardPlacementBanner.setVisibility(VISIBLE);
+    }
+    private void appendHazardVertex(double latitude, double longitude) {
+        if (hazardVertices.size() >= MapHazard.MAX_POLYGON_VERTICES) {
+            toast(activity.getString(R.string.map_hazard_vertex_limit, MapHazard.MAX_POLYGON_VERTICES));
+            return;
+        }
+        if (!hazardVertices.isEmpty()) {
+            MapHazard.Vertex last = hazardVertices.get(hazardVertices.size() - 1);
+            if (FieldNavigation.distance(last.latitude, last.longitude, latitude, longitude) < 1) return;
+        }
+        hazardVertices.add(new MapHazard.Vertex(latitude, longitude));
+        updateHazardDraft();
+    }
+    private void undoHazardVertex() {
+        if (hazardVertices.isEmpty()) return;
+        hazardVertices.remove(hazardVertices.size() - 1);
+        updateHazardDraft();
+    }
+    private void updateHazardDraft() {
+        boolean drawing = Boolean.TRUE.equals(placeHazardZone);
+        hazardPlacementHint.setText(drawing
+                ? activity.getString(R.string.map_hazard_draw_zone, hazardVertices.size())
+                : activity.getString(R.string.map_hazard_place_point));
+        undoHazardVertex.setVisibility(drawing ? VISIBLE : GONE);
+        finishHazardZone.setVisibility(drawing ? VISIBLE : GONE);
+        undoHazardVertex.setEnabled(!hazardVertices.isEmpty());
+        finishHazardZone.setEnabled(hazardVertices.size() >= 3);
+        map.setHazardDraft(hazardVertices);
+    }
+    private void finishHazardZone() {
+        if (hazardVertices.size() < 3) return;
+        try {
+            new MapHazard("draft", "Zone", hazardVertices);
+        } catch (IllegalArgumentException invalid) {
+            toast(activity.getString(R.string.map_hazard_invalid_boundary));
+            return;
+        }
+        hazardDialogs.addPolygon(hazardVertices, this::cancelHazardPlacement);
     }
     private void cancelHazardPlacement() {
         if (placeHazardZone == null) return;
         placeHazardZone = null;
+        hazardVertices.clear();
+        map.setHazardDraft(hazardVertices);
         map.setTapToPlace(false);
         hazardPlacementBanner.setVisibility(GONE);
     }
@@ -455,7 +519,8 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
                         activity.getString(R.string.map_hazard_add_zone)}, (d, which) -> {
                     if (which == 0) edit(null, lat, lon);
                     else if (which == 1) navigate(new SavedPoint(-2, lat, lon, 0, "Waypoint", ""));
-                    else hazardDialogs.add(which == 3, lat, lon);
+                    else if (which == 2) hazardDialogs.addPoint(lat, lon);
+                    else { beginHazardPlacement(true); appendHazardVertex(lat, lon); }
                 }).setNegativeButton("Cancel", null).show();
     }
     private void pointMenu(SavedPoint point) {
@@ -746,6 +811,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         }
     }
     @Override protected void onDetachedFromWindow() {
+        cancelHazardPlacement();
         hazardDialogs.close();
         disposed = true;
         if (marineCredits != null) {
@@ -821,7 +887,15 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         double measured=fix!=null&&fix.hasSpeed()?fix.getSpeed():Double.NaN;
         double uncertainty=fix!=null&&fix.hasSpeedAccuracy()?fix.getSpeedAccuracyMetersPerSecond():Double.NaN;
         String value=speedMeasurement.update(measured,uncertainty,fix==null?0:fix.getElapsedRealtimeNanos(),android.os.SystemClock.elapsedRealtimeNanos(),imperial);
-        setTextIfChanged(speed,value);speed.setTextColor(value.startsWith("--")?MUTED:INK);
+        String description = activity.getString(R.string.map_boat_speed, value);
+        if (android.text.TextUtils.equals(speed.getContentDescription(), description)) return;
+        SpannableString dialText = new SpannableString(value.replace(' ', '\n'));
+        int unitStart = value.indexOf(' ') + 1;
+        dialText.setSpan(new StyleSpan(Typeface.BOLD), 0, unitStart - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        dialText.setSpan(new RelativeSizeSpan(0.65f), unitStart, value.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        speed.setText(dialText);
+        speed.setTextColor(value.startsWith("--") ? MUTED : INK);
+        speed.setContentDescription(description);
     }
     private void updateGps(Location fix){
         boolean fine=activity.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED;
@@ -833,7 +907,7 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         String compactGps=state==LocationQualityPolicy.State.FRESH?(fix.hasAccuracy()?"\u00b1"+MapUi.distance(fix.getAccuracy(),imperial):"GPS"):state==LocationQualityPolicy.State.LOCATION_DISABLED?"GPS off":state==LocationQualityPolicy.State.PERMISSION_REQUIRED?"GPS!":"GPS...";
         setTextIfChanged(gps,compactGps);gps.setTextColor(state==LocationQualityPolicy.State.FRESH?MUTED:0xffffb53e);
         updateSpeed(state==LocationQualityPolicy.State.FRESH?fix:null);
-        String signalDescription=lastSignals+". "+label+". Speed "+speed.getText();if(!android.text.TextUtils.equals(statusChip.getContentDescription(),signalDescription))statusChip.setContentDescription(signalDescription);
+        String signalDescription=lastSignals+". "+label;if(!android.text.TextUtils.equals(statusChip.getContentDescription(),signalDescription))statusChip.setContentDescription(signalDescription);
         String gpsNotice="";if(state!=LocationQualityPolicy.State.FRESH)gpsNotice=label;else if(!fine)gpsNotice=activity.getString(R.string.map_gps_approximate);else if(fix.hasAccuracy()&&fix.getAccuracy()>25)gpsNotice=activity.getString(R.string.map_gps_low,MapUi.distance(fix.getAccuracy(),imperial));
         String notice=map.getMapStatus();
         if(!gpsNotice.isEmpty())notice=notice.isEmpty()?gpsNotice:notice+"\n"+gpsNotice;
@@ -875,13 +949,34 @@ public final class BoatMapPanel extends LinearLayout implements SensorEventListe
         FrameLayout.LayoutParams infoLp=(FrameLayout.LayoutParams)information.getLayoutParams();if(infoLp.topMargin!=top){infoLp.topMargin=top;information.setLayoutParams(infoLp);}
         FrameLayout.LayoutParams compassLp=(FrameLayout.LayoutParams)compass.getLayoutParams();if(compassLp.topMargin!=top){compassLp.topMargin=top;compass.setLayoutParams(compassLp);}
         int bottom=sheet!=null?sheet.getHeight():backtrack!=null&&backtrack.active()?backtrackDock.getHeight():lower.getHeight();
-        int windTop=top+dp(64)+dp(8);
+        int gap = dp(8);
+        int compassBottom = top + compassLp.height;
+        int speedTop = compassBottom + gap;
+        FrameLayout.LayoutParams speedLp = (FrameLayout.LayoutParams) speed.getLayoutParams();
+        if (speedLp.topMargin != speedTop) {
+            speedLp.topMargin = speedTop;
+            speed.setLayoutParams(speedLp);
+        }
+        int speedBottom = speedTop + speedLp.height;
+        boolean speedFits = speedBottom + gap <= stage.getHeight() - bottom;
+        speed.setVisibility(speedFits ? VISIBLE : INVISIBLE);
+        int windTop = speedBottom + gap;
         FrameLayout.LayoutParams windLp=(FrameLayout.LayoutParams)windHud.getLayoutParams();if(windLp.topMargin!=windTop){windLp.topMargin=windTop;windHud.setLayoutParams(windLp);}
-        boolean windFits=com.fiskentra.app.model.WindLayerPolicy.indicatorFits(windTop,windHud.getHeight(),stage.getHeight(),bottom+dp(12),sheet!=null);
+        int toolsBottom = bottom + dp(12);
+        int rightClearance = toolsBottom + tools.getMeasuredHeight() + gap;
+        boolean windFits=com.fiskentra.app.model.WindLayerPolicy.indicatorFits(windTop,windHud.getHeight(),stage.getHeight(),rightClearance,sheet!=null);
         windHud.setVisibility(windFits?VISIBLE:INVISIBLE);
-        int safeTop=Math.max(windFits?windTop+windHud.getHeight():top+dp(64),information.getBottom())+dp(8);
+        int dialBottom = speedFits ? speedBottom : compassBottom;
+        int safeTop=Math.max(windFits?windTop+windHud.getHeight():dialBottom,information.getBottom())+gap;
         if(sheet!=null){FrameLayout.LayoutParams sheetLp=(FrameLayout.LayoutParams)sheet.getLayoutParams();int minimumTop=top+dp(72);if(sheetLp.topMargin!=minimumTop){sheetLp.topMargin=minimumTop;sheet.setLayoutParams(sheetLp);}}
-        FrameLayout.LayoutParams toolLp=(FrameLayout.LayoutParams)tools.getLayoutParams();int toolsBottom=bottom+dp(12);if(toolLp.bottomMargin!=toolsBottom){toolLp.bottomMargin=toolsBottom;tools.setLayoutParams(toolLp);}
+        // On short maps, leave the dials clear when the bottom buttons reach their height.
+        int toolsEnd = stage.getHeight() - rightClearance < dialBottom ? dp(86) : dp(18);
+        FrameLayout.LayoutParams toolLp = (FrameLayout.LayoutParams) tools.getLayoutParams();
+        if (toolLp.bottomMargin != toolsBottom || toolLp.getMarginEnd() != toolsEnd) {
+            toolLp.bottomMargin = toolsBottom;
+            toolLp.setMarginEnd(toolsEnd);
+            tools.setLayoutParams(toolLp);
+        }
         tools.setVisibility(sheet==null?VISIBLE:GONE);map.setControlInsets(safeTop,bottom+dp(8));
     }
     private void mapTools(){

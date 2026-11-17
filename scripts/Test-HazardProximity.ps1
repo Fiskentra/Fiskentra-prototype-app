@@ -12,6 +12,7 @@ $sources = @(
     (Join-Path $source 'model\LocationQualityPolicy.java')
     (Join-Path $source 'model\PointMetadata.java')
     (Join-Path $source 'model\MapHazard.java')
+    (Join-Path $source 'model\HazardPolygonGeometry.java')
     (Join-Path $source 'location\HazardProximityMonitor.java')
     (Join-Path $repo 'tests\HazardProximityTest.java')
 )

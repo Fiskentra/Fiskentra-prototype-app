@@ -1,10 +1,10 @@
 # Fiskentra - Google Maps and boat navigation
 
-## Android 0.29.0 (versionCode 45)
+## Android 0.29.1 (versionCode 46)
 
-Use the map's **+** menu to mark a personal danger point or a circular zone. Zone radius is configurable and defaults to 100 m. Hazards are stored on the device.
+Use the map's **+** menu to mark a personal danger point or draw a danger zone. Tap successive corners of the boundary, undo a corner if needed, then choose **Done** and enter a name. The map displays the outlined and shaded area. Hazards are stored on the device.
 
-Android alerts at 100 m from a point or the outside edge of a zone. The alert rearms at 130 m. Its rhythm is three 110 ms pulses with 75 ms gaps, followed by a 420 ms pause and one 170 ms pulse. Screen-off monitoring uses the Android location service and requires precise location and notifications.
+Android alerts at 100 m from a point or the nearest edge of a drawn zone. The alert rearms at 130 m. Its rhythm is three 110 ms pulses with 75 ms gaps, followed by a 420 ms pause and one 170 ms pulse. Screen-off monitoring uses the Android location service and requires precise location and notifications.
 
 Build the APK with `scripts/Build-Android.ps1`. The on-device check used test GPS positions on a locked Samsung. At 101 m the test recorded silence, and at 99 m Android recorded the full pattern for both the point and the zone.
 

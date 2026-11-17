@@ -1,6 +1,6 @@
 # Fiskentra Project Status
 
-The current Android candidate is **0.29.0 / versionCode 45**. It includes personal map hazards and locked-screen proximity alerts. See the [Android 0.29.0 notes](README.md#android-0290-versioncode-45) for the alert behavior and device test. APK file `artifacts/Fiskentra-0.29.0-hazards-debug.apk`.
+The current Android candidate is **0.29.1 / versionCode 46**. It includes personal map hazards, drawn danger zones and locked-screen proximity alerts. See the [Android 0.29.1 notes](README.md#android-0291-versioncode-46) for the alert behavior. APK file `artifacts/Fiskentra-0.29.1-drawn-zones-debug.apk`.
 
 ## Android 0.28.3 full backup
 

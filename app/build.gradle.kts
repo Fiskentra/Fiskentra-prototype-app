@@ -41,8 +41,8 @@ android {
         applicationId = "com.fiskentra.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 45
-        versionName = "0.29.0"
+        versionCode = 46
+        versionName = "0.29.1"
         buildConfigField("String", "GEOCODING_URL", buildConfigString(localProperties.getProperty("GEOCODING_URL", "https://api.maptiler.com/geocoding/")))
         buildConfigField("String", "ROUTING_URL", buildConfigString(localProperties.getProperty("ROUTING_URL", "https://valhalla1.openstreetmap.de/route")))
 

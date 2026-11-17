@@ -1,4 +1,5 @@
 <resources>
+    <string name="map_boat_speed">Boat speed %1$s</string>
     <string name="map_debug_readonly">Debug fixture · no changes to saved data</string>
     <plurals name="map_catch_count">
         <item quantity="one">%1$d catch</item>

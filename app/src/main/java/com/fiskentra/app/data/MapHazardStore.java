@@ -55,6 +55,14 @@ public final class MapHazardStore {
         return hazard;
     }
 
+    public synchronized MapHazard addPolygon(String name, List<MapHazard.Vertex> vertices) {
+        MapHazard hazard = new MapHazard(UUID.randomUUID().toString(), name, vertices);
+        List<MapHazard> updated = new ArrayList<>(hazards);
+        updated.add(hazard);
+        write(updated);
+        return hazard;
+    }
+
     public synchronized boolean delete(String id) {
         List<MapHazard> updated = new ArrayList<>(hazards);
         if (!updated.removeIf(hazard -> hazard.id.equals(id))) return false;
@@ -77,8 +85,23 @@ public final class MapHazardStore {
         for (int i = 0; i < rows.length(); i++) {
             try {
                 JSONObject row = rows.getJSONObject(i);
-                MapHazard hazard = new MapHazard(row.getString("id"), row.getString("name"),
-                        row.getDouble("lat"), row.getDouble("lon"), row.getInt("radius_m"));
+                MapHazard hazard;
+                if (row.has("vertices")) {
+                    JSONArray polygon = row.getJSONArray("vertices");
+                    if (polygon.length() < 3 || polygon.length() > MapHazard.MAX_POLYGON_VERTICES) {
+                        throw new JSONException("Invalid polygon vertex count");
+                    }
+                    List<MapHazard.Vertex> vertices = new ArrayList<>();
+                    for (int j = 0; j < polygon.length(); j++) {
+                        JSONArray vertex = polygon.getJSONArray(j);
+                        if (vertex.length() != 2) throw new JSONException("Invalid polygon vertex");
+                        vertices.add(new MapHazard.Vertex(vertex.getDouble(0), vertex.getDouble(1)));
+                    }
+                    hazard = new MapHazard(row.getString("id"), row.getString("name"), vertices);
+                } else {
+                    hazard = new MapHazard(row.getString("id"), row.getString("name"),
+                            row.getDouble("lat"), row.getDouble("lon"), row.getInt("radius_m"));
+                }
                 if (ids.add(hazard.id)) loaded.add(hazard);
             } catch (JSONException | IllegalArgumentException error) {
                 Timber.w("Skipped an invalid personal hazard");
@@ -91,9 +114,17 @@ public final class MapHazardStore {
         try {
             JSONArray rows = new JSONArray();
             for (MapHazard hazard : updated) {
-                rows.put(new JSONObject().put("id", hazard.id).put("name", hazard.name)
+                JSONObject row = new JSONObject().put("id", hazard.id).put("name", hazard.name)
                         .put("lat", hazard.latitude).put("lon", hazard.longitude)
-                        .put("radius_m", hazard.radiusMeters));
+                        .put("radius_m", hazard.radiusMeters);
+                if (hazard.isPolygon()) {
+                    JSONArray vertices = new JSONArray();
+                    for (MapHazard.Vertex vertex : hazard.vertices) {
+                        vertices.put(new JSONArray().put(vertex.latitude).put(vertex.longitude));
+                    }
+                    row.put("vertices", vertices);
+                }
+                rows.put(row);
             }
             disk.write(rows.toString());
         } catch (IOException | JSONException error) {

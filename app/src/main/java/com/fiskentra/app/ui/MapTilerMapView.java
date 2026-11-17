@@ -32,6 +32,10 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.Polygon;
+import com.google.android.gms.maps.model.PolygonOptions;
+import com.google.android.gms.maps.model.Polyline;
+import com.google.android.gms.maps.model.PolylineOptions;
 import java.util.*;
 
 /** Google Maps host. The historical class name retains the existing screen contract. */
@@ -80,7 +84,13 @@ public final class MapTilerMapView extends FrameLayout {
     private List<MapHazard> hazards = Collections.emptyList();
     private final List<Marker> hazardMarkers = new ArrayList<>();
     private final List<Circle> hazardCircles = new ArrayList<>();
+    private final List<Polygon> hazardPolygons = new ArrayList<>();
     private BitmapDescriptor hazardIcon;
+    private List<MapHazard.Vertex> hazardDraft = Collections.emptyList();
+    private final List<Marker> hazardDraftMarkers = new ArrayList<>();
+    private Polygon hazardDraftPolygon;
+    private Polyline hazardDraftLine;
+    private BitmapDescriptor hazardVertexIcon;
     private List<double[]> track = Collections.emptyList();
     private SavedPoint selected, destination;
     private RoadRoute roadRoute;
@@ -244,6 +254,7 @@ public final class MapTilerMapView extends FrameLayout {
             });
             renderData();
             renderHazards();
+            renderHazardDraft();
             updateCamera();
         });
     }
@@ -251,6 +262,12 @@ public final class MapTilerMapView extends FrameLayout {
     private void notifyMapStatus() { if(listener!=null)listener.onMapStatusChanged(); }
     public void setTapToPlace(boolean enabled) {
         tapToPlace = enabled;
+        if (enabled) {
+            follow = false;
+            camera.gesture();
+            notifyMode();
+            positioned = true;
+        }
     }
     public void setHazards(List<MapHazard> value) {
         if (destroyed) return;
@@ -262,7 +279,15 @@ public final class MapTilerMapView extends FrameLayout {
         clearHazards();
         for (MapHazard hazard : hazards) {
             LatLng center = new LatLng(hazard.latitude, hazard.longitude);
-            if (hazard.isZone()) {
+            if (hazard.isPolygon()) {
+                List<LatLng> boundary = new ArrayList<>();
+                for (MapHazard.Vertex vertex : hazard.vertices) {
+                    boundary.add(new LatLng(vertex.latitude, vertex.longitude));
+                }
+                hazardPolygons.add(map.addPolygon(new PolygonOptions().addAll(boundary).geodesic(true)
+                        .strokeColor(0xffef5044).fillColor(0x30ef5044).strokeWidth(dp(2.5f)).zIndex(3)));
+                center = boundary.get(0);
+            } else if (hazard.isZone()) {
                 hazardCircles.add(map.addCircle(new CircleOptions().center(center).radius(hazard.radiusMeters)
                         .strokeColor(0xffef5044).fillColor(0x30ef5044).strokeWidth(dp(2.5f))
                         .zIndex(3)));
@@ -297,8 +322,55 @@ public final class MapTilerMapView extends FrameLayout {
     private void clearHazards() {
         for (Marker marker : hazardMarkers) marker.remove();
         for (Circle circle : hazardCircles) circle.remove();
+        for (Polygon polygon : hazardPolygons) polygon.remove();
         hazardMarkers.clear();
         hazardCircles.clear();
+        hazardPolygons.clear();
+    }
+    public void setHazardDraft(List<MapHazard.Vertex> vertices) {
+        if (destroyed) return;
+        hazardDraft = new ArrayList<>(vertices);
+        renderHazardDraft();
+    }
+    private void renderHazardDraft() {
+        if (map == null) return;
+        clearHazardDraft();
+        List<LatLng> boundary = new ArrayList<>();
+        for (MapHazard.Vertex vertex : hazardDraft) {
+            LatLng coordinate = new LatLng(vertex.latitude, vertex.longitude);
+            boundary.add(coordinate);
+            Marker marker = map.addMarker(new MarkerOptions().position(coordinate)
+                    .title(getContext().getString(R.string.map_hazard_corner, boundary.size()))
+                    .icon(hazardVertexIcon()).anchor(.5f, .5f).zIndex(8));
+            if (marker != null) hazardDraftMarkers.add(marker);
+        }
+        if (boundary.size() >= 3) {
+            hazardDraftPolygon = map.addPolygon(new PolygonOptions().addAll(boundary).geodesic(true)
+                    .strokeColor(0xffef5044).fillColor(0x40ef5044).strokeWidth(dp(2.5f)).zIndex(5));
+        } else if (boundary.size() == 2) {
+            hazardDraftLine = map.addPolyline(new PolylineOptions().addAll(boundary).geodesic(true)
+                    .color(0xffef5044).width(dp(2.5f)).zIndex(5));
+        }
+    }
+    private BitmapDescriptor hazardVertexIcon() {
+        if (hazardVertexIcon == null) {
+            int size = Math.round(dp(14));
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint);
+            paint.setColor(0xffef5044);
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(2), paint);
+            hazardVertexIcon = BitmapDescriptorFactory.fromBitmap(bitmap);
+        }
+        return hazardVertexIcon;
+    }
+    private void clearHazardDraft() {
+        for (Marker marker : hazardDraftMarkers) marker.remove();
+        hazardDraftMarkers.clear();
+        if (hazardDraftLine != null) { hazardDraftLine.remove(); hazardDraftLine = null; }
+        if (hazardDraftPolygon != null) { hazardDraftPolygon.remove(); hazardDraftPolygon = null; }
     }
     public void setHeading(double degrees) { if(destroyed)return;heading=degrees; headingSampleMillis=Double.isFinite(degrees)?android.os.SystemClock.elapsedRealtime():0; updateOrientation(); updateCamera(); overlay.invalidate(); }
     private void updateOrientation() {
@@ -527,7 +599,7 @@ public final class MapTilerMapView extends FrameLayout {
     public void resume() { if (!destroyed && !resumed) { if(mapView!=null)mapView.onResume(); resumed = true; refreshWind(); } }
     public void pause() { if (!destroyed && resumed) { persistCamera(); if(mapView!=null)mapView.onPause(); resumed = false; refreshWind(); } }
     public void stop() { if (!destroyed && started) { if(mapView!=null)mapView.onStop(); started = false; } }
-    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(marineLayers!=null)marineLayers.close();if(fishingLayers!=null)fishingLayers.close();if(windLayer!=null)windLayer.close();if(renderer!=null)renderer.close();clearHazards();hazardIcon=null;listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();if(mapView!=null)mapView.onDestroy(); } }
+    public void destroy() { if (!destroyed) { pause(); stop();destroyed=true;loadingStyle=false;styleGeneration++;selectionGeneration++; if(marineLayers!=null)marineLayers.close();if(fishingLayers!=null)fishingLayers.close();if(windLayer!=null)windLayer.close();if(renderer!=null)renderer.close();clearHazards();clearHazardDraft();hazardIcon=null;hazardVertexIcon=null;listener=null;geometryGeneration++;overviewGeneration++;geometryWorker.shutdownNow();if(mapView!=null)mapView.onDestroy(); } }
     public void onLowMemory() { if (!destroyed) if(mapView!=null)mapView.onLowMemory(); }
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); start(); resume(); }
     @Override protected void onDetachedFromWindow() { destroy(); super.onDetachedFromWindow(); }

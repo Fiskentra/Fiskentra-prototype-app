@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.text.InputFilter;
 import android.text.InputType;
-import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -16,7 +15,6 @@ import com.fiskentra.app.model.MapHazard;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.function.Consumer;
 
 /** Map dialogs for locally stored danger points and zones. */
@@ -53,13 +51,27 @@ final class MapHazardDialogs {
                         placeOnMap.accept(which == 1);
                     } else {
                         MapHazard hazard = hazards.get(which - 2);
-                        map.lookAt(hazard.latitude, hazard.longitude);
+                        if (hazard.isPolygon()) {
+                            MapHazard.Vertex corner = hazard.vertices.get(0);
+                            map.lookAt(corner.latitude, corner.longitude);
+                        } else {
+                            map.lookAt(hazard.latitude, hazard.longitude);
+                        }
                         showDetails(hazard);
                     }
                 }).setNegativeButton(R.string.map_close, null).create());
     }
 
-    void add(boolean zone, double latitude, double longitude) {
+    void addPoint(double latitude, double longitude) {
+        addName(false, name -> store.add(name, latitude, longitude, 0), () -> {});
+    }
+
+    void addPolygon(List<MapHazard.Vertex> vertices, Runnable saved) {
+        List<MapHazard.Vertex> boundary = new ArrayList<>(vertices);
+        addName(true, name -> store.addPolygon(name, boundary), saved);
+    }
+
+    private void addName(boolean zone, Consumer<String> save, Runnable saved) {
         LinearLayout form = new LinearLayout(activity);
         form.setOrientation(LinearLayout.VERTICAL);
         int padding = Math.round(20 * activity.getResources().getDisplayMetrics().density);
@@ -71,16 +83,10 @@ final class MapHazardDialogs {
         name.setFilters(new InputFilter[]{new InputFilter.LengthFilter(MapHazard.MAX_NAME_LENGTH)});
         form.addView(name);
 
-        EditText radius = new EditText(activity);
         if (zone) {
-            radius.setId(View.generateViewId());
-            radius.setInputType(InputType.TYPE_CLASS_NUMBER);
-            radius.setText(String.format(Locale.getDefault(), "%d", MapHazard.DEFAULT_ZONE_RADIUS_METERS));
-            TextView radiusLabel = new TextView(activity);
-            radiusLabel.setText(R.string.map_hazard_radius);
-            radiusLabel.setLabelFor(radius.getId());
-            form.addView(radiusLabel);
-            form.addView(radius);
+            TextView summary = new TextView(activity);
+            summary.setText(activity.getString(R.string.map_hazard_polygon_details, MapHazard.WARNING_DISTANCE_METERS));
+            form.addView(summary);
         }
 
         AlertDialog dialog = new AlertDialog.Builder(activity)
@@ -94,18 +100,8 @@ final class MapHazardDialogs {
                         name.setError(activity.getString(R.string.map_hazard_name_required));
                         return;
                     }
-                    int radiusMeters = 0;
-                    if (zone) {
-                        radiusMeters = parseRadius(radius.getText().toString());
-                        if (radiusMeters < MapHazard.MIN_ZONE_RADIUS_METERS
-                                || radiusMeters > MapHazard.MAX_ZONE_RADIUS_METERS) {
-                            radius.setError(activity.getString(R.string.map_hazard_radius_invalid,
-                                    MapHazard.MIN_ZONE_RADIUS_METERS, MapHazard.MAX_ZONE_RADIUS_METERS));
-                            return;
-                        }
-                    }
                     try {
-                        store.add(title, latitude, longitude, radiusMeters);
+                        save.accept(title);
                     } catch (IllegalArgumentException | IllegalStateException failure) {
                         Toast.makeText(activity, R.string.map_save_failed, Toast.LENGTH_LONG).show();
                         return;
@@ -113,22 +109,20 @@ final class MapHazardDialogs {
                     dialog.dismiss();
                     refresh();
                     changed.run();
+                    saved.run();
                 }));
         show(dialog);
     }
 
-    private static int parseRadius(String input) {
-        try {
-            return Integer.parseInt(input);
-        } catch (NumberFormatException invalid) {
-            return 0;
-        }
-    }
-
     void showDetails(MapHazard hazard) {
-        String message = hazard.isZone()
-                ? activity.getString(R.string.map_hazard_zone_details, hazard.radiusMeters, MapHazard.WARNING_DISTANCE_METERS)
-                : activity.getString(R.string.map_hazard_point_details, MapHazard.WARNING_DISTANCE_METERS);
+        String message;
+        if (hazard.isPolygon()) {
+            message = activity.getString(R.string.map_hazard_polygon_details, MapHazard.WARNING_DISTANCE_METERS);
+        } else if (hazard.isZone()) {
+            message = activity.getString(R.string.map_hazard_zone_details, hazard.radiusMeters, MapHazard.WARNING_DISTANCE_METERS);
+        } else {
+            message = activity.getString(R.string.map_hazard_point_details, MapHazard.WARNING_DISTANCE_METERS);
+        }
         show(new AlertDialog.Builder(activity).setTitle(hazard.name)
                 .setMessage(message + "\n\n" + activity.getString(R.string.map_hazard_alert_permissions))
                 .setNegativeButton(R.string.map_hazard_delete, (dialog, which) -> confirmDelete(hazard))
